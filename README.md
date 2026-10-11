@@ -58,9 +58,34 @@ DISPLAY=:99 LIBGL_ALWAYS_SOFTWARE=1 GALLIUM_DRIVER=llvmpipe ./target/release/er-
 
 ```
 er-save-editor                       # GUI: Open / Save / Save As, tabs for Party, Boxes, Items, Trainer
-er-save-editor --cli FILE.sav        # decode a save to stdout (headless verification)
-er-save-editor --cli-edit FILE ...   # scripted edits, checksums recomputed in place
+er-save-editor --cli FILE.sav        # decode a save to stdout (read-only, writes nothing)
+er-save-editor --cli-edit FILE ...   # scripted edits (writes on invocation; see --dry-run)
 ```
+
+### Write consent
+
+**The editor never writes to disk unless you explicitly trigger a write.** Reads
+and decoding are automatic; every write path is gated behind a deliberate
+action, so a loaded save cannot be silently modified, re-checksummed, or
+"helpfully" backed up:
+
+- **GUI** — writing happens only via the **Save** / **Save As…** buttons. There is
+  no autosave, no session restore, no backup file, no temp file. Your edits stay
+  in memory (flagged `● modified`) until you press Save. Closing the app or
+  opening another file discards unsaved edits.
+- **`--cli FILE`** — strictly read-only.
+- **`--cli-edit FILE …`** — invoking an edit *is* the consent; it writes in place.
+  Add `--dry-run` to compute every edit and re-seal every checksum in memory
+  while writing **zero bytes**, and see exactly what would change first.
+
+```sh
+# preview without touching the file (file stays byte-identical)
+er-save-editor --cli-edit save.sav iv 0 1 31 --dry-run
+```
+
+Since a corrupted save is unrecoverable progress loss, keep your own backup
+before real writes — the tool deliberately will not make one for you, and
+`--cli` on a copy is the way to verify an edit decodes as intended.
 
 `--cli-edit` subcommands today:
 

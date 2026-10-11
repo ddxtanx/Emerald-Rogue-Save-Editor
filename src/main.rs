@@ -842,7 +842,17 @@ fn main() -> eframe::Result<()> {
 // ---------------------------------------------------------------- CLI edit mode
 // --cli-edit FILE money AMOUNT
 // --cli-edit FILE iv PARTY_IDX IV_IDX VALUE [refresh|no-refresh]
-fn cli_edit(path: &str, args: &[String]) {
+// Write-consent rule: the editor writes to disk ONLY when the user explicitly
+// triggers a write. --cli-edit implies consent by invocation; --dry-run is the
+// escape hatch that computes every edit + checksum but writes zero bytes.
+// There is no autosave, backup, or temp-file path anywhere in the crate.
+fn cli_edit(path: &str, args_in: &[String]) {
+    let dry_run = args_in.iter().any(|a| a == "--dry-run");
+    let args: Vec<String> = args_in
+        .iter()
+        .filter(|a| *a != "--dry-run")
+        .cloned()
+        .collect();
     let mut sf = match SaveFile::open(path) {
         Ok(sf) => sf,
         Err(e) => {
@@ -852,6 +862,10 @@ fn cli_edit(path: &str, args: &[String]) {
     };
     match args[0].as_str() {
         "noop" => {
+            if dry_run {
+                println!("dry run: would resave {path} (checksums recomputed); no bytes written");
+                return;
+            }
             sf.edited = true;
             sf.save(path).expect("save failed");
             println!("resaved {path} (all checksums recomputed, no data change)");
@@ -896,6 +910,12 @@ fn cli_edit(path: &str, args: &[String]) {
             eprintln!("unknown subcommand");
             std::process::exit(1);
         }
+    }
+    if dry_run {
+        println!(
+            "dry run: edits computed + checksums verified in memory; no bytes written to {path}"
+        );
+        return;
     }
     sf.save(path).expect("save failed");
     println!("saved {path} (mon + sector checksums recomputed)");
