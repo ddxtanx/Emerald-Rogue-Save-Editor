@@ -57,10 +57,17 @@ DISPLAY=:99 LIBGL_ALWAYS_SOFTWARE=1 GALLIUM_DRIVER=llvmpipe ./target/release/er-
 ## Usage
 
 ```
+er-save-editor FILE.sav              # GUI, opens the save instantly (read-only open)
 er-save-editor                       # GUI: Open / Save / Save As, tabs for Party, Boxes, Items, Trainer
 er-save-editor --cli FILE.sav        # decode a save to stdout (read-only, writes nothing)
 er-save-editor --cli-edit FILE ...   # scripted edits (writes on invocation; see --dry-run)
 ```
+
+Passing a file positionally (or `--open FILE`) opens it at launch — handy since
+emulators keep saves at fixed paths (`mGBA: ~/.config/mGBA/saves/<game>.srm`).
+`--cli-edit` stays deliberately small (`iv`, `money`, `noop`): it exists for
+headless verification and round-trip testing, not as a full editing surface —
+the GUI is the interactive interface for that.
 
 ### Write consent
 

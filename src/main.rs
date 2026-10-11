@@ -828,6 +828,50 @@ fn main() -> eframe::Result<()> {
         return Ok(());
     }
 
+    // GUI mode. A save may be passed to open it instantly:
+    //   er-save-editor FILE.sav            (positional)
+    //   er-save-editor --open FILE.sav     (explicit, equivalent)
+    // Opening is read-only; nothing is written without Save / Save As.
+    let mut open_path: Option<String> = None;
+    let mut i = 1;
+    while i < args.len() {
+        match args[i].as_str() {
+            "-o" | "--open" => {
+                if i + 1 < args.len() {
+                    open_path = Some(args[i + 1].clone());
+                    i += 2;
+                    continue;
+                }
+            }
+            "--help" | "-h" => {
+                println!(
+                    "usage: er-save-editor [FILE.sav | --open FILE.sav]   GUI (opens file if given)\n\
+                    \x20      er-save-editor --cli FILE.sav                 decode save to stdout (read-only)\n\
+                    \x20      er-save-editor --cli-edit FILE ...            scripted edits (see --help-edit)"
+                );
+                return Ok(());
+            }
+            "--help-edit" => {
+                println!(
+                    "--cli-edit FILE <subcommand> [--dry-run]\n\
+                    \x20 iv PARTY_IDX IV_IDX VALUE [refresh|no-refresh]   set one IV, refresh cached stat\n\
+                    \x20 money AMOUNT                                     set money\n\
+                    \x20 noop                                             reseal without data change\n\
+                    --dry-run computes edits + checksums in memory and writes zero bytes."
+                );
+                return Ok(());
+            }
+            s if s.starts_with('-') => {
+                eprintln!("unknown option: {s} (try --help)");
+                std::process::exit(1);
+            }
+            s => {
+                open_path = Some(s.to_string());
+            }
+        }
+        i += 1;
+    }
+
     let opts = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default().with_inner_size([1150.0, 780.0]),
         ..Default::default()
@@ -835,7 +879,13 @@ fn main() -> eframe::Result<()> {
     eframe::run_native(
         "Emerald Rogue Save Editor",
         opts,
-        Box::new(|_cc| Box::new(Editor::default())),
+        Box::new(move |_cc| {
+            let mut ed = Editor::default();
+            if let Some(p) = open_path.clone() {
+                ed.open_path(p);
+            }
+            Box::new(ed)
+        }),
     )
 }
 
@@ -1048,23 +1098,27 @@ impl Default for Editor {
 }
 
 impl Editor {
+    fn open_path(&mut self, ps: String) {
+        match SaveFile::open(&ps) {
+            Ok(sf) => {
+                let n = sf.active_slot / 14 + 1;
+                self.status = format!("Opened {ps} (active save slot {n})");
+                self.sel = Some(Sel::Party(0));
+                self.path = Some(ps);
+                self.file = Some(sf);
+                self.dirty = false;
+            }
+            Err(e) => self.status = format!("Failed to open: {e}"),
+        }
+    }
+
     fn open_dialog(&mut self, ctx: &egui::Context) {
         if let Some(p) = rfd::FileDialog::new()
             .add_filter("GBA save", &["sav", "srm", "gba"])
             .pick_file()
         {
             let ps = p.display().to_string();
-            match SaveFile::open(&ps) {
-                Ok(sf) => {
-                    let n = sf.active_slot / 14 + 1;
-                    self.status = format!("Opened {ps} (active save slot {n})");
-                    self.sel = Some(Sel::Party(0));
-                    self.path = Some(ps);
-                    self.file = Some(sf);
-                    self.dirty = false;
-                }
-                Err(e) => self.status = format!("Failed to open: {e}"),
-            }
+            self.open_path(ps);
         }
         let _ = ctx;
     }
