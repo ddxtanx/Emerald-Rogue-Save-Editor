@@ -174,9 +174,11 @@ SAV_OUT=save-out-of-adventure.sav SAV_IN=save-in-adventure.sav python3 tools/dif
 - [x] Daycare editing (current and stashed)
 - [x] Rogue custom item names (ids 827–1072, incl. Legends Z-A mega stones)
 - [x] Species table completion (megas, gigantamax, Rogue form IDs, gen 9)
-- [ ] Safari-zone roster / dynamic unique-mon spawn editing
+- [x] Safari-zone roster / dynamic unique-mon spawn editing
 - [ ] Edit the raw in-run structs (`gRogueRun`, adventure path) — risky mid-run, likely read-only display
-- [ ] Save creation / migration between Rogue save versions (`SAVE_VER_ID_*`)
+- [x] Save-version awareness: report which Rogue version wrote a save, and refuse to
+      edit when the stream layout doesn't match the editor's map (the game migrates
+      its own saves on load; the editor deliberately does not rewrite versions)
 - [ ] Re-seal the Rogue block on save when a future game build changes the stream layout
 
 ## Licensing

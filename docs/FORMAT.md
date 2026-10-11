@@ -320,9 +320,35 @@ test suite (`rogue_block_roundtrip_synth`):
 | sRunRestoreBlock | 2696 (plain) | — |
 | gRogueRun, currentRoomParams, currentRoomType | plain | after stash |
 
+**Header size is version-dependent:** `lastKnownNumSpecies` (u16) is serialized only when
+`saveVersion >= SAVE_VER_ID_2_1_0` (on-disk stamp 4+), so the payload starts at `boxes[10][0] + 8`
+for v2.1.0-era saves and `+ 6` for older ones. The on-disk `saveVersion` equals
+`SAVE_VER_ID_* - 1` (`RogueSave_GetVersionIdFor(v) = v + 1`): v2.2.0 saves carry **7**.
+
+**seasonCounter is a day counter, not a season index.** `rogue_timeofday.c` defines
+`DAYS_PER_SEASON 2`, `SEASON_COUNT 4`; `RogueToD_GetSeason() = seasonCounter / DAYS_PER_SEASON`,
+and every write wraps `% (DAYS_PER_SEASON * SEASON_COUNT)` (i.e. % 8). Counter 4 = Autumn day 0.
+
+**struct RogueSafariMon (20 B)** — bitfields confirmed against a real v2.2.0 roster (all IVs ≤31,
+natures ≤24, shiny ∈{0,1}, priority 0..101) and pinned by a unit test:
+```
+w0: species:16 | hpIV:5 | attackIV:5 | defenseIV:5 | shinyFlag:1
+w1: speedIV:5  | spAttackIV:5 | spDefenseIV:5 | pokeball:5 | nature:5 | abilityNum:2 | genderFlag:1 | unused0:4
+then nickname[10] (Gen3 charset), priorityCounter u8, customMonLookup u8
+```
+
+**struct UniqueMon (8 B):** `u32 customMonId, u16 species, u16 countDown` (countDown 0 = none pending).
+
 The stash (`sRunRestoreBlock`) is located by validity scan (sealed party mon checksums + sane money/playtime)
 rather than a fixed offset, so tail-layout drift in newer builds still decodes. Quest names for the 232 slots
 come from parsing `data/rogue/quests.json` with the exporter's include/#if rules (see `tools/gen_tables_v2.py`).
+
+**Save-version migration is the game's job, not the editor's.** On load,
+`RogueSave_OnSaveLoaded` calls `Rogue_NotifySaveVersionUpdated` when the stamp differs from
+`ROGUE_SAVE_VERSION`; the game then re-serializes the block in its current layout (and applies
+quest-level fixups from each quest's `addedInVersion` / `resetProgressInVersion`). The editor
+therefore reports the stamp (`saveVersion 7 (2.2.0)`) and refuses to edit whenever the era pins
+fail, instead of trying to rewrite old layouts itself.
 
 ## 12. Daycare / quests
 

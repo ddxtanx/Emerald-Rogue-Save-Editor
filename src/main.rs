@@ -58,6 +58,7 @@ const ROGUE_BASE: usize = STOR_BASE + 4 + 10 * 30 * 80;
 const ROGUE_CAP: usize = 4 * 30 * 80; // 4 leftover boxes
 const ROGUE_SECRET: u16 = 27615;
 const DAYCARE_ELEMSZ: usize = 84; // 80B BoxPokemon facade + 4 (v2.2.0 build)
+const SAFARISZ: usize = 20; // struct RogueSafariMon (STATIC_ASSERT == 20)
 const STASH_PARTY: usize = 6;
 const STASH_BAG_CAP: usize = 450;
 const STASH_DAYCARE: usize = 3;
@@ -240,6 +241,33 @@ const HUB_UPGRADES: &[&str] = &[
     "Lab: Unique typings",
 ];
 const SEASONS: &[&str] = &["Spring", "Summer", "Autumn", "Winter"];
+/// rogue_timeofday.c: the season cycles 4 seasons of 2 days each, and
+/// `seasonCounter` counts *days* (wrapped % 8), not a season index.
+const SEASON_COUNT: usize = 4;
+const DAYS_PER_SEASON: u8 = 2;
+/// On-disk `saveVersion` is `SAVE_VER_ID_* - 1` (rogue_save.c:
+/// `RogueSave_GetVersionIdFor(v) = v + 1`). v2.2.0 saves therefore carry **7**
+/// (= SAVE_VER_ID_2_2_0), and a v2.2.1 build writes 8 (ROGUE_SAVE_VERSION).
+/// The game migrates an older save itself on load (RogueSave_OnSaveLoaded ->
+/// Rogue_NotifySaveVersionUpdated), re-serializing the block in the current
+/// layout; the stamp only decides *which* fixups run. The stream walk's era
+/// pins (232 quests, 7 campaigns, 72 mastery bytes, ...) are v2.2.x, so a save
+/// from a different layout fails `ok` and exposes header-only -> no blind edits.
+fn rogue_version_name(v: u16) -> &'static str {
+    // on-disk stamp -> SAVE_VER_ID_{v+1}
+    match v + 1 {
+        1 => "1.x",
+        2 => "2.0-prerelease",
+        3 => "2.0.0",
+        4 => "2.0.1",
+        5 => "2.1.0",
+        6 => "2.1.1",
+        7 => "2.1.2",
+        8 => "2.2.0",
+        9 => "2.2.1",
+        _ => "unknown/newer-than-editor",
+    }
+}
 fn le32(b: &[u8], i: usize) -> u32 {
     u32::from_le_bytes([b[i], b[i + 1], b[i + 2], b[i + 3]])
 }
@@ -707,8 +735,10 @@ pub struct RogueBlock {
     pub format: u8,
     pub is_debug: bool,
     pub weather: u16,
-    pub time_of_day: u16, // minutes since hub midnight
-    pub season: u8,
+    pub time_of_day: u16,      // minutes since hub midnight
+    pub season: u8,            // day-counter (DAYS_PER_SEASON days each), NOT a season index
+    pub has_num_species: bool, // header carries lastKnownNumSpecies (saveVersion >= 2.1.0)
+    pub last_num_species: u16,
     pub time_off: usize, // absolute merged offset of timeOfDayMinutes (u16); weather = -2, season = +2
     pub quests_f: RogueField, // n x 8B: u32 stateFlags :16 | highCompleteDiff :3 | highRewardDiff :3
     pub campaigns_f: RogueField, // n x 4B
@@ -726,6 +756,92 @@ pub struct RogueBlock {
     pub custids_f: RogueField,
     pub mastery_f: RogueField,
     pub stash: Stash,
+}
+
+/// One safari-zone roster entry. The two bitfield words are kept raw and
+/// exposed only through accessors with runtime bounds, so an out-of-range
+/// write can never bleed into a neighbouring field.
+#[derive(Clone, Default, PartialEq)]
+pub struct SafariMon {
+    pub w0: u32,
+    pub w1: u32,
+    pub nick: Vec<u8>,
+    pub priority: u8,
+    pub custom_lookup: u8,
+}
+impl SafariMon {
+    #[inline]
+    fn bf(v: u32, shift: u32, mask: u32) -> u32 {
+        (v >> shift) & mask
+    }
+    #[inline]
+    fn set_bf(v: &mut u32, shift: u32, mask: u32, val: u32) {
+        assert!(val <= mask, "safari bitfield overflow: {val} > {mask}");
+        *v = (*v & !(mask << shift)) | ((val & mask) << shift);
+    }
+    pub fn species(&self) -> u16 {
+        Self::bf(self.w0, 0, 0xFFFF) as u16
+    }
+    pub fn set_species(&mut self, v: u16) {
+        Self::set_bf(&mut self.w0, 0, 0xFFFF, v as u32);
+    }
+    /// IVs in party order: hp, atk, def, spe, spa, spd
+    pub fn iv(&self, i: usize) -> u8 {
+        (match i {
+            0 => Self::bf(self.w0, 16, 31),
+            1 => Self::bf(self.w0, 21, 31),
+            2 => Self::bf(self.w0, 26, 31),
+            3 => Self::bf(self.w1, 0, 31),
+            4 => Self::bf(self.w1, 5, 31),
+            _ => Self::bf(self.w1, 10, 31),
+        }) as u8
+    }
+    pub fn set_iv(&mut self, i: usize, v: u8) {
+        match i {
+            0 => Self::set_bf(&mut self.w0, 16, 31, v as u32),
+            1 => Self::set_bf(&mut self.w0, 21, 31, v as u32),
+            2 => Self::set_bf(&mut self.w0, 26, 31, v as u32),
+            3 => Self::set_bf(&mut self.w1, 0, 31, v as u32),
+            4 => Self::set_bf(&mut self.w1, 5, 31, v as u32),
+            _ => Self::set_bf(&mut self.w1, 10, 31, v as u32),
+        }
+    }
+    pub fn shiny(&self) -> bool {
+        Self::bf(self.w0, 31, 1) != 0
+    }
+    pub fn set_shiny(&mut self, v: bool) {
+        Self::set_bf(&mut self.w0, 31, 1, v as u32);
+    }
+    pub fn pokeball(&self) -> u8 {
+        Self::bf(self.w1, 15, 31) as u8
+    }
+    pub fn set_pokeball(&mut self, v: u8) {
+        Self::set_bf(&mut self.w1, 15, 31, v as u32);
+    }
+    pub fn nature(&self) -> u8 {
+        Self::bf(self.w1, 20, 31) as u8
+    }
+    pub fn set_nature(&mut self, v: u8) {
+        Self::set_bf(&mut self.w1, 20, 31, v as u32);
+    }
+    pub fn ability_num(&self) -> u8 {
+        Self::bf(self.w1, 25, 3) as u8
+    }
+    pub fn set_ability_num(&mut self, v: u8) {
+        Self::set_bf(&mut self.w1, 25, 3, v as u32);
+    }
+    pub fn gender_flag(&self) -> u8 {
+        Self::bf(self.w1, 27, 1) as u8
+    }
+    pub fn set_gender_flag(&mut self, v: u8) {
+        Self::set_bf(&mut self.w1, 27, 1, v as u32);
+    }
+    pub fn nickname(&self) -> String {
+        gen3_decode(&self.nick)
+    }
+    pub fn set_nickname(&mut self, s: &str) {
+        self.nick = gen3_encode(s, 10);
+    }
 }
 
 impl SaveFile {
@@ -873,13 +989,24 @@ impl SaveFile {
         if secret != ROGUE_SECRET || version == 0 {
             return None; // not a Rogue-era block (or blank)
         }
+        // Header size is version-dependent: SerializeRogueBlockInternal only writes
+        // lastKnownNumSpecies when `saveVersion >= SAVE_VER_ID_2_1_0` (enum value 5;
+        // the on-disk field is the enum minus one, hence v2.2.0 saves carry 7).
+        // Mirrored literally so pre-2.1.0 saves don't walk 2 bytes out of phase.
+        const SAVE_VER_ID_2_1_0: u16 = 5;
+        let has_num_species = version >= SAVE_VER_ID_2_1_0;
         let mut rb = RogueBlock {
             version,
             format,
             ok: false,
+            has_num_species,
             ..Default::default()
         };
-        let mut o = base + 8; // ver u16 | fmt u8 | secret u16 | rogueVer u8 | lastSpecies u16
+        // ver u16 | fmt u8 | secret u16 | rogueVer u8 [| lastKnownNumSpecies u16]
+        let mut o = base + if has_num_species { 8 } else { 6 };
+        if has_num_species {
+            rb.last_num_species = le16(&self.merged, base + 6);
+        }
         let rd = |o: &mut usize, elemsz: usize| -> Option<(usize, usize)> {
             if *o + 2 > base + ROGUE_CAP {
                 return None;
@@ -1056,6 +1183,66 @@ impl SaveFile {
         self.edited = true;
     }
 
+    // ---- Safari-zone roster (safariMons[60], 20 B each) -------------------
+    // struct RogueSafariMon (include/rogue.h). Bitfields pack into two u32
+    // words (ARM GCC order, confirmed against a real v2.2.0 roster: every
+    // IV <=31, nature <=24, shiny 0/1, priority 0..101):
+    //   w0: species:16 | hpIV:5 | attackIV:5 | defenseIV:5 | shinyFlag:1
+    //   w1: speedIV:5  | spAttackIV:5 | spDefenseIV:5 | pokeball:5
+    //       | nature:5 | abilityNum:2 | genderFlag:1 | unused0:4
+    // then nickname[10], priorityCounter u8, customMonLookup u8  (= 20 bytes).
+    pub fn safari_mon(&self, rb: &RogueBlock, i: usize) -> Option<SafariMon> {
+        if !rb.ok || i >= rb.safari_f.n {
+            return None;
+        }
+        let off = rb.safari_f.data + i * SAFARISZ;
+        Some(SafariMon {
+            w0: le32(&self.merged, off),
+            w1: le32(&self.merged, off + 4),
+            nick: self.merged[off + 8..off + 18].to_vec(),
+            priority: self.merged[off + 18],
+            custom_lookup: self.merged[off + 19],
+        })
+    }
+    pub fn set_safari_mon(&mut self, i: usize, s: &SafariMon) {
+        let Some(rb) = self.rogue_block() else { return };
+        if !rb.ok || i >= rb.safari_f.n {
+            return;
+        }
+        let off = rb.safari_f.data + i * SAFARISZ;
+        put32(&mut self.merged, off, s.w0);
+        put32(&mut self.merged, off + 4, s.w1);
+        self.merged[off + 8..off + 18].copy_from_slice(&s.nick);
+        self.merged[off + 18] = s.priority;
+        self.merged[off + 19] = s.custom_lookup;
+        self.edited = true;
+    }
+
+    // ---- Dynamic unique-mon spawns (dynamicUniquePokemon[5], 8 B each) ----
+    // struct UniqueMon: u32 customMonId, u16 species, u16 countDown.
+    pub fn unique_mon(&self, rb: &RogueBlock, i: usize) -> Option<(u32, u16, u16)> {
+        if !rb.ok || i >= rb.unique_f.n {
+            return None;
+        }
+        let off = rb.unique_f.data + i * 8;
+        Some((
+            le32(&self.merged, off),
+            le16(&self.merged, off + 4),
+            le16(&self.merged, off + 6),
+        ))
+    }
+    pub fn set_unique_mon(&mut self, i: usize, id: u32, species: u16, countdown: u16) {
+        let Some(rb) = self.rogue_block() else { return };
+        if !rb.ok || i >= rb.unique_f.n {
+            return;
+        }
+        let off = rb.unique_f.data + i * 8;
+        put32(&mut self.merged, off, id);
+        put16(&mut self.merged, off + 4, species);
+        put16(&mut self.merged, off + 6, countdown);
+        self.edited = true;
+    }
+
     // ---- Rogue-block field edits (all no-ops unless the block decoded cleanly)
     pub fn set_quest_state(&mut self, i: usize, flags: u16, high_complete: u8) {
         let Some(rb) = self.rogue_block() else { return };
@@ -1109,12 +1296,21 @@ impl SaveFile {
         put16(&mut self.merged, rb.time_off, minutes % 1440);
         self.edited = true;
     }
-    pub fn set_hub_season(&mut self, s: u8) {
+    /// `seasonCounter` is NOT a season index: it counts elapsed days in a
+    /// 2-day-per-season / 4-season cycle (`rogue_timeofday.c`:
+    /// DAYS_PER_SEASON 2, SEASON_COUNT 4, wrapped % 8;
+    /// `RogueToD_GetSeason()` returns `seasonCounter / DAYS_PER_SEASON`).
+    /// So this takes a season index 0..3 and parks the counter at that
+    /// season's first day, exactly like `RogueToD_SetSeason()`.
+    pub fn set_hub_season(&mut self, season_idx: u8) {
+        self.set_season_counter(season_idx.min(SEASON_COUNT as u8 - 1) * DAYS_PER_SEASON);
+    }
+    pub fn set_season_counter(&mut self, days: u8) {
         let Some(rb) = self.rogue_block() else { return };
         if !rb.ok {
             return;
         }
-        self.merged[rb.time_off + 2] = s;
+        self.merged[rb.time_off + 2] = days % (DAYS_PER_SEASON * SEASON_COUNT as u8);
         self.edited = true;
     }
     pub fn set_weather(&mut self, w: u16) {
@@ -1282,12 +1478,23 @@ fn cli_dump(path: &str) {
         sf.money()
     );
     if let Some(rb) = sf.rogue_block() {
-        say!("\nrogue block: v{} fmt{}", rb.version, rb.format);
+        say!(
+            "\nrogue block: saveVersion {} ({}) fmt{}",
+            rb.version,
+            rogue_version_name(rb.version),
+            rb.format
+        );
+        if rb.has_num_species {
+            say!("  lastKnownNumSpecies {}", rb.last_num_species);
+        }
         if rb.ok {
             say!(
-                "  hub time {:02}:{:02}  season {}  weather {}  debug {}",
+                "  hub time {:02}:{:02}  season {} (day {}/{}; counter {})  weather {}  debug {}",
                 rb.time_of_day / 60,
                 rb.time_of_day % 60,
+                SEASONS[(rb.season / DAYS_PER_SEASON) as usize % SEASON_COUNT],
+                rb.season % DAYS_PER_SEASON + 1,
+                DAYS_PER_SEASON,
                 rb.season,
                 rb.weather,
                 rb.is_debug
@@ -1309,6 +1516,22 @@ fn cli_dump(path: &str) {
                         species_name(mo.species()),
                         mo.species()
                     );
+                }
+            }
+            let filled = (0..rb.safari_f.n)
+                .filter_map(|i| sf.safari_mon(&rb, i))
+                .filter(|s| s.species() != 0)
+                .count();
+            say!("  safari: {filled} filled (edit with: --cli-edit FILE safari ...)");
+            for i in 0..rb.unique_f.n {
+                if let Some((cid, sp, cd)) = sf.unique_mon(&rb, i) {
+                    if cid != 0 || sp != 0 {
+                        say!(
+                            "  unique-mon[{i}] id {cid} species {} ({}) countdown {cd}",
+                            sp,
+                            species_name(sp)
+                        );
+                    }
                 }
             }
             if rb.stash.ok {
@@ -1457,6 +1680,8 @@ fn main() -> eframe::Result<()> {
                     \x20 campaign INDEX UNLOCKED COMPLETED [BEST]         0/1 flags\n\
                     \x20 diff-toggle BIT 0|1                              lab difficulty toggle\n\
                     \x20 diff-range IDX VALUE                             lab range slot\n\
+                    \x20 safari IDX SPECIES NATURE SHINY BALL PRI IV0,..,IV5   one safari-zone spawn entry\n\
+                    \x20 unique-mon IDX CUSTOMID SPECIES COUNTDOWN        dynamic unique-mon spawn slot\n\
                     \x20 noop                                             reseal without data change\n\
                     --dry-run computes edits + checksums in memory and writes zero bytes."
                 );
@@ -1522,6 +1747,8 @@ fn cli_edit(path: &str, args_in: &[String]) {
         "money" | "stash-money" | "hub-time" | "hub-season" => 2,
         "quest" | "diff-toggle" | "diff-range" => 3,
         "campaign" | "iv" | "iv-stash" => 4,
+        "unique-mon" => 5,
+        "safari" => 8,
         _ => 0,
     };
     if args.len() < need {
@@ -1586,8 +1813,103 @@ fn cli_edit(path: &str, args_in: &[String]) {
                 eprintln!("error: Rogue block not decodable (layout mismatch)");
                 std::process::exit(1);
             }
-            say!("season {} -> {}", rb.season, s);
+            let cur = (rb.season / DAYS_PER_SEASON) as usize % SEASON_COUNT;
+            say!(
+                "season {} (counter {}) -> {} (counter {})",
+                SEASONS[cur],
+                rb.season,
+                SEASONS[s as usize % SEASON_COUNT],
+                (s % SEASON_COUNT as u8) * DAYS_PER_SEASON
+            );
             sf.set_hub_season(s);
+        }
+        "unique-mon" => {
+            // unique-mon IDX CUSTOMID SPECIES COUNTDOWN
+            let idx: usize = args[1]
+                .parse()
+                .unwrap_or_else(|_| cli_arg_err("unique-mon index"));
+            let cid: u32 = args[2]
+                .parse()
+                .unwrap_or_else(|_| cli_arg_err("customMonId"));
+            let sp: u16 = args[3].parse().unwrap_or_else(|_| cli_arg_err("species"));
+            let cd: u16 = args[4].parse().unwrap_or_else(|_| cli_arg_err("countdown"));
+            let rb = sf.rogue_block().unwrap_or_default();
+            if !rb.ok {
+                eprintln!("error: Rogue block not decodable (layout mismatch)");
+                std::process::exit(1);
+            }
+            match sf.unique_mon(&rb, idx) {
+                Some((o_id, o_sp, o_cd)) => say!(
+                    "unique-mon[{idx}]: id {o_id} {} ({}) countdown {o_cd} -> id {cid} {} ({}) countdown {cd}",
+                    o_sp,
+                    species_name(o_sp),
+                    sp,
+                    species_name(sp)
+                ),
+                None => {
+                    eprintln!("error: unique-mon index {idx} out of range");
+                    std::process::exit(1);
+                }
+            }
+            sf.set_unique_mon(idx, cid, sp, cd);
+        }
+        "safari" => {
+            // safari IDX SPECIES NATURE SHINY BALL PRIORITY IV0,IV1,IV2,IV3,IV4,IV5
+            // (one entry per invocation: keeps the CLI narrow instead of growing
+            // a per-field flag matrix; the GUI is the place for interactive tweaks)
+            let idx: usize = args[1]
+                .parse()
+                .unwrap_or_else(|_| cli_arg_err("safari index"));
+            let sp: u16 = args[2].parse().unwrap_or_else(|_| cli_arg_err("species"));
+            let nat: u8 = args[3].parse().unwrap_or_else(|_| cli_arg_err("nature"));
+            let shiny: u8 = args[4].parse().unwrap_or_else(|_| cli_arg_err("shiny 0|1"));
+            let ball: u8 = args[5].parse().unwrap_or_else(|_| cli_arg_err("pokeball"));
+            let pri: u8 = args[6].parse().unwrap_or_else(|_| cli_arg_err("priority"));
+            let ivs: Vec<u8> = args[7]
+                .split(',')
+                .map(|s| {
+                    s.trim()
+                        .parse::<u8>()
+                        .unwrap_or_else(|_| cli_arg_err("IV list (6 values 0-31)"))
+                })
+                .collect();
+            if ivs.len() != 6 {
+                eprintln!("error: need exactly 6 IVs, got {}", ivs.len());
+                std::process::exit(1);
+            }
+            let rb = sf.rogue_block().unwrap_or_default();
+            if !rb.ok {
+                eprintln!("error: Rogue block not decodable (layout mismatch)");
+                std::process::exit(1);
+            }
+            let Some(mut s) = sf.safari_mon(&rb, idx) else {
+                eprintln!("error: safari index {idx} out of range");
+                std::process::exit(1);
+            };
+            say!(
+                "safari[{idx}]: {} ({}) nat {} ivs [{}, {}, {}, {}, {}, {}] -> {} ({}) nat {}",
+                s.species(),
+                species_name(s.species()),
+                s.nature(),
+                s.iv(0),
+                s.iv(1),
+                s.iv(2),
+                s.iv(3),
+                s.iv(4),
+                s.iv(5),
+                sp,
+                species_name(sp),
+                nat
+            );
+            s.set_species(sp);
+            s.set_nature(nat);
+            s.set_shiny(shiny != 0);
+            s.set_pokeball(ball);
+            s.priority = pri;
+            for (k, v) in ivs.iter().enumerate() {
+                s.set_iv(k, *v);
+            }
+            sf.set_safari_mon(idx, &s);
         }
         "quest" => {
             // quest INDEX FLAGS [MAXDIFF]  (FLAGS = bitmask, see QUEST_STATE_*; 0x ok)
@@ -1787,6 +2109,56 @@ mod tests {
     use super::*;
 
     #[test]
+    fn safari_bitfields_roundtrip_without_bleed() {
+        // struct RogueSafariMon is two bitfield words + tail. Setting every
+        // field to a distinct value and reading it back proves the shifts/masks;
+        // asserting the raw words afterwards proves no neighbour was clobbered.
+        let mut s = SafariMon::default();
+        s.set_species(1005);
+        for k in 0..6 {
+            s.set_iv(k, (k as u8) + 1); // 1..6
+        }
+        s.set_shiny(true);
+        s.set_pokeball(23);
+        s.set_nature(24);
+        s.set_ability_num(2);
+        s.set_gender_flag(1);
+        s.priority = 99;
+        s.custom_lookup = 7;
+
+        assert_eq!(s.species(), 1005);
+        for k in 0..6 {
+            assert_eq!(s.iv(k), (k as u8) + 1, "iv {k}");
+        }
+        assert!(s.shiny());
+        assert_eq!(s.pokeball(), 23);
+        assert_eq!(s.nature(), 24);
+        assert_eq!(s.ability_num(), 2);
+        assert_eq!(s.gender_flag(), 1);
+
+        // w0 = species(16) | hp1 | atk2 | def3 | shiny(bit31)
+        assert_eq!(s.w0, 1005 | (1 << 16) | (2 << 21) | (3 << 26) | (1 << 31));
+        // w1 = spe4 | spa5 | spd6 | ball<<15 | nature<<20 | ability<<25 | gender<<27
+        assert_eq!(
+            s.w1,
+            (4) | (5 << 5) | (6 << 10) | (23 << 15) | (24 << 20) | (2 << 25) | (1 << 27)
+        );
+
+        // clearing shiny must not disturb species or the IVs above it
+        s.set_shiny(false);
+        assert_eq!(s.species(), 1005);
+        assert_eq!(s.iv(2), 3);
+        assert_eq!(s.w0 & (1 << 31), 0);
+
+        // out-of-range writes must panic rather than corrupt a neighbour
+        let r = std::panic::catch_unwind(|| {
+            let mut t = SafariMon::default();
+            t.set_iv(0, 32);
+        });
+        assert!(r.is_err(), "IV 32 must not silently overflow a 5-bit field");
+    }
+
+    #[test]
     fn nature_table_index3_is_adamant() {
         // A real trap when back-solving: index 3 is Adamant (boosts Atk), not Calm.
         assert_eq!(NATURES[3], "Adamant");
@@ -1909,8 +2281,10 @@ mod tests {
         // setters land where the game reads them
         sf.set_hub_time(137);
         assert_eq!(le16(&sf.merged, time_off), 137);
-        sf.set_hub_season(2);
-        assert_eq!(sf.merged[time_off + 2], 2);
+        sf.set_hub_season(2); // Autumn => day-counter parked at season start
+        assert_eq!(sf.merged[time_off + 2], 2 * DAYS_PER_SEASON);
+        sf.set_season_counter(9); // wraps % (2*4) exactly like the game
+        assert_eq!(sf.merged[time_off + 2], 1);
         sf.set_quest_state(5, 0x21, 3);
         assert_eq!(le32(&sf.merged, rb.quests_f.data + 5 * 8), 0x21 | (3 << 16));
         sf.set_campaign(2, true, true, 500);
@@ -2002,6 +2376,7 @@ struct Editor {
     item_filter: String,
     quest_filter: String,
     hide_empty_items: bool,
+    show_empty_safari: bool,
     dirty: bool,
 }
 
@@ -2017,6 +2392,7 @@ impl Default for Editor {
             item_filter: String::new(),
             quest_filter: String::new(),
             hide_empty_items: true,
+            show_empty_safari: false,
             dirty: false,
         }
     }
@@ -2181,7 +2557,8 @@ impl Editor {
         let stash_named = rb.stash.ok && rb.stash.party.iter().any(|m| m.species() != 0);
         ui.heading("Rogue adventure state");
         let mut tod = rb.time_of_day;
-        let season = rb.season;
+        let season = rb.season; // day counter, NOT a season index
+        let season_idx = (season / DAYS_PER_SEASON) as usize % SEASON_COUNT;
         let mut weather = rb.weather;
         ui.horizontal(|ui| {
             ui.label(format!("save v{}", rb.version));
@@ -2200,10 +2577,15 @@ impl Editor {
                 self.dirty = true;
             }
             egui::ComboBox::from_id_source("season")
-                .selected_text(SEASONS.get(season as usize).copied().unwrap_or("custom"))
+                .selected_text(format!(
+                    "{} (day {}/{})",
+                    SEASONS[season_idx],
+                    season % DAYS_PER_SEASON + 1,
+                    DAYS_PER_SEASON
+                ))
                 .show_ui(ui, |ui| {
                     for (s, name) in SEASONS.iter().enumerate() {
-                        if ui.selectable_label(season as usize == s, *name).clicked() {
+                        if ui.selectable_label(season_idx == s, *name).clicked() {
                             if let Some(sf) = self.file.as_mut() {
                                 sf.set_hub_season(s as u8);
                             }
@@ -2545,6 +2927,123 @@ impl Editor {
             }
             ui.label("Select a slot to edit it like a boxed Pokémon.");
         });
+
+        if rb.ok && rb.safari_f.n > 0 {
+            let sf = self.file.as_ref().unwrap();
+            let rows: Vec<(usize, SafariMon)> = (0..rb.safari_f.n)
+                .filter_map(|i| sf.safari_mon(&rb, i).map(|s| (i, s)))
+                .filter(|(_, s)| s.species() != 0 || self.show_empty_safari)
+                .collect();
+            ui.collapsing(format!("Safari zone roster ({} entries)", rb.safari_f.n), |ui| {
+                ui.checkbox(&mut self.show_empty_safari, "show empty slots");
+                ui.label("These are the wild safari-zone spawns (species, IVs, nature, ball, shiny, spawn priority).");
+                let mut edits: Vec<(usize, SafariMon)> = Vec::new();
+                for (i, mut s) in rows {
+                    ui.horizontal(|ui| {
+                        ui.monospace(format!("{i:3}"));
+                        let mut sp = s.species();
+                        Self::filtered_combo(
+                            ui,
+                            &format!("saf{i}sp"),
+                            &mut self.species_filter,
+                            all_species(),
+                            sp,
+                            &mut |v| sp = v,
+                        );
+                        if sp != s.species() {
+                            s.set_species(sp);
+                            edits.push((i, s.clone()));
+                        }
+                        let mut nick = s.nickname();
+                        if ui.add(egui::TextEdit::singleline(&mut nick).desired_width(84.0)).changed() {
+                            s.set_nickname(&nick);
+                            edits.push((i, s.clone()));
+                        }
+                        for k in 0..6 {
+                            let mut v = s.iv(k) as i32;
+                            if ui
+                                .add(egui::DragValue::new(&mut v).clamp_range(0..=31).prefix("IV"))
+                                .changed()
+                            {
+                                s.set_iv(k, v as u8);
+                                edits.push((i, s.clone()));
+                            }
+                        }
+                        let mut nat = s.nature() as usize;
+                        let mut nat_changed = false;
+                        egui::ComboBox::from_id_source(format!("saf{i}nat"))
+                            .selected_text(NATURES.get(nat).copied().unwrap_or("?"))
+                            .show_ui(ui, |ui| {
+                                for (k, n) in NATURES.iter().enumerate() {
+                                    if ui.selectable_label(nat == k, *n).clicked() {
+                                        nat = k;
+                                        nat_changed = true;
+                                    }
+                                }
+                            });
+                        if nat_changed {
+                            s.set_nature(nat as u8);
+                            edits.push((i, s.clone()));
+                        }
+                        let mut sh = s.shiny();
+                        if ui.checkbox(&mut sh, "shiny").changed() {
+                            s.set_shiny(sh);
+                            edits.push((i, s.clone()));
+                        }
+                        let mut pr = s.priority as i32;
+                        if ui
+                            .add(egui::DragValue::new(&mut pr).clamp_range(0..=255).prefix("pri "))
+                            .changed()
+                        {
+                            s.priority = pr as u8;
+                            edits.push((i, s.clone()));
+                        }
+                    });
+                }
+                for (i, s) in edits {
+                    self.file.as_mut().unwrap().set_safari_mon(i, &s);
+                    self.dirty = true;
+                }
+            });
+        }
+
+        if rb.ok && rb.unique_f.n > 0 {
+            let sf = self.file.as_ref().unwrap();
+            let rows: Vec<(usize, u32, u16, u16)> = (0..rb.unique_f.n)
+                .filter_map(|i| sf.unique_mon(&rb, i).map(|(a, b, c)| (i, a, b, c)))
+                .collect();
+            ui.collapsing("Dynamic unique-mon spawns", |ui| {
+                ui.label("Timed roaming/unique spawns: custom-mon id, species, despawn countdown (steps). id 0 = none pending.");
+                for (i, cid, mut sp, mut cd) in rows {
+                    ui.horizontal(|ui| {
+                        ui.monospace(format!("slot {i}  id {cid}"));
+                        let mut s = sp;
+                        Self::filtered_combo(
+                            ui,
+                            &format!("uniq{i}sp"),
+                            &mut self.species_filter,
+                            all_species(),
+                            s,
+                            &mut |v| s = v,
+                        );
+                        if s != sp {
+                            sp = s;
+                            self.file.as_mut().unwrap().set_unique_mon(i, cid, sp, cd);
+                            self.dirty = true;
+                        }
+                        let mut c = cd as i32;
+                        if ui
+                            .add(egui::DragValue::new(&mut c).clamp_range(0..=65535).prefix("countdown "))
+                            .changed()
+                        {
+                            cd = c as u16;
+                            self.file.as_mut().unwrap().set_unique_mon(i, cid, sp, cd);
+                            self.dirty = true;
+                        }
+                    });
+                }
+            });
+        }
 
         if rb.stash.ok {
             ui.collapsing("Stashed hub state (sRunRestoreBlock)", |ui| {
