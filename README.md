@@ -8,9 +8,9 @@ grows the save blocks, and overlays its own adventure/quest/daycare state on top
 reverse-engineers that layout from the game's own source and edits those saves natively, recomputing every
 Pokémon- and sector-level checksum so the game accepts the result.
 
-> **Status: work in progress.** Party/box/item/trainer editing works and round-trips losslessly. The Rogue-specific
-> blocks (in-adventure vs. overworld state, daycare, quests, campaigns, hub map) are mapped but not yet editable.
-> See [Roadmap](#roadmap).
+> **Status:** party/box/item/trainer editing, the Rogue adventure block (quests, campaigns, hub map, difficulty
+> config, daycare), and the in-adventure vs. hub stashed state are editable, and a no-op resave round-trips
+> losslessly. A few niceties remain — see [Roadmap](#roadmap).
 
 ![Screenshot](docs/screenshot.png)
 
@@ -26,15 +26,26 @@ Pokémon- and sector-level checksum so the game accepts the result.
 - Substruct permutation + `PID ^ OTID` encryption handled on write; Pokémon checksum and flash-sector checksum
   both recomputed (bad saves are rejected by the game)
 - Stat recalculation from base stats + IV/EV/level/nature, using the game's own formulas
-- Party, PC boxes (10 active), bag, PC item pouches, and money
+- Party, PC boxes (10 active), fusion storage, bag, PC item pouches, and money
 - Player name, TID/SID, money, play time
+- Full species/item tables including Rogue's added content: gen-9 dex, mega/gigantamax/Rogue form IDs,
+  Rogue custom items, and Legends Z-A mega stones
+- **Rogue save block** (the adventure state the vanilla layout has no room for):
+  - Quests (all 232 slots, named, with state flags + highest-completed difficulty)
+  - Campaigns (unlock/complete/best score)
+  - Hub map: built areas and every named hub upgrade
+  - Lab difficulty settings: all 20 config toggles and 9 range slots (battle format, game mode,
+    difficulty preset, revision mode, trainer order, …)
+  - Hub time-of-day, season, weather; daycare (current state and stashed state)
+- **In-adventure vs. hub state split**: SaveBlock1 holds whichever state is currently loaded; the other one
+  is stashed inside the Rogue block (`sRunRestoreBlock`). The editor shows and edits **both** — stashed hub
+  party, bag, daycare, money, and play time — so you can fix the state that the game is not currently showing.
 - Lossless round-trip: a no-op resave is byte-identical to the input (rotation, footers, trailer untouched)
 
 **Known layout, not yet editable**
 
-- The Rogue save block (adventure state, quests, campaigns, daycare, hub map, difficulty config)
-- The in-adventure / out-of-adventure split — party, money, and bag live in one of two states depending on
-  whether a run is active
+- Safari-zone mon roster and dynamic unique-mon spawns (decoded counts shown; structs mapped)
+- Mon mastery flags, home decorations, adventure-replay seeds (decoded; rarely useful to hand-edit)
 
 ## Install / build
 
@@ -158,13 +169,15 @@ SAV_OUT=save-out-of-adventure.sav SAV_IN=save-in-adventure.sav python3 tools/dif
 
 ## Roadmap
 
-- [ ] Decode and edit the Rogue save block (quests, campaigns, daycare, hub map, difficulty config, replay slots)
-- [ ] Expose both party/money/bag states explicitly (in-adventure run vs. persistent overworld) instead of only
-      whichever one the save currently carries
-- [ ] Daycare editing
-- [ ] Rogue custom item names (ids 827–1027; not all present in public headers)
-- [ ] Species table completion for the ~140 unresolved form macros
+- [x] Decode and edit the Rogue save block (quests, campaigns, daycare, hub map, difficulty config)
+- [x] Expose both party/money/bag states explicitly (in-adventure run vs. persistent hub state)
+- [x] Daycare editing (current and stashed)
+- [x] Rogue custom item names (ids 827–1072, incl. Legends Z-A mega stones)
+- [x] Species table completion (megas, gigantamax, Rogue form IDs, gen 9)
+- [ ] Safari-zone roster / dynamic unique-mon spawn editing
+- [ ] Edit the raw in-run structs (`gRogueRun`, adventure path) — risky mid-run, likely read-only display
 - [ ] Save creation / migration between Rogue save versions (`SAVE_VER_ID_*`)
+- [ ] Re-seal the Rogue block on save when a future game build changes the stream layout
 
 ## Licensing
 

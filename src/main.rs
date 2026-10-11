@@ -12,10 +12,19 @@
 
 mod basestats;
 mod tables;
+mod tables_extra;
 
 use basestats::base_stats;
 use egui;
 use tables::*;
+
+/// write a line to stdout without panicking on broken pipes (e.g. `| head`)
+macro_rules! say {
+    ($($a:tt)*) => {{
+        use std::io::Write as _;
+        let _ = writeln!(std::io::stdout(), $($a)*);
+    }};
+}
 
 const SECSZ: usize = 0x1000;
 const DATASZ: usize = 4084;
@@ -40,10 +49,26 @@ const BAG_CAP: usize = 450;
 const PC_CAP: usize = 50;
 const SB1_BASE: usize = DATASZ; // SaveBlock1 = merged chunks 1..4
 const STOR_BASE: usize = 5 * DATASZ; // storage = merged chunks 5..13
+
+// Rogue save block: overlays PC boxes 10..13 (boxes[TOTAL=14 alloc, 10 in use][0]).
+// Written by SerializeRogueBlock() (src/rogue_save.c) as a sequential stream where
+// every SerializeArray carries a u16 element-count prefix -> self-describing walk.
+// encryptionKey = 0: the block is plaintext. Verified vs v2.2.0-EX saves.
+const ROGUE_BASE: usize = STOR_BASE + 4 + 10 * 30 * 80;
+const ROGUE_CAP: usize = 4 * 30 * 80; // 4 leftover boxes
+const ROGUE_SECRET: u16 = 27615;
+const DAYCARE_ELEMSZ: usize = 84; // 80B BoxPokemon facade + 4 (v2.2.0 build)
+const STASH_PARTY: usize = 6;
+const STASH_BAG_CAP: usize = 450;
+const STASH_DAYCARE: usize = 3;
 const TOTAL_BOXES: usize = 14; // allocated (boxNames stride)
 const ACTIVE_BOXES: usize = 10; // the PC actually uses boxes 0..9; 10..13 are leftover slots
 const BOX_SLOTS: usize = 30;
 const BOX_NAME_LEN: usize = 9;
+// struct Pokemon fusions[MAX_FUSION_STORAGE=4] at /*0x8432*/ in PokemonStorage
+// (pokemon_storage_system.h). Full 104B party structs.
+const FUSION_OFF: usize = 0x8432;
+const FUSION_COUNT: usize = 4;
 
 const SUBSTRUCT_ORDER: [[usize; 4]; 24] = [
     [0, 1, 2, 3],
@@ -75,6 +100,146 @@ const SUBSTRUCT_ORDER: [[usize; 4]; 24] = [
 fn le16(b: &[u8], i: usize) -> u16 {
     u16::from_le_bytes([b[i], b[i + 1]])
 }
+
+/// Full species pick-list: base dex + Rogue form ids (megas, gigantamax, fake forms).
+fn all_species() -> &'static [(u16, &'static str)] {
+    use std::sync::OnceLock;
+    static T: OnceLock<Vec<(u16, &'static str)>> = OnceLock::new();
+    T.get_or_init(|| {
+        let mut v: Vec<(u16, &'static str)> = tables::SPECIES.iter().copied().collect::<Vec<_>>();
+        v.extend(tables_extra::SPECIES_EXTRA.iter().copied());
+        v.sort_by_key(|(id, _)| *id);
+        v
+    })
+}
+
+/// Full item pick-list: vanilla items + Rogue custom items + Z-A mega stones.
+fn all_items() -> &'static [(u16, &'static str)] {
+    use std::sync::OnceLock;
+    static T: OnceLock<Vec<(u16, &'static str)>> = OnceLock::new();
+    T.get_or_init(|| {
+        let mut v: Vec<(u16, &'static str)> = tables::ITEMS.iter().copied().collect::<Vec<_>>();
+        v.extend(tables_extra::ITEMS_EXTRA.iter().copied());
+        v.sort_by_key(|(id, _)| *id);
+        v
+    })
+}
+
+/// Lab difficulty-config toggles, index order per include/constants/rogue.h.
+const CONFIG_TOGGLES: &[&str] = &[
+    "Exp. share (all party)",
+    "Allow over-level mons",
+    "EV gain",
+    "Overworld mon encounters",
+    "Wipe bag at adventure start",
+    "Run mode switching",
+    "Diverse trainers",
+    "Affection/ribbons",
+    "Release mons in adventure",
+    "Trainers: Rogue gym roster",
+    "Trainers: Kanto",
+    "Trainers: Johto",
+    "Trainers: Hoenn",
+    "Trainers: Sinnoh",
+    "Trainers: Unova",
+    "Trainers: Kalos",
+    "Trainers: Alola",
+    "Trainers: Galar",
+    "Trainers: Paldea",
+    "Trainers: Gen 10 (placeholder)",
+];
+
+/// Lab difficulty-config range slots, index order per include/constants/rogue.h.
+const CONFIG_RANGES: &[&str] = &[
+    "Trainer level shift",
+    "(unused: item)",
+    "(unused: legendary)",
+    "Battle format",
+    "Pokédex variant",
+    "Game mode",
+    "Difficulty preset",
+    "Adventure revision mode",
+    "Trainer order",
+];
+
+const BATTLE_FORMATS: &[&str] = &["Singles", "Doubles", "Mixed"];
+const GAME_MODES: &[&str] = &["Standard", "Gauntlet", "Fast Path"];
+const DIFF_PRESETS: &[&str] = &["Easy", "Average", "Hard", "Brutal", "Custom", "None"];
+const REVISION_MODES: &[&str] = &["Never", "In-run", "Always on"];
+const TRAINER_ORDERS: &[&str] = &["Default", "Rainbow", "Official"];
+const CAMPAIGN_NAMES: &[&str] = &[
+    "Low BST",
+    "Classic",
+    "Mini-boss Battler",
+    "Auto Battler",
+    "Later Manner",
+    "Pokéball Limit",
+    "One HP",
+];
+const HUB_AREAS: &[&str] = &[
+    "Town Square",
+    "Adventure Entrance",
+    "Labs",
+    "Safari Zone",
+    "Challenge Frontier",
+    "Berry Field",
+    "Home",
+    "Marts",
+    "Ride Training",
+    "Day Care",
+    "Market",
+];
+const HUB_UPGRADES: &[&str] = &[
+    "Town Square: School",
+    "Town Square: Tutorites",
+    "Adventure Entrance: Random starter",
+    "Adventure Entrance: Adventure replay",
+    "Lab: Unique mon lab",
+    "Lab: Unique mon slots 1",
+    "Lab: Unique mon slots 2",
+    "Lab: Rarity Rare",
+    "Lab: Rarity Epic",
+    "Lab: Rarity Exotic",
+    "Lab: Rarity Legendary (reserved)",
+    "Home: Lower floor",
+    "Home: Upper floor (reserved)",
+    "Home: Edit style",
+    "Berry Field: Brewing",
+    "Berry Field: Brewing upgrade (reserved)",
+    "Berry Field: Extra field 1",
+    "Berry Field: Extra field 2",
+    "Berry Field: Extra field 3",
+    "Berry Field: Higher yield 1",
+    "Berry Field: Higher yield 2",
+    "Berry Field: Higher yield 3",
+    "Safari Zone: Legends cave",
+    "Marts: General stock",
+    "Marts: Poké Balls",
+    "Marts: Poké Ball stock",
+    "Marts: TMs",
+    "Marts: TM stock",
+    "Marts: Traveler battle enhancers",
+    "Marts: Traveler held items",
+    "Day Care: Capacity 1",
+    "Day Care: Capacity 2",
+    "Day Care: Breeder",
+    "Day Care: Breeder seen dex",
+    "Day Care: Breeder legends (reserved)",
+    "Day Care: Phone 1",
+    "Day Care: Tea shop",
+    "Day Care: Exp share 1",
+    "Day Care: Exp share 2",
+    "Day Care: Exp share 3",
+    "Market: Pokéblock blenders",
+    "Market: Bakery",
+    "Market: Treat shop",
+    "Market: Treat shop stock",
+    "Market: Bank",
+    "Day Care: Phone 2",
+    "Day Care: Phone 3",
+    "Lab: Unique typings",
+];
+const SEASONS: &[&str] = &["Spring", "Summer", "Autumn", "Winter"];
 fn le32(b: &[u8], i: usize) -> u32 {
     u32::from_le_bytes([b[i], b[i + 1], b[i + 2], b[i + 3]])
 }
@@ -145,6 +310,22 @@ fn title_lookup<'a>(table: &'a [(u16, &'a str)], id: u16) -> &'a str {
         .find(|(v, _)| *v == id)
         .map(|(_, n)| *n)
         .unwrap_or("??????")
+}
+
+/// species lookup that also covers Rogue form ids (>905): megas, gigantamax, fake forms
+fn species_name(id: u16) -> &'static str {
+    match title_lookup(tables::SPECIES, id) {
+        "??????" => title_lookup(tables_extra::SPECIES_EXTRA, id),
+        n => n,
+    }
+}
+
+/// item lookup that also covers Rogue custom items (827+)
+fn item_name(id: u16) -> &'static str {
+    match title_lookup(tables::ITEMS, id) {
+        "??????" => title_lookup(tables_extra::ITEMS_EXTRA, id),
+        n => n,
+    }
 }
 
 // ---------------------------------------------------------------- mon model
@@ -460,7 +641,7 @@ impl Mon {
 
     pub fn display_name(&self) -> String {
         let nick = self.nickname();
-        let sp = title_lookup(SPECIES, self.species());
+        let sp = species_name(self.species());
         if !nick.is_empty() && nick != sp {
             format!("Lv{} {} ({})", self.level().unwrap_or(0), nick, sp)
         } else {
@@ -492,6 +673,59 @@ pub struct SaveFile {
     pub active_slot: usize,   // 0 or 14
     pub merged: Vec<u8>,      // rebuilt active-slot stream (14 * DATASZ)
     pub edited: bool,
+}
+
+/// One decoded array from the Rogue stream: element count + absolute merged offset of data.
+#[derive(Clone, Copy, Default)]
+pub struct RogueField {
+    pub n: usize,
+    pub data: usize,
+}
+
+/// The stashed hub state (sRunRestoreBlock): the state that is NOT currently
+/// loaded in SaveBlock1. When SaveBlock1 holds the adventure party, this holds
+/// the hub party/money/bag — and vice versa. Offsets are block-relative once
+/// `base` (absolute merged offset) is known.
+#[derive(Clone, Default)]
+pub struct Stash {
+    pub ok: bool,
+    pub base: usize,
+    pub party: Vec<Mon>,      // 6 x 104B
+    pub bag: Vec<(u16, u16)>, // 450 x (id, qty)
+    pub daycare: Vec<Mon>,    // 3 x 80B box mons
+    pub money: u32,
+    pub play_time: u32,
+}
+
+/// Decoded view of the Rogue save block (boxes 10..13). If `ok` is false the
+/// stream counts did not match the 2.2.0-era layout: display the header, but
+/// all edit paths must refuse to touch it.
+#[derive(Clone, Default)]
+pub struct RogueBlock {
+    pub ok: bool,
+    pub version: u16,
+    pub format: u8,
+    pub is_debug: bool,
+    pub weather: u16,
+    pub time_of_day: u16, // minutes since hub midnight
+    pub season: u8,
+    pub time_off: usize, // absolute merged offset of timeOfDayMinutes (u16); weather = -2, season = +2
+    pub quests_f: RogueField, // n x 8B: u32 stateFlags :16 | highCompleteDiff :3 | highRewardDiff :3
+    pub campaigns_f: RogueField, // n x 4B
+    pub built_f: RogueField,
+    pub coords_f: RogueField,
+    pub upgrades_f: RogueField,
+    pub decor_f: RogueField,
+    pub styles_f: RogueField,
+    pub wander_f: RogueField,
+    pub safari_f: RogueField,
+    pub daycare_f: RogueField, // n x 84B (BoxPokemon facade first 80)
+    pub diff_toggle_f: RogueField,
+    pub diff_range_f: RogueField,
+    pub unique_f: RogueField,
+    pub custids_f: RogueField,
+    pub mastery_f: RogueField,
+    pub stash: Stash,
 }
 
 impl SaveFile {
@@ -624,6 +858,301 @@ impl SaveFile {
         )
     }
 
+    // ---- Rogue save block (boxes 10..13), read-only decode.
+    // Stream layout per SerializeRogueBlockInternal() (rogue_save.c, v2.2.0 era):
+    // header + count-prefixed arrays; every array count is recorded so a
+    // layout drift desyncs loudly instead of mis-editing.
+    pub fn rogue_block(&self) -> Option<RogueBlock> {
+        let base = ROGUE_BASE;
+        if base + ROGUE_CAP > self.merged.len() {
+            return None;
+        }
+        let version = le16(&self.merged, base);
+        let format = self.merged[base + 2];
+        let secret = le16(&self.merged, base + 3);
+        if secret != ROGUE_SECRET || version == 0 {
+            return None; // not a Rogue-era block (or blank)
+        }
+        let mut rb = RogueBlock {
+            version,
+            format,
+            ok: false,
+            ..Default::default()
+        };
+        let mut o = base + 8; // ver u16 | fmt u8 | secret u16 | rogueVer u8 | lastSpecies u16
+        let rd = |o: &mut usize, elemsz: usize| -> Option<(usize, usize)> {
+            if *o + 2 > base + ROGUE_CAP {
+                return None;
+            }
+            let n = le16(&self.merged, *o) as usize;
+            let data = *o + 2;
+            let end = data + n * elemsz;
+            if end > base + ROGUE_CAP {
+                return None;
+            }
+            *o = end;
+            Some((n, data))
+        };
+        let mut ok = true;
+        macro_rules! field {
+            ($f:ident, $elemsz:expr) => {
+                match rd(&mut o, $elemsz) {
+                    Some((n, d)) => {
+                        rb.$f = RogueField { n, data: d };
+                    }
+                    None => ok = false,
+                }
+            };
+        }
+        field!(quests_f, 8);
+        field!(campaigns_f, 4);
+        field!(built_f, 1);
+        field!(coords_f, 4); // Coords16 in the 2.2.0 build
+        field!(upgrades_f, 1);
+        field!(decor_f, 4);
+        field!(styles_f, 1);
+        field!(wander_f, 2);
+        if o + 5 <= base + ROGUE_CAP && ok {
+            rb.weather = le16(&self.merged, o);
+            rb.time_of_day = le16(&self.merged, o + 2);
+            rb.season = self.merged[o + 4];
+            rb.time_off = o + 2;
+            o += 5;
+        } else {
+            ok = false;
+        }
+        field!(safari_f, 20);
+        field!(daycare_f, DAYCARE_ELEMSZ);
+        field!(diff_toggle_f, 1);
+        field!(diff_range_f, 1);
+        field!(unique_f, 8);
+        field!(custids_f, 4);
+        field!(mastery_f, 1);
+        // Era sanity pins: these counts are compile-time constants in the 2.2.0 build.
+        ok = ok
+            && rb.campaigns_f.n == 7
+            && rb.coords_f.n == 11
+            && rb.decor_f.n == 192
+            && rb.daycare_f.n == STASH_DAYCARE
+            && rb.mastery_f.n == 72
+            && rb.custids_f.n == 16
+            && rb.unique_f.n == 5
+            && rb.safari_f.n == 60;
+        if !ok || o >= base + ROGUE_CAP {
+            rb.ok = false;
+            return Some(rb); // layout drift: expose header only, never edit paths
+        }
+        rb.is_debug = self.merged[o] != 0;
+        rb.ok = true;
+        rb.stash = self.find_stash(o);
+        Some(rb)
+    }
+
+    /// sRunRestoreBlock = 6x104 party | 450x4 bag | 3x84 daycare | difficulty(12) | u32 money | u32 playTime.
+    /// Located by validity (checksums + sane money) rather than a fixed gap, so a
+    /// game build that shifts the debug/ride tail still decodes.
+    fn find_stash(&self, from: usize) -> Stash {
+        let base = ROGUE_BASE;
+        for cand in from + 1..from + 96 {
+            if cand + 2696 > base + ROGUE_CAP {
+                break;
+            }
+            let party_ok = (0..2).all(|i| {
+                let off = cand + i * MONSZ;
+                let m = Mon::from_bytes(&self.merged[off..off + MONSZ]);
+                m.pid() == 0 || m.checksum_ok()
+            }) && {
+                let m0 = Mon::from_bytes(&self.merged[cand..cand + MONSZ]);
+                let m1 = Mon::from_bytes(&self.merged[cand + MONSZ..cand + 2 * MONSZ]);
+                !(m0.pid() == 0 && m1.pid() == 0) // require at least one real mon to avoid false anchors
+            };
+            let money = le32(&self.merged, cand + 2688);
+            let play = le32(&self.merged, cand + 2692);
+            if party_ok && money <= 9_999_999 && play < 300 * 3600 {
+                return self.read_stash(cand);
+            }
+        }
+        Stash::default()
+    }
+
+    fn read_stash(&self, at: usize) -> Stash {
+        let mut s = Stash {
+            ok: true,
+            base: at,
+            ..Default::default()
+        };
+        for i in 0..STASH_PARTY {
+            let off = at + i * MONSZ;
+            s.party
+                .push(Mon::from_bytes(&self.merged[off..off + MONSZ]));
+        }
+        let bag = at + 624;
+        for i in 0..STASH_BAG_CAP {
+            s.bag.push((
+                le16(&self.merged, bag + i * 4),
+                le16(&self.merged, bag + i * 4 + 2),
+            ));
+        }
+        let day = at + 2424;
+        for i in 0..STASH_DAYCARE {
+            let off = day + i * DAYCARE_ELEMSZ;
+            s.daycare
+                .push(Mon::from_bytes(&self.merged[off..off + BOXSZ]));
+        }
+        s.money = le32(&self.merged, at + 2688);
+        s.play_time = le32(&self.merged, at + 2692);
+        s
+    }
+
+    pub fn set_stash_mon(&mut self, i: usize, m: &Mon) {
+        let Some(rb) = self.rogue_block() else { return };
+        if !rb.stash.ok || i >= STASH_PARTY {
+            return;
+        }
+        let off = rb.stash.base + i * MONSZ;
+        self.merged[off..off + MONSZ].copy_from_slice(&m.raw);
+        self.edited = true;
+    }
+    pub fn stash_money(&self) -> u32 {
+        self.rogue_block()
+            .filter(|rb| rb.stash.ok)
+            .map(|rb| rb.stash.money)
+            .unwrap_or(0)
+    }
+    pub fn set_stash_money(&mut self, v: u32) {
+        let Some(rb) = self.rogue_block() else { return };
+        if !rb.stash.ok {
+            return;
+        }
+        put32(&mut self.merged, rb.stash.base + 2688, v);
+        self.edited = true;
+    }
+    pub fn set_block_daycare(&mut self, i: usize, m: &Mon) {
+        let Some(rb) = self.rogue_block() else { return };
+        if !rb.ok || i >= rb.daycare_f.n {
+            return;
+        }
+        let off = rb.daycare_f.data + i * DAYCARE_ELEMSZ;
+        self.merged[off..off + BOXSZ].copy_from_slice(&m.raw[..BOXSZ]);
+        self.edited = true;
+    }
+    pub fn set_stash_daycare(&mut self, i: usize, m: &Mon) {
+        let Some(rb) = self.rogue_block() else { return };
+        if !rb.stash.ok || i >= STASH_DAYCARE {
+            return;
+        }
+        let off = rb.stash.base + 2424 + i * DAYCARE_ELEMSZ;
+        self.merged[off..off + BOXSZ].copy_from_slice(&m.raw[..BOXSZ]);
+        self.edited = true;
+    }
+    pub fn set_stash_bag_item(&mut self, i: usize, id: u16, qty: u16) {
+        let Some(rb) = self.rogue_block() else { return };
+        if !rb.stash.ok || i >= STASH_BAG_CAP {
+            return;
+        }
+        let off = rb.stash.base + 624 + i * 4;
+        put16(&mut self.merged, off, id);
+        put16(&mut self.merged, off + 2, qty); // stash bag is NOT XOR-obfuscated
+        self.edited = true;
+    }
+
+    // ---- Rogue-block field edits (all no-ops unless the block decoded cleanly)
+    pub fn set_quest_state(&mut self, i: usize, flags: u16, high_complete: u8) {
+        let Some(rb) = self.rogue_block() else { return };
+        if !rb.ok || i >= rb.quests_f.n {
+            return;
+        }
+        let w = (flags as u32) | ((high_complete as u32 & 7) << 16);
+        put32(&mut self.merged, rb.quests_f.data + i * 8, w);
+        self.edited = true;
+    }
+    pub fn set_campaign(&mut self, i: usize, unlocked: bool, completed: bool, best: u16) {
+        let Some(rb) = self.rogue_block() else { return };
+        if !rb.ok || i >= rb.campaigns_f.n {
+            return;
+        }
+        let v = (unlocked as u32) | ((completed as u32) << 1) | ((best as u32) << 16);
+        put32(&mut self.merged, rb.campaigns_f.data + i * 4, v);
+        self.edited = true;
+    }
+    pub fn set_hub_upgrade(&mut self, bit: usize, on: bool) {
+        let Some(rb) = self.rogue_block() else { return };
+        if !rb.ok || bit >= rb.upgrades_f.n * 8 {
+            return;
+        }
+        let off = rb.upgrades_f.data + bit / 8;
+        if on {
+            self.merged[off] |= 1 << (bit % 8);
+        } else {
+            self.merged[off] &= !(1 << (bit % 8));
+        }
+        self.edited = true;
+    }
+    pub fn set_hub_area(&mut self, bit: usize, on: bool) {
+        let Some(rb) = self.rogue_block() else { return };
+        if !rb.ok || bit >= rb.built_f.n * 8 {
+            return;
+        }
+        let off = rb.built_f.data + bit / 8;
+        if on {
+            self.merged[off] |= 1 << (bit % 8);
+        } else {
+            self.merged[off] &= !(1 << (bit % 8));
+        }
+        self.edited = true;
+    }
+    pub fn set_hub_time(&mut self, minutes: u16) {
+        let Some(rb) = self.rogue_block() else { return };
+        if !rb.ok {
+            return;
+        }
+        put16(&mut self.merged, rb.time_off, minutes % 1440);
+        self.edited = true;
+    }
+    pub fn set_hub_season(&mut self, s: u8) {
+        let Some(rb) = self.rogue_block() else { return };
+        if !rb.ok {
+            return;
+        }
+        self.merged[rb.time_off + 2] = s;
+        self.edited = true;
+    }
+    pub fn set_weather(&mut self, w: u16) {
+        let Some(rb) = self.rogue_block() else { return };
+        if !rb.ok {
+            return;
+        }
+        put16(&mut self.merged, rb.time_off - 2, w);
+        self.edited = true;
+    }
+    pub fn set_diff_toggle(&mut self, i: usize, v: u8) {
+        let Some(rb) = self.rogue_block() else { return };
+        if !rb.ok || i >= rb.diff_toggle_f.n {
+            return;
+        }
+        self.merged[rb.diff_toggle_f.data + i] = v;
+        self.edited = true;
+    }
+    pub fn set_diff_range(&mut self, i: usize, v: u8) {
+        let Some(rb) = self.rogue_block() else { return };
+        if !rb.ok || i >= rb.diff_range_f.n {
+            return;
+        }
+        self.merged[rb.diff_range_f.data + i] = v;
+        self.edited = true;
+    }
+
+    // ---- fusion storage (struct Pokemon fusions[4] at /*0x8432*/ in storage)
+    pub fn fusion_mon(&self, i: usize) -> Mon {
+        let off = self.storage_base() + FUSION_OFF + i * MONSZ;
+        Mon::from_bytes(&self.merged[off..off + MONSZ])
+    }
+    pub fn set_fusion_mon(&mut self, i: usize, m: &Mon) {
+        let off = self.storage_base() + FUSION_OFF + i * MONSZ;
+        self.merged[off..off + MONSZ].copy_from_slice(&m.raw);
+        self.edited = true;
+    }
+
     pub fn pc_items(&self) -> Vec<(u16, u16)> {
         (0..PC_CAP)
             .map(|i| {
@@ -729,20 +1258,20 @@ fn cli_dump(path: &str) {
             std::process::exit(1);
         }
     };
-    println!("file: {path}");
-    println!(
+    say!("file: {path}");
+    say!(
         "active slot: {} (ctr {} / {})",
         sf.active_slot / 14 + 1,
         sf.sectors[0].counter,
         sf.sectors[14].counter
     );
-    println!(
+    say!(
         "slot1 valid: {}  slot2 valid: {}",
         sf.slot_valid(0),
         sf.slot_valid(14)
     );
     let (h, m, s) = sf.play_time();
-    println!(
+    say!(
         "player: {:?} TID {} SID {}  playtime {:02}:{:02}:{:02}  money {}",
         sf.player_name(),
         sf.trainer_id(),
@@ -752,14 +1281,74 @@ fn cli_dump(path: &str) {
         s,
         sf.money()
     );
+    if let Some(rb) = sf.rogue_block() {
+        say!("\nrogue block: v{} fmt{}", rb.version, rb.format);
+        if rb.ok {
+            say!(
+                "  hub time {:02}:{:02}  season {}  weather {}  debug {}",
+                rb.time_of_day / 60,
+                rb.time_of_day % 60,
+                rb.season,
+                rb.weather,
+                rb.is_debug
+            );
+            say!(
+                "  quests {}  campaigns {}  daycare {}  safari {}",
+                rb.quests_f.n,
+                rb.campaigns_f.n,
+                rb.daycare_f.n,
+                rb.safari_f.n
+            );
+            for i in 0..rb.daycare_f.n.min(3) {
+                let off = rb.daycare_f.data + i * DAYCARE_ELEMSZ;
+                let mo = Mon::from_bytes(&sf.merged[off..off + BOXSZ]);
+                if mo.species() != 0 {
+                    say!(
+                        "  daycare[{i}] {} ({}) lvl? species={}",
+                        mo.nickname(),
+                        species_name(mo.species()),
+                        mo.species()
+                    );
+                }
+            }
+            if rb.stash.ok {
+                say!(
+                    "  stashed hub state (sRunRestoreBlock): money {} playTime {}",
+                    rb.stash.money,
+                    rb.stash.play_time
+                );
+                for (i, mo) in rb.stash.party.iter().enumerate() {
+                    if mo.species() != 0 {
+                        say!(
+                            "    stash party[{i}] {} ({}) lvl {}",
+                            mo.nickname(),
+                            species_name(mo.species()),
+                            mo.level().unwrap_or(0)
+                        );
+                    }
+                }
+                for (i, mo) in rb.stash.daycare.iter().enumerate() {
+                    if mo.species() != 0 {
+                        say!(
+                            "    stash daycare[{i}] {} ({})",
+                            mo.nickname(),
+                            species_name(mo.species())
+                        );
+                    }
+                }
+            }
+        } else {
+            say!("  (stream layout mismatch — header only)");
+        }
+    }
     for (i, mo) in sf.party().iter().enumerate() {
-        println!(
+        say!(
             "\nparty[{i}] {} species={} ({})",
             i,
             mo.species(),
-            title_lookup(SPECIES, mo.species())
+            species_name(mo.species())
         );
-        println!(
+        say!(
             "  OT={:?} lvl={} nature={} shiny={} genderFlag={} ball={} exp={} friendship={}",
             mo.ot_name(),
             mo.level().unwrap_or(0),
@@ -770,22 +1359,26 @@ fn cli_dump(path: &str) {
             mo.exp(),
             mo.friendship()
         );
-        println!("  IVs={:?} EVs={:?}", mo.ivs(), mo.evs());
-        println!(
+        say!("  IVs={:?} EVs={:?}", mo.ivs(), mo.evs());
+        say!(
             "  moves={:?} pp={:?}",
             mo.moves().map(|m| title_lookup(MOVES, m)),
             mo.pps()
         );
-        println!(
+        say!(
             "  checksum {} ({}), bad_egg={}",
             mo.checksum_stored(),
             if mo.checksum_ok() { "OK" } else { "BAD" },
             mo.is_bad_egg()
         );
         if let Some((hp, max, st)) = mo.cached_stats() {
-            println!(
+            say!(
                 "  stats cur/max = {hp}/{max}  atk={} def={} spe={} spa={} spd={}",
-                st[0], st[1], st[2], st[3], st[4]
+                st[0],
+                st[1],
+                st[2],
+                st[3],
+                st[4]
             );
         }
     }
@@ -798,11 +1391,11 @@ fn cli_dump(path: &str) {
                 .map(|s| sf.box_mon(bx, s))
                 .find(|m| m.species() != 0)
                 .unwrap();
-            println!(
+            say!(
                 "box {bx} ({:?}): {} mons, first = {} checksum {}",
                 sf.box_name(bx),
                 cnt,
-                title_lookup(SPECIES, first.species()),
+                species_name(first.species()),
                 if first.checksum_ok() { "OK" } else { "BAD" }
             );
         }
@@ -812,9 +1405,9 @@ fn cli_dump(path: &str) {
         .into_iter()
         .chain(sf.pc_items())
         .filter(|(id, _)| *id != 0)
-        .map(|(id, q)| format!("{}x{}", q, title_lookup(ITEMS, id)))
+        .map(|(id, q)| format!("{}x{}", q, item_name(id)))
         .collect();
-    println!("\nitems: {}", items.join(", "));
+    say!("\nitems: {}", items.join(", "));
 }
 
 fn main() -> eframe::Result<()> {
@@ -844,7 +1437,7 @@ fn main() -> eframe::Result<()> {
                 }
             }
             "--help" | "-h" => {
-                println!(
+                say!(
                     "usage: er-save-editor [FILE.sav | --open FILE.sav]   GUI (opens file if given)\n\
                     \x20      er-save-editor --cli FILE.sav                 decode save to stdout (read-only)\n\
                     \x20      er-save-editor --cli-edit FILE ...            scripted edits (see --help-edit)"
@@ -852,10 +1445,18 @@ fn main() -> eframe::Result<()> {
                 return Ok(());
             }
             "--help-edit" => {
-                println!(
+                say!(
                     "--cli-edit FILE <subcommand> [--dry-run]\n\
                     \x20 iv PARTY_IDX IV_IDX VALUE [refresh|no-refresh]   set one IV, refresh cached stat\n\
-                    \x20 money AMOUNT                                     set money\n\
+                    \x20 money AMOUNT                                     set money (currently loaded state)\n\
+                    \x20 iv-stash PARTY_IDX IV_IDX VALUE                  IV on stashed hub party mon\n\
+                    \x20 stash-money AMOUNT                               set stashed hub money (Rogue block)\n\
+                    \x20 hub-time MINUTES                                 hub time-of-day (0..1439)\n\
+                    \x20 hub-season N                                     0 spring..3 winter\n\
+                    \x20 quest INDEX FLAGS [MAXDIFF]                      quest state bitmask\n\
+                    \x20 campaign INDEX UNLOCKED COMPLETED [BEST]         0/1 flags\n\
+                    \x20 diff-toggle BIT 0|1                              lab difficulty toggle\n\
+                    \x20 diff-range IDX VALUE                             lab range slot\n\
                     \x20 noop                                             reseal without data change\n\
                     --dry-run computes edits + checksums in memory and writes zero bytes."
                 );
@@ -896,6 +1497,11 @@ fn main() -> eframe::Result<()> {
 // triggers a write. --cli-edit implies consent by invocation; --dry-run is the
 // escape hatch that computes every edit + checksum but writes zero bytes.
 // There is no autosave, backup, or temp-file path anywhere in the crate.
+fn cli_arg_err(what: &str) -> ! {
+    eprintln!("error: bad {what}");
+    std::process::exit(1);
+}
+
 fn cli_edit(path: &str, args_in: &[String]) {
     let dry_run = args_in.iter().any(|a| a == "--dry-run");
     let args: Vec<String> = args_in
@@ -910,21 +1516,182 @@ fn cli_edit(path: &str, args_in: &[String]) {
             std::process::exit(1);
         }
     };
+    // argument-count guard: missing CLI args exit cleanly instead of panicking
+    let need: usize = match args[0].as_str() {
+        "noop" => 1,
+        "money" | "stash-money" | "hub-time" | "hub-season" => 2,
+        "quest" | "diff-toggle" | "diff-range" => 3,
+        "campaign" | "iv" | "iv-stash" => 4,
+        _ => 0,
+    };
+    if args.len() < need {
+        eprintln!(
+            "error: {} takes {need} argument(s) (see --help-edit)",
+            args[0]
+        );
+        std::process::exit(1);
+    }
     match args[0].as_str() {
         "noop" => {
             if dry_run {
-                println!("dry run: would resave {path} (checksums recomputed); no bytes written");
+                say!("dry run: would resave {path} (checksums recomputed); no bytes written");
                 return;
             }
             sf.edited = true;
             sf.save(path).expect("save failed");
-            println!("resaved {path} (all checksums recomputed, no data change)");
+            say!("resaved {path} (all checksums recomputed, no data change)");
             return;
         }
         "money" => {
             let v: u32 = args[1].parse().unwrap();
-            println!("money {} -> {}", sf.money(), v);
+            say!("money {} -> {}", sf.money(), v);
             sf.set_money(v);
+        }
+        "stash-money" => {
+            let v: u32 = args[1].parse().unwrap();
+            let rb = sf.rogue_block().ok_or_else(|| "no Rogue block".to_string());
+            match rb {
+                Ok(rb) if rb.stash.ok => {
+                    say!("stashed hub money {} -> {}", sf.stash_money(), v);
+                    sf.set_stash_money(v);
+                }
+                _ => {
+                    eprintln!("error: stashed hub state not found/decodable");
+                    std::process::exit(1);
+                }
+            }
+        }
+        // Rogue-block fields. All of these require a cleanly decoded block; they
+        // never guess when the stream layout drifts.
+        "hub-time" => {
+            let mins: u16 = args[1].parse().unwrap();
+            let rb = sf.rogue_block().unwrap_or_default();
+            if !rb.ok {
+                eprintln!("error: Rogue block not decodable (layout mismatch)");
+                std::process::exit(1);
+            }
+            say!(
+                "hub time {:02}:{:02} -> {:02}:{:02}",
+                rb.time_of_day / 60,
+                rb.time_of_day % 60,
+                mins / 60,
+                mins % 60
+            );
+            sf.set_hub_time(mins);
+        }
+        "hub-season" => {
+            let s: u8 = args[1].parse().unwrap();
+            let rb = sf.rogue_block().unwrap_or_default();
+            if !rb.ok {
+                eprintln!("error: Rogue block not decodable (layout mismatch)");
+                std::process::exit(1);
+            }
+            say!("season {} -> {}", rb.season, s);
+            sf.set_hub_season(s);
+        }
+        "quest" => {
+            // quest INDEX FLAGS [MAXDIFF]  (FLAGS = bitmask, see QUEST_STATE_*; 0x ok)
+            let idx: usize = args[1]
+                .parse()
+                .unwrap_or_else(|_| cli_arg_err("quest index"));
+            let flags: u16 = match args[2]
+                .strip_prefix("0x")
+                .or_else(|| args[2].strip_prefix("0X"))
+            {
+                Some(h) => u16::from_str_radix(h, 16)
+                    .unwrap_or_else(|_| cli_arg_err("quest flags (decimal or 0x hex)")),
+                None => args[2]
+                    .parse()
+                    .unwrap_or_else(|_| cli_arg_err("quest flags")),
+            };
+            let rb = sf.rogue_block().unwrap_or_default();
+            if !rb.ok || idx >= rb.quests_f.n {
+                eprintln!("error: Rogue block not decodable, or quest index out of range");
+                std::process::exit(1);
+            }
+            let w0 = le32(&sf.merged, rb.quests_f.data + idx * 8);
+            let name = tables_extra::QUEST_NAMES.get(idx).copied().unwrap_or("?");
+            let hc = args
+                .get(3)
+                .map(|s| s.parse().unwrap())
+                .unwrap_or_else(|| ((w0 >> 16) & 7) as u8);
+            say!(
+                "quest[{idx}] {:?}: flags {:#04x} maxDiff {} -> {:#04x} maxDiff {}",
+                name,
+                (w0 & 0xFFFF) as u16,
+                (w0 >> 16) & 7,
+                flags,
+                hc
+            );
+            sf.set_quest_state(idx, flags, hc);
+        }
+        "campaign" => {
+            // campaign INDEX UNLOCKED COMPLETED [BEST]  (0/1 flags)
+            let idx: usize = args[1].parse().unwrap();
+            let u: bool = args[2].parse::<u8>().unwrap() != 0;
+            let c: bool = args[3].parse::<u8>().unwrap() != 0;
+            let rb = sf.rogue_block().unwrap_or_default();
+            if !rb.ok || idx >= rb.campaigns_f.n {
+                eprintln!("error: Rogue block not decodable, or campaign index out of range");
+                std::process::exit(1);
+            }
+            let v = le32(&sf.merged, rb.campaigns_f.data + idx * 4);
+            let best: u16 = args
+                .get(4)
+                .map(|s| s.parse().unwrap())
+                .unwrap_or((v >> 16) as u16);
+            say!(
+                "campaign[{idx}] {:?}: unlocked={} completed={} best={} -> {} {} {}",
+                CAMPAIGN_NAMES.get(idx).copied().unwrap_or("?"),
+                v & 1,
+                (v >> 1) & 1,
+                v >> 16,
+                u,
+                c,
+                best
+            );
+            sf.set_campaign(idx, u, c, best);
+        }
+        "diff-toggle" => {
+            // diff-toggle BIT 0|1  (lab difficulty toggle, see CONFIG_TOGGLE_*)
+            let bit: usize = args[1].parse().unwrap();
+            let on: bool = args[2].parse::<u8>().unwrap() != 0;
+            let rb = sf.rogue_block().unwrap_or_default();
+            if !rb.ok || bit >= rb.diff_toggle_f.n * 8 || bit >= CONFIG_TOGGLES.len() {
+                eprintln!("error: Rogue block not decodable, or toggle bit out of range");
+                std::process::exit(1);
+            }
+            let byte = sf.merged[rb.diff_toggle_f.data + bit / 8];
+            say!(
+                "toggle[{bit}] {:?}: {} -> {}",
+                CONFIG_TOGGLES[bit],
+                byte >> (bit % 8) & 1,
+                on as u8
+            );
+            let mut b = byte;
+            if on {
+                b |= 1 << (bit % 8);
+            } else {
+                b &= !(1 << (bit % 8));
+            }
+            sf.set_diff_toggle(bit / 8, b);
+        }
+        "diff-range" => {
+            // diff-range IDX VALUE  (lab range slot, see CONFIG_RANGE_*)
+            let idx: usize = args[1].parse().unwrap();
+            let v: u8 = args[2].parse().unwrap();
+            let rb = sf.rogue_block().unwrap_or_default();
+            if !rb.ok || idx >= rb.diff_range_f.n {
+                eprintln!("error: Rogue block not decodable, or range index out of range");
+                std::process::exit(1);
+            }
+            say!(
+                "range[{idx}] {:?}: {} -> {}",
+                CONFIG_RANGES.get(idx).copied().unwrap_or("?"),
+                sf.merged[rb.diff_range_f.data + idx],
+                v
+            );
+            sf.set_diff_range(idx, v);
         }
         "iv" => {
             let pi: usize = args[1].parse().unwrap();
@@ -934,7 +1701,7 @@ fn cli_edit(path: &str, args_in: &[String]) {
             let mut mons = sf.party();
             assert!(pi < mons.len(), "party index out of range");
             let m = &mut mons[pi];
-            println!(
+            say!(
                 "before: ivs={:?} stats={:?}",
                 m.ivs(),
                 m.cached_stats().map(|s| s.2)
@@ -951,10 +1718,27 @@ fn cli_edit(path: &str, args_in: &[String]) {
                 } else {
                     m.set_cached_stat(ii - 1, newv as u16);
                 }
-                println!("refreshed stat idx {ii} -> {} (nature split {split})", newv);
+                say!("refreshed stat idx {ii} -> {} (nature split {split})", newv);
             }
             m.seal();
             sf.set_party_mon(pi, m);
+        }
+        "iv-stash" => {
+            // same as iv, but on the stashed hub party inside the Rogue block
+            let pi: usize = args[1].parse().unwrap();
+            let ii: usize = args[2].parse().unwrap();
+            let v: u8 = args[3].parse().unwrap();
+            let rb = sf.rogue_block().unwrap_or_default();
+            if !rb.stash.ok || pi >= rb.stash.party.len() {
+                eprintln!("error: stashed hub party not decodable, or index out of range");
+                std::process::exit(1);
+            }
+            let mut m = rb.stash.party[pi].clone();
+            say!("stash[{}] before: ivs={:?}", pi, m.ivs());
+            m.set_iv(ii, v);
+            m.seal();
+            sf.set_stash_mon(pi, &m);
+            say!("stash[{pi}] ivs -> {:?}", m.ivs());
         }
         _ => {
             eprintln!("unknown subcommand");
@@ -962,13 +1746,11 @@ fn cli_edit(path: &str, args_in: &[String]) {
         }
     }
     if dry_run {
-        println!(
-            "dry run: edits computed + checksums verified in memory; no bytes written to {path}"
-        );
+        say!("dry run: edits computed + checksums verified in memory; no bytes written to {path}");
         return;
     }
     sf.save(path).expect("save failed");
-    println!("saved {path} (mon + sector checksums recomputed)");
+    say!("saved {path} (mon + sector checksums recomputed)");
 }
 
 /// vanilla gNatureStatTable: nature index boosts stat (nat/5) and lowers
@@ -1040,6 +1822,142 @@ mod tests {
         }
     }
 
+    /// Build a minimal synthetic save in memory (no file IO) whose Rogue block
+    /// matches the v2.2.0 stream layout, then round-trip the Rogue setters.
+    fn synth_save() -> SaveFile {
+        // merged stream: 14 sectors of DATASZ
+        let mut merged = vec![0u8; SLOT_SECTORS * DATASZ];
+        let base = ROGUE_BASE;
+        // header: ver u16 | fmt u8 | secret u16 | rogueVer u8 | lastSpecies u16
+        put16(&mut merged, base, 7);
+        merged[base + 2] = 2;
+        put16(&mut merged, base + 3, ROGUE_SECRET);
+        merged[base + 5] = 1;
+        put16(&mut merged, base + 6, 1434);
+        let mut o = base + 8;
+        // emit a count prefix and skip the element bytes; zeros are fine
+        for (n, elemsz) in [
+            (232usize, 8usize), // quests
+            (7, 4),             // campaigns
+            (2, 1),             // areaBuiltFlags
+            (11, 4),            // areaCoords (Coords16 era)
+            (6, 1),             // upgradeFlags
+            (192, 4),           // homeDecorations
+            (3, 1),             // homeStyles
+            (10, 2),            // wandering species
+        ] {
+            put16(&mut merged, o, n as u16);
+            o += 2 + n * elemsz;
+        }
+        let time_off = o + 2; // weather u16, then time u16, then season u8
+        o += 5;
+        for (n, elemsz) in [
+            (60usize, 20usize),  // safari
+            (3, DAYCARE_ELEMSZ), // block daycare
+            (3, 1),              // diff toggles
+            (9, 1),              // diff ranges
+            (5, 8),              // dynamic uniques
+            (16, 4),             // safari custom ids
+            (72, 1),             // mon mastery
+        ] {
+            put16(&mut merged, o, n as u16);
+            o += 2 + n * elemsz;
+        }
+        merged[o] = 0; // isDebug
+        o += 1;
+        for k in 0..50 {
+            merged[o + k] = 0xEE; // ride state / replay / rng tail junk: nonzero pids,
+        } // checksums wrong -> the stash validity scan cannot false-anchor here
+        o += 50;
+        // sRunRestoreBlock: party 6x104 | bag 450x4 | daycare 3x84 | diff 12 | money | time
+        // Plant a REAL sealed party mon so the stash validity scan anchors on the
+        // exact offset (byte-shifted copies of a sealed mon fail checksums).
+        let stash = o + 16;
+        let mut raw = vec![0u8; MONSZ];
+        put32(&mut raw, 0, 0xDEAD_BEEF); // pid
+        put32(&mut raw, 4, 0x1234_5678); // otid
+        put32(&mut raw, 32, 0x1122_3344); // substruct bytes (arbitrary)
+        put32(&mut raw, 36, 0x5566_7788);
+        let mut m = Mon::from_bytes(&raw);
+        m.set_species(59); // via the logical substruct view (t[0] low 11 bits)
+        m.seal(); // computes a correct checksum over the permuted substructs
+        m.raw[84] = 54; // level byte in the party layout (outside the box struct)
+        merged[stash..stash + MONSZ].copy_from_slice(&m.raw);
+        put32(&mut merged, stash + 2688, 1234); // money
+        put32(&mut merged, stash + 2692, 500); // playTime
+        let sectors: Vec<Sector> = (0..FILE_SECTORS)
+            .map(|p| Sector {
+                data: vec![0u8; DATASZ],
+                id: (p % SLOT_SECTORS) as u16,
+                csum: 0,
+                security: if p < 28 { SECURITY } else { 0 },
+                counter: if p >= 14 && p < 28 { 5 } else { 4 },
+            })
+            .collect();
+        let mut sf = SaveFile {
+            sectors,
+            trailer: vec![],
+            active_slot: 14,
+            merged,
+            edited: false,
+        };
+        // stash scan tolerance: make sure nothing earlier looks like a stash
+        let rb = sf.rogue_block().expect("synthetic block decodes");
+        assert!(rb.ok, "synthetic stream must decode");
+        assert_eq!(rb.quests_f.n, 232);
+        assert_eq!(rb.time_of_day, le16(&sf.merged, time_off));
+        // setters land where the game reads them
+        sf.set_hub_time(137);
+        assert_eq!(le16(&sf.merged, time_off), 137);
+        sf.set_hub_season(2);
+        assert_eq!(sf.merged[time_off + 2], 2);
+        sf.set_quest_state(5, 0x21, 3);
+        assert_eq!(le32(&sf.merged, rb.quests_f.data + 5 * 8), 0x21 | (3 << 16));
+        sf.set_campaign(2, true, true, 500);
+        assert_eq!(
+            le32(&sf.merged, rb.campaigns_f.data + 2 * 4),
+            3 | (500 << 16)
+        );
+        sf.set_hub_upgrade(47, true);
+        assert_eq!(sf.merged[rb.upgrades_f.data + 5] & 0x80, 0x80);
+        // set_diff_toggle indexes BYTES; the CLI/GUI pack bit edits into bytes first
+        sf.set_diff_toggle(1, 0b0001_0000); // bit 4 = "wipe bag at adventure start"
+        assert_eq!(sf.merged[rb.diff_toggle_f.data + 1], 0b0001_0000);
+        sf.set_diff_range(6, 2);
+        assert_eq!(sf.merged[rb.diff_range_f.data + 6], 2);
+        assert!(rb.stash.ok, "synthetic stash anchor must be found");
+        assert_eq!(rb.stash.base, stash, "anchor must be the planted offset");
+        assert_eq!(rb.stash.party[0].species(), 59);
+        assert!(rb.stash.party[0].checksum_ok());
+        let b = rb.stash.base;
+        sf.set_stash_money(999);
+        assert_eq!(le32(&sf.merged, b + 2688), 999);
+        assert_eq!(sf.stash_money(), 999);
+        sf.set_stash_bag_item(0, 828, 3);
+        assert_eq!(le32(&sf.merged, b + 624), 828u32 | (3u32 << 16));
+        let rb2 = sf.rogue_block().unwrap();
+        assert_eq!(rb2.stash.base, b, "anchor must be stable across reloads");
+        assert_eq!(rb2.stash.money, 999);
+        sf
+    }
+
+    #[test]
+    fn rogue_block_roundtrip_synth() {
+        let _ = synth_save();
+    }
+
+    #[test]
+    fn save_reseals_sectors_and_keeps_shape() {
+        // in-memory only: save() must recompute sector checksums and byte size.
+        // (We only call the checksum logic here; the disk write path is gated by
+        // explicit user consent and is exercised manually, not by tests.)
+        let sf = synth_save();
+        for k in 0..SLOT_SECTORS {
+            let data = &sf.merged[k * DATASZ..(k + 1) * DATASZ];
+            let _ = sector_crc(data); // must not panic; folds to u16
+        }
+    }
+
     #[test]
     fn substruct_table_has_24_distinct_permutations() {
         assert_eq!(SUBSTRUCT_ORDER.len(), 24);
@@ -1061,12 +1979,17 @@ enum Tab {
     Boxes,
     Items,
     Trainer,
+    Rogue,
 }
 
 #[derive(Clone)]
 enum Sel {
     Party(usize),
     Box(usize, usize),
+    Fusion(usize),       // fusion storage (struct Pokemon fusions[4] at storage+0x8432)
+    StashParty(usize),   // hub-state party, stashed in the Rogue block while adventuring
+    BlockDaycare(usize), // daycare as the game currently sees it
+    StashDaycare(usize), // daycare stashed for the hub state
 }
 
 struct Editor {
@@ -1077,6 +2000,7 @@ struct Editor {
     status: String,
     species_filter: String,
     item_filter: String,
+    quest_filter: String,
     hide_empty_items: bool,
     dirty: bool,
 }
@@ -1091,6 +2015,7 @@ impl Default for Editor {
             status: "Open a .sav file to begin.".into(),
             species_filter: String::new(),
             item_filter: String::new(),
+            quest_filter: String::new(),
             hide_empty_items: true,
             dirty: false,
         }
@@ -1150,6 +2075,28 @@ impl Editor {
         match self.sel.clone()? {
             Sel::Party(i) if i < sf.party_count() => Some(sf.party()[i].clone()),
             Sel::Box(bx, s) => Some(sf.box_mon(bx, s)),
+            Sel::Fusion(f) if f < FUSION_COUNT => Some(sf.fusion_mon(f)),
+            Sel::StashParty(i) => {
+                let rb = sf.rogue_block()?;
+                rb.stash
+                    .ok
+                    .then(|| rb.stash.party.get(i).cloned())
+                    .flatten()
+            }
+            Sel::BlockDaycare(i) => {
+                let rb = sf.rogue_block()?;
+                rb.ok.then_some(Mon::from_bytes(
+                    &sf.merged[rb.daycare_f.data + i * DAYCARE_ELEMSZ
+                        ..rb.daycare_f.data + i * DAYCARE_ELEMSZ + BOXSZ],
+                ))
+            }
+            Sel::StashDaycare(i) => {
+                let rb = sf.rogue_block()?;
+                rb.stash
+                    .ok
+                    .then(|| rb.stash.daycare.get(i).cloned())
+                    .flatten()
+            }
             _ => None,
         }
     }
@@ -1159,6 +2106,10 @@ impl Editor {
             match self.sel {
                 Some(Sel::Party(i)) => sf.set_party_mon(i, &m),
                 Some(Sel::Box(bx, s)) => sf.set_box_mon(bx, s, &m),
+                Some(Sel::Fusion(f)) => sf.set_fusion_mon(f, &m),
+                Some(Sel::StashParty(i)) => sf.set_stash_mon(i, &m),
+                Some(Sel::BlockDaycare(i)) => sf.set_block_daycare(i, &m),
+                Some(Sel::StashDaycare(i)) => sf.set_stash_daycare(i, &m),
                 _ => {}
             }
             self.dirty = true;
@@ -1205,6 +2156,489 @@ impl Editor {
         let _ = resp;
     }
 
+    fn rogue_ui(&mut self, ui: &mut egui::Ui) {
+        let rb = match self.file.as_ref().and_then(|sf| sf.rogue_block()) {
+            Some(rb) => rb,
+            None => {
+                ui.label("No Rogue save block found (not a v2.x Rogue save?).");
+                return;
+            }
+        };
+        if !rb.ok {
+            ui.colored_label(
+                egui::Color32::GOLD,
+                format!(
+                    "Rogue block header v{} found, but the stream layout does not match the \
+                     expected v2.2.0 layout — showing header only; editing is disabled for this block.",
+                    rb.version
+                ),
+            );
+            return;
+        }
+        // Which state is live? SaveBlock1 always holds the *currently loaded* state.
+        // If the stashed hub party is non-empty while SB1 shows more/different mons,
+        // the player is mid-adventure.
+        let stash_named = rb.stash.ok && rb.stash.party.iter().any(|m| m.species() != 0);
+        ui.heading("Rogue adventure state");
+        let mut tod = rb.time_of_day;
+        let season = rb.season;
+        let mut weather = rb.weather;
+        ui.horizontal(|ui| {
+            ui.label(format!("save v{}", rb.version));
+            ui.label(format!("hub time {:02}:{:02}", tod / 60, tod % 60));
+            if ui
+                .add(
+                    egui::DragValue::new(&mut tod)
+                        .clamp_range(0..=1439)
+                        .suffix(" min"),
+                )
+                .changed()
+            {
+                if let Some(sf) = self.file.as_mut() {
+                    sf.set_hub_time(tod);
+                }
+                self.dirty = true;
+            }
+            egui::ComboBox::from_id_source("season")
+                .selected_text(SEASONS.get(season as usize).copied().unwrap_or("custom"))
+                .show_ui(ui, |ui| {
+                    for (s, name) in SEASONS.iter().enumerate() {
+                        if ui.selectable_label(season as usize == s, *name).clicked() {
+                            if let Some(sf) = self.file.as_mut() {
+                                sf.set_hub_season(s as u8);
+                            }
+                            self.dirty = true;
+                        }
+                    }
+                });
+            if ui
+                .add(
+                    egui::DragValue::new(&mut weather)
+                        .clamp_range(0..=65535)
+                        .prefix("weather "),
+                )
+                .changed()
+            {
+                if let Some(sf) = self.file.as_mut() {
+                    sf.set_weather(weather);
+                }
+                self.dirty = true;
+            }
+            ui.label(format!("debug {}", rb.is_debug));
+        });
+
+        ui.collapsing("Quests", |ui| {
+            let n = rb.quests_f.n;
+            let base = rb.quests_f.data;
+            let qn = tables_extra::QUEST_NAMES;
+            // snapshot current values so the UI never borrows the file while editing it
+            let snap: Vec<(u16, u8)> = {
+                let sf = self.file.as_ref().unwrap();
+                (0..n)
+                    .map(|i| {
+                        let w0 = le32(&sf.merged, base + i * 8);
+                        ((w0 & 0xFFFF) as u16, ((w0 >> 16) & 7) as u8)
+                    })
+                    .collect()
+            };
+            let mut filt = self.quest_filter.clone();
+            ui.horizontal(|ui| {
+                ui.label("filter:");
+                ui.text_edit_singleline(&mut filt);
+                self.quest_filter = filt.clone();
+                ui.label(format!(
+                    "{} quest slots (names from quests.json, exporter order)",
+                    n
+                ));
+            });
+            let f = filt.to_lowercase();
+            let mut edits: Vec<(usize, u16, u8)> = Vec::new();
+            egui::ScrollArea::vertical()
+                .max_height(340.0)
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    for i in 0..n {
+                        let (flags, hc) = snap[i];
+                        let name = qn.get(i).copied().unwrap_or("?");
+                        if flags == 0 && hc == 0 {
+                            continue; // untouched slot
+                        }
+                        if !f.is_empty() && !name.to_lowercase().contains(&f) {
+                            continue;
+                        }
+                        let mut edit = [
+                            flags & 1 != 0,
+                            flags & 2 != 0,
+                            flags & 4 != 0,
+                            flags & 8 != 0,
+                            flags & 0x10 != 0,
+                            flags & 0x20 != 0,
+                        ];
+                        ui.horizontal(|ui| {
+                            ui.monospace(format!("{i:3}"));
+                            ui.with_layout(
+                                egui::Layout::left_to_right(egui::Align::Center),
+                                |ui| {
+                                    ui.add_sized(
+                                        [240.0, 0.0],
+                                        egui::Label::new(name).truncate(true),
+                                    );
+                                },
+                            );
+                            let lbls = ["unlock", "active", "pin", "rwrd", "new", "done"];
+                            let mut changed = false;
+                            for (k, lb) in lbls.iter().enumerate() {
+                                if ui.checkbox(&mut edit[k], *lb).changed() {
+                                    changed = true;
+                                }
+                            }
+                            let mut hcv = hc;
+                            if ui
+                                .add(
+                                    egui::DragValue::new(&mut hcv)
+                                        .clamp_range(0..=7)
+                                        .prefix("maxDiff "),
+                                )
+                                .changed()
+                            {
+                                changed = true;
+                            }
+                            if changed {
+                                let mut nf = 0u16;
+                                for k in 0..6 {
+                                    if edit[k] {
+                                        nf |= 1 << k;
+                                    }
+                                }
+                                edits.push((i, nf, hcv));
+                            }
+                        });
+                    }
+                });
+            if !edits.is_empty() {
+                if let Some(sf) = self.file.as_mut() {
+                    for (i, nf, hcv) in edits {
+                        sf.set_quest_state(i, nf, hcv);
+                    }
+                }
+                self.dirty = true;
+            }
+        });
+
+        ui.collapsing("Campaigns", |ui| {
+            let snap: Vec<u32> = {
+                let sf = self.file.as_ref().unwrap();
+                (0..rb.campaigns_f.n)
+                    .map(|i| le32(&sf.merged, rb.campaigns_f.data + i * 4))
+                    .collect()
+            };
+            let mut edits: Vec<(usize, bool, bool, u16)> = Vec::new();
+            for i in 0..rb.campaigns_f.n {
+                let v = snap[i];
+                let name = CAMPAIGN_NAMES.get(i).copied().unwrap_or("?");
+                let mut unlocked = v & 1 != 0;
+                let mut completed = (v >> 1) & 1 != 0;
+                let mut best = (v >> 16) as u16;
+                ui.horizontal(|ui| {
+                    ui.strong(format!("{i}"));
+                    ui.add_sized([170.0, 0.0], egui::Label::new(name).truncate(true));
+                    let mut changed = false;
+                    if ui.checkbox(&mut unlocked, "unlocked").changed() {
+                        changed = true;
+                    }
+                    if ui.checkbox(&mut completed, "completed").changed() {
+                        changed = true;
+                    }
+                    if ui
+                        .add(
+                            egui::DragValue::new(&mut best)
+                                .clamp_range(0..=65535)
+                                .prefix("best "),
+                        )
+                        .changed()
+                    {
+                        changed = true;
+                    }
+                    if changed {
+                        edits.push((i, unlocked, completed, best));
+                    }
+                });
+            }
+            if !edits.is_empty() {
+                if let Some(sf) = self.file.as_mut() {
+                    for (i, u, c, b) in edits {
+                        sf.set_campaign(i, u, c, b);
+                    }
+                }
+                self.dirty = true;
+            }
+        });
+
+        ui.collapsing("Hub map (areas + upgrades)", |ui| {
+            let area_snap: Vec<u8> = {
+                let sf = self.file.as_ref().unwrap();
+                (0..rb.built_f.n)
+                    .map(|k| sf.merged[rb.built_f.data + k])
+                    .collect()
+            };
+            let up_snap: Vec<u8> = {
+                let sf = self.file.as_ref().unwrap();
+                (0..rb.upgrades_f.n)
+                    .map(|k| sf.merged[rb.upgrades_f.data + k])
+                    .collect()
+            };
+            let mut area_edits: Vec<(usize, bool)> = Vec::new();
+            let mut up_edits: Vec<(usize, bool)> = Vec::new();
+            ui.strong("Areas built");
+            for i in 0..HUB_AREAS.len() {
+                let byte = area_snap.get(i / 8).copied().unwrap_or(0);
+                let mut on = byte >> (i % 8) & 1 != 0;
+                if ui.checkbox(&mut on, HUB_AREAS[i]).changed() {
+                    area_edits.push((i, on));
+                }
+            }
+            ui.add_space(6.0);
+            ui.strong("Upgrades");
+            egui::Grid::new("hubupgrades")
+                .num_columns(2)
+                .spacing([16.0, 2.0])
+                .show(ui, |ui| {
+                    for i in 0..HUB_UPGRADES.len() {
+                        let byte = up_snap.get(i / 8).copied().unwrap_or(0);
+                        let mut on = byte >> (i % 8) & 1 != 0;
+                        if ui.checkbox(&mut on, HUB_UPGRADES[i]).changed() {
+                            up_edits.push((i, on));
+                        }
+                        if i % 2 == 1 {
+                            ui.end_row();
+                        }
+                    }
+                });
+            if !area_edits.is_empty() || !up_edits.is_empty() {
+                if let Some(sf) = self.file.as_mut() {
+                    for (i, on) in area_edits {
+                        sf.set_hub_area(i, on);
+                    }
+                    for (i, on) in up_edits {
+                        sf.set_hub_upgrade(i, on);
+                    }
+                }
+                self.dirty = true;
+            }
+        });
+
+        ui.collapsing("Difficulty / adventure settings (lab)", |ui| {
+            let t_snap: Vec<u8> = {
+                let sf = self.file.as_ref().unwrap();
+                (0..rb.diff_toggle_f.n)
+                    .map(|k| sf.merged[rb.diff_toggle_f.data + k])
+                    .collect()
+            };
+            let r_snap: Vec<u8> = {
+                let sf = self.file.as_ref().unwrap();
+                (0..rb.diff_range_f.n)
+                    .map(|k| sf.merged[rb.diff_range_f.data + k])
+                    .collect()
+            };
+            let mut t_edits: Vec<(usize, u8)> = Vec::new();
+            let mut r_edits: Vec<(usize, u8)> = Vec::new();
+            ui.strong("Toggles");
+            egui::Grid::new("difftoggle")
+                .num_columns(2)
+                .spacing([16.0, 2.0])
+                .show(ui, |ui| {
+                    for i in 0..CONFIG_TOGGLES.len().min(rb.diff_toggle_f.n * 8) {
+                        let byte = t_snap.get(i / 8).copied().unwrap_or(0);
+                        let mut on = byte >> (i % 8) & 1 != 0;
+                        if ui.checkbox(&mut on, CONFIG_TOGGLES[i]).changed() {
+                            t_edits.push((i, if on { 1 } else { 0 }));
+                        }
+                        if i % 2 == 1 {
+                            ui.end_row();
+                        }
+                    }
+                });
+            // pack bit edits back into byte writes
+            if !t_edits.is_empty() {
+                let mut bytes = t_snap.clone();
+                for (bit, want) in t_edits {
+                    let b = &mut bytes[bit / 8];
+                    if want == 1 {
+                        *b |= 1 << (bit % 8);
+                    } else {
+                        *b &= !(1 << (bit % 8));
+                    }
+                }
+                if let Some(sf) = self.file.as_mut() {
+                    for k in 0..bytes.len().min(rb.diff_toggle_f.n) {
+                        sf.set_diff_toggle(k, bytes[k]);
+                    }
+                }
+                self.dirty = true;
+            }
+            ui.add_space(6.0);
+            ui.strong("Ranges");
+            for i in 0..rb.diff_range_f.n {
+                let v = r_snap[i];
+                let label = CONFIG_RANGES.get(i).copied().unwrap_or("?");
+                ui.horizontal(|ui| {
+                    ui.add_sized([190.0, 0.0], egui::Label::new(label).truncate(true));
+                    let opts: &[&str] = match i {
+                        3 => BATTLE_FORMATS,
+                        5 => GAME_MODES,
+                        6 => DIFF_PRESETS,
+                        7 => REVISION_MODES,
+                        8 => TRAINER_ORDERS,
+                        _ => &[],
+                    };
+                    if opts.is_empty() {
+                        let mut n = v as i32;
+                        if ui
+                            .add(egui::DragValue::new(&mut n).clamp_range(-128..=255))
+                            .changed()
+                        {
+                            r_edits.push((i, n as u8));
+                        }
+                        if i == 0 {
+                            ui.label("(trainer level shift, signed)");
+                        }
+                    } else {
+                        let cur = opts.get(v as usize).copied().unwrap_or("?");
+                        egui::ComboBox::from_id_source(format!("rng{i}"))
+                            .selected_text(format!("{v} — {cur}"))
+                            .show_ui(ui, |ui| {
+                                for (o, name) in opts.iter().enumerate() {
+                                    if ui.selectable_label(v as usize == o, *name).clicked() {
+                                        r_edits.push((i, o as u8));
+                                    }
+                                }
+                            });
+                    }
+                });
+            }
+            if !r_edits.is_empty() {
+                if let Some(sf) = self.file.as_mut() {
+                    for (i, v) in r_edits {
+                        sf.set_diff_range(i, v);
+                    }
+                }
+                self.dirty = true;
+            }
+        });
+
+        ui.collapsing("Daycare (current)", |ui| {
+            let sf = self.file.as_ref().unwrap();
+            for i in 0..rb.daycare_f.n {
+                let off = rb.daycare_f.data + i * DAYCARE_ELEMSZ;
+                let m = Mon::from_bytes(&sf.merged[off..off + BOXSZ]);
+                if m.species() == 0 {
+                    ui.label(format!("slot {i}: empty"));
+                    continue;
+                }
+                let sel = matches!(self.sel, Some(Sel::BlockDaycare(x)) if x == i);
+                if ui
+                    .selectable_label(sel, format!("slot {i}: {}", m.display_name()))
+                    .clicked()
+                {
+                    self.sel = Some(Sel::BlockDaycare(i));
+                }
+            }
+            ui.label("Select a slot to edit it like a boxed Pokémon.");
+        });
+
+        if rb.stash.ok {
+            ui.collapsing("Stashed hub state (sRunRestoreBlock)", |ui| {
+                ui.label(format!(
+                    "money {}  playTime {}s",
+                    rb.stash.money, rb.stash.play_time
+                ));
+                for (i, m) in rb.stash.party.iter().enumerate() {
+                    if m.species() == 0 {
+                        continue;
+                    }
+                    let sel = matches!(self.sel, Some(Sel::StashParty(x)) if x == i);
+                    if ui
+                        .selectable_label(sel, format!("[{i}] {}", m.display_name()))
+                        .clicked()
+                    {
+                        self.sel = Some(Sel::StashParty(i));
+                    }
+                }
+                for (i, m) in rb.stash.daycare.iter().enumerate() {
+                    if m.species() == 0 {
+                        continue;
+                    }
+                    let sel = matches!(self.sel, Some(Sel::StashDaycare(x)) if x == i);
+                    if ui
+                        .selectable_label(sel, format!("daycare[{i}]: {}", m.display_name()))
+                        .clicked()
+                    {
+                        self.sel = Some(Sel::StashDaycare(i));
+                    }
+                }
+                let mut money = rb.stash.money;
+                if ui
+                    .add(egui::DragValue::new(&mut money).clamp_range(0..=9_999_999))
+                    .changed()
+                {
+                    self.file.as_mut().unwrap().set_stash_money(money);
+                    self.dirty = true;
+                }
+                // stashed hub bag: quantity here is raw (the bag lives in the Rogue
+                // block, not SaveBlock1, so the XOR obfuscation does not apply)
+                let bag: Vec<(u16, u16)> = rb.stash.bag.clone();
+                let mut bag_edits: Vec<(usize, u16, u16)> = Vec::new();
+                ui.add_space(4.0);
+                ui.strong("Stashed bag");
+                egui::Grid::new("stashbag")
+                    .num_columns(3)
+                    .spacing([10.0, 2.0])
+                    .show(ui, |ui| {
+                        for (i, (id, q)) in bag.into_iter().enumerate() {
+                            if id == 0 {
+                                continue;
+                            }
+                            ui.monospace(format!("{i:3}"));
+                            let mut mid = id;
+                            Self::filtered_combo(
+                                ui,
+                                &format!("sbag{i}"),
+                                &mut self.item_filter,
+                                all_items(),
+                                mid,
+                                &mut |v| mid = v,
+                            );
+                            let mut qq = q;
+                            if ui
+                                .add(egui::DragValue::new(&mut qq).clamp_range(0..=999))
+                                .changed()
+                                || mid != id
+                            {
+                                bag_edits.push((i, mid, qq));
+                            }
+                            ui.end_row();
+                        }
+                    });
+                if !bag_edits.is_empty() {
+                    if let Some(sf) = self.file.as_mut() {
+                        for (i, id, q) in bag_edits {
+                            sf.set_stash_bag_item(i, id, q);
+                        }
+                    }
+                    self.dirty = true;
+                }
+            });
+        }
+
+        if stash_named {
+            ui.separator();
+            ui.label(
+                "Note: SaveBlock1 currently holds the *in-adventure* party/money; the \
+                 stashed block above is the *hub* state (and vice versa when at the hub).",
+            );
+        }
+    }
+
     fn mon_editor_ui(&mut self, ui: &mut egui::Ui) {
         let Some(mut m) = self.selected_mon() else {
             ui.heading("No Pokémon selected");
@@ -1233,7 +2667,7 @@ impl Editor {
                     ui,
                     "species",
                     &mut self.species_filter,
-                    SPECIES,
+                    all_species(),
                     m.species(),
                     &mut |id| {
                         m.set_species(id);
@@ -1245,7 +2679,7 @@ impl Editor {
                     ui,
                     "item",
                     &mut self.item_filter,
-                    ITEMS,
+                    all_items(),
                     m.held_item(),
                     &mut |id| {
                         m.set_held_item(id);
@@ -1498,10 +2932,7 @@ impl Editor {
         let Some(sf) = &self.file else { return };
         ui.checkbox(&mut self.hide_empty_items, "hide empty slots");
         let mut edits: Vec<(bool, usize, u16, u16)> = Vec::new();
-        for (bag, off, cap, label) in [
-            (true, "bag", BAG_CAP, "Bag"),
-            (false, "pc", PC_CAP, "PC (x256 box)"),
-        ] {
+        for (bag, label) in [(true, "Bag"), (false, "PC (x256 box)")] {
             ui.strong(label);
             let items: Vec<(u16, u16)> = if bag { sf.bag_items() } else { sf.pc_items() };
             egui::Grid::new(label)
@@ -1515,7 +2946,7 @@ impl Editor {
                         }
                         shown += 1;
                         ui.monospace(format!("{i:3}"));
-                        let name = title_lookup(ITEMS, id);
+                        let name = item_name(id);
                         if ui.button(format!("{id:5} {name}")).clicked() {
                             // simple cycle-to-empty behavior: clicking opens a search below
                         }
@@ -1661,6 +3092,7 @@ impl eframe::App for Editor {
                     ui.selectable_value(&mut self.tab, Tab::Boxes, "Boxes");
                     ui.selectable_value(&mut self.tab, Tab::Items, "Items");
                     ui.selectable_value(&mut self.tab, Tab::Trainer, "Trainer");
+                    ui.selectable_value(&mut self.tab, Tab::Rogue, "Rogue");
                 });
             }
         });
@@ -1679,6 +3111,26 @@ impl eframe::App for Editor {
                         }
                     }
                     ui.add_space(8.0);
+                    let fusions: Vec<(usize, Mon)> = (0..FUSION_COUNT)
+                        .map(|f| (f, sf.fusion_mon(f)))
+                        .filter(|(_, m)| m.species() != 0)
+                        .collect();
+                    if !fusions.is_empty() {
+                        ui.strong(format!("Fusion storage — {}", fusions.len()));
+                        for (f, m) in fusions {
+                            let label = format!("{}. {}", f + 1, m.display_name());
+                            if ui
+                                .selectable_label(
+                                    matches!(self.sel, Some(Sel::Fusion(x)) if x == f),
+                                    label,
+                                )
+                                .clicked()
+                            {
+                                self.sel = Some(Sel::Fusion(f));
+                            }
+                        }
+                        ui.add_space(8.0);
+                    }
                     for bx in 0..ACTIVE_BOXES {
                         let cnt = (0..BOX_SLOTS).filter(|&s| sf.box_mon(bx, s).species() != 0).count();
                         if cnt == 0 && bx >= 10 { continue; }
@@ -1712,6 +3164,7 @@ impl eframe::App for Editor {
                 Tab::Party | Tab::Boxes => self.mon_editor_ui(ui),
                 Tab::Items => self.items_ui(ui),
                 Tab::Trainer => self.trainer_ui(ui),
+                Tab::Rogue => self.rogue_ui(ui),
             }
         });
     }

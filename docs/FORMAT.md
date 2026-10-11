@@ -287,7 +287,44 @@ Rogue item names live in `gRogueItems[]` using designated initialisers
 `#ifdef ROGUE_EXPANSION` blocks. Names include `Link Cable`, `Quest Book`, the curses, TRs, debug mints. Not every id
 resolves from public headers — unresolved ones currently display as numeric ids.
 
-## 11. Daycare / quests (mapped, not yet editable)
+## 11. Verified stream walk (v2.2.0 era, saveVersion 7)
+
+Starting at `boxes[10][0]` (merged offset `0xad88`), after the 8-byte header each `SerializeArray` writes a
+`u16` element count followed by `count × elemsize` bytes. The counts observed in live saves and pinned by the
+test suite (`rogue_block_roundtrip_synth`):
+
+| field | elemsize | count |
+|-------|---------:|------:|
+| questStates | 8 | 232 |
+| campaignData | 4 | 7 |
+| hubMap.areaBuiltFlags | 1 | 2 |
+| hubMap.areaCoords | 4 (Coords16) | 11 |
+| hubMap.upgradeFlags | 1 | 6 |
+| hubMap.homeDecorations | 4 | 192 |
+| hubMap.homeStyles | 1 | 3 |
+| hubMap.homeWanderingMonSpecies | 2 | 10 |
+| hubMap.weatherState | 2 (plain `SerializeData`) | — |
+| timeOfDayMinutes / seasonCounter | 2 / 1 (plain) | — |
+| safariMons | 20 | 60 |
+| daycarePokemon | 84 | 3 |
+| difficultyConfig.toggleBits | 1 | 3 (20 toggles) |
+| difficultyConfig.rangeValues | 1 | 9 |
+| dynamicUniquePokemon | 8 | 5 |
+| safariMonCustomIds | 4 | 16 |
+| monMasteryFlags | 1 | 72 (569 bits) |
+| isDebug | 1 (plain) | — |
+| debug cfg (only when isDebug) | — | skipped when 0 |
+| RogueRideMonState | 7 (plain) | — |
+| adventureReplay | 16 | 2 |
+| gRngRogueValue | 4 (plain) | — |
+| sRunRestoreBlock | 2696 (plain) | — |
+| gRogueRun, currentRoomParams, currentRoomType | plain | after stash |
+
+The stash (`sRunRestoreBlock`) is located by validity scan (sealed party mon checksums + sane money/playtime)
+rather than a fixed offset, so tail-layout drift in newer builds still decodes. Quest names for the 232 slots
+come from parsing `data/rogue/quests.json` with the exporter's include/#if rules (see `tools/gen_tables_v2.py`).
+
+## 12. Daycare / quests
 
 ```c
 /*0x3030*/ struct DayCare daycare;      // vanilla daycare, in SaveBlock1
@@ -299,7 +336,7 @@ Rogue's daycare is `daycarePokemon[3]` inside the Rogue save block *and* mirrore
 in-run and out-of-run daycare are separate. Quest state is `RogueQuestState` bitfields
 (`stateFlags:16`, `highestCompleteDifficulty:3`, `highestCollectedRewardDifficulty:3`).
 
-## 12. Verification checklist for any editor
+## 13. Verification checklist for any editor
 
 1. Pick the live slot by footer counter; validate every sector checksum.
 2. Decode with the *Rogue* struct sizes (104 for party).
