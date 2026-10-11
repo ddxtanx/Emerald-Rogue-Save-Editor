@@ -36,6 +36,20 @@ const PARTY_COUNT_OFF: usize = 0x234;
 const PARTY_OFF: usize = 0x238;
 const MONSZ: usize = 104;
 const BOXSZ: usize = 80;
+// Rogue discards the vanilla growth-rate curves: Rogue_ModifyExperienceTables()
+// (src/rogue_baked.c) returns `level * 300` for every growthRate, and the level loop
+// in GetLevelFrom{Box}MonExp clamps at MAX_LEVEL. So exp == level*300 and level ==
+// clamp(exp/300, 0, MAX_LEVEL) — the same schedule for every species.
+const EXP_PER_LEVEL: u32 = 300;
+const MAX_LEVEL: u8 = 100;
+
+/// Replay of the game's level loop (src/pokemon.c GetLevelFromBoxMonExp) against
+/// Rogue's flat `level * 300` schedule. Exact for all exp values, including the
+/// clamping when exp exceeds what level 100 costs.
+fn level_from_exp(exp: u32) -> u8 {
+    let lvl = exp / EXP_PER_LEVEL;
+    lvl.min(MAX_LEVEL as u32) as u8
+}
 // Rogue shifts SB1 after the party: Pokemon structs are 104B not 80B.
 // Verified against jfzazo savconverter + live save:
 //   money   = 0x238 + 6*104      = 0x4A8 (XOR'd with SB2 encryptionKey @SB2+0x4C)
@@ -469,6 +483,8 @@ impl Mon {
     pub fn set_exp(&mut self, v: u32) {
         let w = le32(&self.t[0], 4);
         self.t[0][4..8].copy_from_slice(&((w & !0x1F_FFFF) | (v & 0x1F_FFFF)).to_le_bytes());
+        // exp is authoritative for level, so a party mon's cached byte follows it.
+        self.sync_cached_level();
     }
     pub fn pp_bonuses(&self) -> u8 {
         self.t[0][8]
@@ -587,16 +603,43 @@ impl Mon {
             .copy_from_slice(&((w & !(0x7 << 3)) | (((v as u32) & 0x7) << 3)).to_le_bytes());
     }
 
+    /// Level is *derived from exp*, never read from a byte for box mons.
+    ///
+    /// Rogue replaces the vanilla growth-rate tables with a single flat schedule:
+    /// `Rogue_ModifyExperienceTables()` (src/rogue_baked.c) is just `level * 300`,
+    /// ignoring growthRate entirely. `struct BoxPokemon` has no level field at all,
+    /// so the game always recomputes the level from exp
+    /// (`GetLevelFromBoxMonExp` / `GetLevelFromMonExp`, src/pokemon.c) — a loop over
+    /// that schedule clamped to MAX_LEVEL (100). `CalculateMonStats` then writes the
+    /// result back into the party struct's cached level byte. Exp is therefore the
+    /// authoritative field for *both* the 104-byte party and the 80-byte box layout,
+    /// and a party mon's cached byte is only a mirror that can go stale.
     pub fn level(&self) -> Option<u8> {
+        Some(level_from_exp(self.exp()))
+    }
+    /// The raw cached byte in the 104-byte party struct (offset 84). Box mons have no
+    /// such byte. Exposed so a stale/mismatched mirror is visible rather than silent.
+    pub fn level_cached(&self) -> Option<u8> {
         if self.raw.len() == MONSZ {
             Some(self.raw[84])
         } else {
             None
         }
     }
+    /// Sets level by setting exp, which is what the game does when it creates a mon
+    /// at a given level (`exp = Rogue_ModifyExperienceTables(growthRate, level)`).
+    /// For a party mon the cached byte is kept in sync with the new exp.
     pub fn set_level(&mut self, v: u8) {
+        let v = v.min(MAX_LEVEL);
+        self.set_exp((v as u32) * EXP_PER_LEVEL);
         if self.raw.len() == MONSZ {
             self.raw[84] = v;
+        }
+    }
+    /// Keep a party mon's cached level byte consistent with its exp. No-op for box mons.
+    pub fn sync_cached_level(&mut self) {
+        if self.raw.len() == MONSZ {
+            self.raw[84] = self.level().unwrap_or(0);
         }
     }
     pub fn cached_stats(&self) -> Option<(u16, u16, [u16; 5])> {
@@ -1511,9 +1554,10 @@ fn cli_dump(path: &str) {
                 let mo = Mon::from_bytes(&sf.merged[off..off + BOXSZ]);
                 if mo.species() != 0 {
                     say!(
-                        "  daycare[{i}] {} ({}) lvl? species={}",
+                        "  daycare[{i}] {} ({}) lvl {} species={}",
                         mo.nickname(),
                         species_name(mo.species()),
+                        mo.level().unwrap_or(0),
                         mo.species()
                     );
                 }
@@ -1606,22 +1650,30 @@ fn cli_dump(path: &str) {
         }
     }
     for bx in 0..ACTIVE_BOXES {
-        let cnt = (0..BOX_SLOTS)
-            .filter(|&s| sf.box_mon(bx, s).species() != 0)
-            .count();
-        if cnt > 0 {
-            let first = (0..BOX_SLOTS)
-                .map(|s| sf.box_mon(bx, s))
-                .find(|m| m.species() != 0)
-                .unwrap();
-            say!(
-                "box {bx} ({:?}): {} mons, first = {} checksum {}",
-                sf.box_name(bx),
-                cnt,
-                species_name(first.species()),
-                if first.checksum_ok() { "OK" } else { "BAD" }
-            );
+        let mons: Vec<Mon> = (0..BOX_SLOTS)
+            .map(|s| sf.box_mon(bx, s))
+            .filter(|m| m.species() != 0)
+            .collect();
+        if mons.is_empty() {
+            continue;
         }
+        let bad = mons.iter().filter(|m| !m.checksum_ok()).count();
+        // Levels are derived from exp (box structs have no level byte).
+        let roster: Vec<String> = mons
+            .iter()
+            .map(|m| format!("{} L{}", species_name(m.species()), m.level().unwrap_or(0)))
+            .collect();
+        say!(
+            "box {bx} ({:?}): {} mons{}, {}",
+            sf.box_name(bx),
+            mons.len(),
+            if bad == 0 {
+                String::new()
+            } else {
+                format!(" ({bad} BAD checksum)")
+            },
+            roster.join(", ")
+        );
     }
     let items: Vec<String> = sf
         .bag_items()
@@ -2192,6 +2244,53 @@ mod tests {
         for s in ["TRAINER", "BOX1", "PIKACHU", "A1!?-.9"] {
             assert_eq!(gen3_decode(&gen3_encode(s, 10)), s);
         }
+    }
+
+    #[test]
+    fn level_derives_from_exp_rogue_flat_schedule() {
+        // Rogue replaces the growth tables: exp == level * 300 for ALL species
+        // (Rogue_ModifyExperienceTables, src/rogue_baked.c). Live-save anchors:
+        // Arcanine exp 16200 -> 54, Metagross exp 17100 -> 57.
+        assert_eq!(level_from_exp(16200), 54);
+        assert_eq!(level_from_exp(17100), 57);
+        // loop boundary: exact multiple counts, one short does not
+        assert_eq!(level_from_exp(300), 1);
+        assert_eq!(level_from_exp(599), 1);
+        assert_eq!(level_from_exp(600), 2);
+        // GetLevelFromBoxMonExp clamps its loop at MAX_LEVEL (100), so over-leveled
+        // exp still reports 100 (e.g. the level-115 exp seen on boxed mons).
+        assert_eq!(level_from_exp(30000), 100);
+        assert_eq!(level_from_exp(34500), 100);
+        assert_eq!(level_from_exp(0x1F_FFFF), 100);
+    }
+
+    #[test]
+    fn box_mon_level_set_writes_exp_not_a_byte() {
+        // 80-byte box struct: no level byte exists. set_level must encode via exp,
+        // and set_exp must move the level read-back.
+        let raw = vec![0u8; BOXSZ];
+        // zeroed struct: pid/otid 0 -> key 0; accessors don't need a valid checksum
+        let mut m = Mon::from_bytes(&raw);
+        assert!(m.level_cached().is_none(), "box struct has no cached byte");
+        m.set_level(65);
+        assert_eq!(m.exp(), 65 * 300);
+        assert_eq!(m.level(), Some(65));
+        m.set_exp(1200);
+        assert_eq!(m.level(), Some(4));
+
+        // party struct keeps its cached mirror in sync with exp
+        let praw = vec![0u8; MONSZ];
+        let mut p = Mon::from_bytes(&praw);
+        p.set_level(54);
+        assert_eq!(p.raw[84], 54, "set_level must update the cached mirror");
+        p.set_exp(300 * 77);
+        assert_eq!(p.raw[84], 77, "set_exp must follow the cached mirror");
+        assert_eq!(p.level(), Some(77));
+
+        // a stale mirror is reported honestly: exp wins, but the byte is visible
+        p.raw[84] = 7;
+        assert_eq!(p.level(), Some(77));
+        assert_eq!(p.level_cached(), Some(7));
     }
 
     /// Build a minimal synthetic save in memory (no file IO) whose Rogue block
@@ -3206,18 +3305,28 @@ impl Editor {
                 }
                 ui.end_row();
 
-                if m.level().is_some() {
-                    ui.label("Level (cached)");
-                    let mut lvl = m.level().unwrap();
-                    if ui
-                        .add(egui::DragValue::new(&mut lvl).clamp_range(0..=100))
-                        .changed()
-                    {
-                        m.set_level(lvl);
-                        changed = true;
+                // Level is derived from exp for every mon (box structs have no level
+                // byte at all). Editing level writes exp = level*300, exactly like the
+                // game does when it spawns a mon at a level.
+                let derived = m.level().unwrap_or(0);
+                ui.label("Level");
+                let mut lvl = derived;
+                if ui
+                    .add(egui::DragValue::new(&mut lvl).clamp_range(1..=MAX_LEVEL))
+                    .changed()
+                {
+                    m.set_level(lvl);
+                    changed = true;
+                }
+                if let Some(cached) = m.level_cached() {
+                    if cached != derived {
+                        ui.colored_label(
+                            egui::Color32::from_rgb(220, 160, 60),
+                            format!(
+                                "cached byte {cached} != exp-derived {derived} (game uses {derived})"
+                            ),
+                        );
                     }
-                } else {
-                    ui.label("Level: (box mon — computed from exp)");
                 }
                 ui.label("Experience");
                 let mut exp = m.exp();
