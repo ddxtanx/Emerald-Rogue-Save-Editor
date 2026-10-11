@@ -1,0 +1,28 @@
+# ---- build artifacts ----
+/target
+**/*.rs.bk
+*.o
+*.so
+
+# ---- private data: NEVER commit real saves ----
+# .sav files contain player names, trainer/secret IDs, and personal progress.
+*.sav
+*.sav.bak
+*.bak
+
+# ---- local scratch ----
+__pycache__/
+*.pyc
+.venv/
+venv/
+.idea/
+.vscode/
+*.log
+.DS_Store
+
+# ---- scratch screenshots at repo root (docs/*.png are the curated ones) ----
+/*.png
+!/docs/*.png
+
+# ---- vendored game source (large, upstream repo; see docs/FORMAT.md) ----
+/rogue-src/
