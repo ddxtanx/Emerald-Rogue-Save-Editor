@@ -11,6 +11,8 @@
 //!       er-save-editor --cli FILE     -> dump save to stdout (headless verification)
 
 mod basestats;
+mod deco_variants;
+mod item_pockets;
 mod tables;
 mod tables_extra;
 
@@ -63,6 +65,22 @@ const BAG_CAP: usize = 450;
 const PC_CAP: usize = 50;
 const SB1_BASE: usize = DATASZ; // SaveBlock1 = merged chunks 1..4
 const STOR_BASE: usize = 5 * DATASZ; // storage = merged chunks 5..13
+                                     // Bag sizing knobs (include/constants/global.h + constants/rogue.h):
+                                     //   SB1+0x4AC u8 bagSortMode (0 type, 1 name, 2 value, 3 amount)
+                                     //   SB1+0x4AD u8 bagCapacityUpgrades
+                                     // The game only ever *reads* the first `Rogue_GetBagCapacity()` slots of the
+                                     // flat bag array, so anything past capacity is invisible (and gets shuffled
+                                     // away by the next in-game bag sort). Key Items are special: they live in the
+                                     // LAST 50 slots of the physical array (`BAG_ITEM_RESERVED_SLOTS`), which is
+                                     // why a sorted bag ends with its key-item run.
+const BAG_SORT_MODE_OFF: usize = 0x4AC;
+const BAG_CAP_UPGRADES_OFF: usize = 0x4AD;
+const BAG_RESERVED_SLOTS: usize = 50;
+const BAG_SLOTS_PER_UPGRADE: usize = 10;
+const BAG_MAX_CAPACITY_UPGRADES: usize = 37;
+const BAG_BASE_CAPACITY: usize = 450 - BAG_MAX_CAPACITY_UPGRADES * BAG_SLOTS_PER_UPGRADE; // 80
+/// `MAX_BAG_ITEM_CAPACITY`: Rogue gives every pocket a 999-per-stack cap.
+const MAX_STACK: u16 = 999;
 
 // Rogue save block: overlays PC boxes 10..13 (boxes[TOTAL=14 alloc, 10 in use][0]).
 // Written by SerializeRogueBlock() (src/rogue_save.c) as a sequential stream where
@@ -76,6 +94,29 @@ const SAFARISZ: usize = 20; // struct RogueSafariMon (STATIC_ASSERT == 20)
 const STASH_PARTY: usize = 6;
 const STASH_BAG_CAP: usize = 450;
 const STASH_DAYCARE: usize = 3;
+/// `FOLLOWMON_SHINY_OFFSET` (`include/constants/rogue.h`): the hub's
+/// `homeWanderingMonSpecies` stores `species + 10000` for a shiny follow-mon.
+const FOLLOWMON_SHINY_OFFSET: u16 = 10000;
+/// `homeStyles` labels, in the enum order of `src/rogue_hub.c`.
+const HOME_STYLE_EXTERIOR: &[&str] = &[
+    "Cave",
+    "Trees",
+    "Brick House",
+    "Wooden House",
+    "Gym Building",
+];
+const HOME_STYLE_INTERIOR: &[&str] = &[
+    "Red Cave",
+    "Blue Cave",
+    "Brown Cave",
+    "Desert Cave",
+    "Shrub",
+    "Tree",
+];
+const HOME_STYLE_PATH: &[&str] = &["Grass", "Sand", "Stone", "Pebbles", "Muddy Tracks"];
+/// `homeDecorations` slot ranges (`HOME_DECOR_OUTSIDE_COUNT` 160, then
+/// `HOME_DECOR_INSIDE_COUNT` 32).
+const HOME_DECOR_OUTSIDE: usize = 160;
 const TOTAL_BOXES: usize = 14; // allocated (boxNames stride)
 const ACTIVE_BOXES: usize = 10; // the PC actually uses boxes 0..9; 10..13 are leftover slots
 const BOX_SLOTS: usize = 30;
@@ -368,6 +409,56 @@ fn item_name(id: u16) -> &'static str {
         "??????" => title_lookup(tables_extra::ITEMS_EXTRA, id),
         n => n,
     }
+}
+
+/// Effective pocket for a bag-placed item id (1..=9; 0 = pocketless). The game
+/// refuses to add pocketless ids to the bag at all (`ItemId_GetPocket` ==
+/// `POCKET_NONE` in `AddBagItem`), so this gates every scripted insert.
+fn item_pocket(id: u16) -> u8 {
+    if id == 0 {
+        return 0;
+    }
+    item_pockets::ITEM_POCKETS
+        .iter()
+        .find(|(v, _)| *v == id)
+        .map(|(_, p)| *p)
+        .unwrap_or(0)
+}
+
+/// `Rogue_IsEvolutionItem`: the game's own sort displays evolution items
+/// first and groups them together inside their pocket run (`SortItemPlaceBefore`
+/// fallback sub-sort). Part of the editor's canonical order so an editor-sorted
+/// bag matches what the game's in-bag sort would produce.
+fn is_evo_item(id: u16) -> bool {
+    item_pockets::EVO_ITEMS.binary_search(&id).is_ok()
+}
+
+/// The editor's canonical sort key: pocket run order (the functional
+/// invariant), evo items first within a run (the game's display rule), then
+/// ascending id (the game's final tie-break).
+fn bag_sort_key(id: u16) -> (u8, bool, u16) {
+    (item_pocket(id), !is_evo_item(id), id)
+}
+
+fn pocket_name(p: u8) -> String {
+    // POCKET_ORDER stores human display names ("Items", "Held Items"), NOT the
+    // C constant names — never slice a fixed prefix off them (this panicked on
+    // "Items" once the GUI started rendering pocket labels).
+    match item_pockets::POCKET_ORDER.iter().find(|(_, v)| *v == p) {
+        Some((name, v)) => format!("{name} (pocket {v})"),
+        None => format!("unpocketed (POCKET_NONE = {p})"),
+    }
+}
+
+/// `homeDecorations[].decorVariant` is an index into a game-generated enum, so the
+/// id is meaningless without this table. The enum is emitted by the game's own
+/// DecorationExporter; `tools/gen_deco_variants.py` reproduces its ordering and is
+/// anchored on a real save (id 119 = the wardrobe `RogueHub_ClearProgress` seeds).
+fn decor_name(id: u8) -> &'static str {
+    deco_variants::DECOR_VARIANTS
+        .get(id as usize)
+        .copied()
+        .unwrap_or("out-of-range decoration id")
 }
 
 // ---------------------------------------------------------------- mon model
@@ -1077,7 +1168,7 @@ impl SaveFile {
         field!(quests_f, 8);
         field!(campaigns_f, 4);
         field!(built_f, 1);
-        field!(coords_f, 4); // Coords16 in the 2.2.0 build
+        field!(coords_f, 4); // padded Coords8: s8 x, s8 y + 2 pad bytes (see hub_field_editors_land_on_the_walked_offsets)
         field!(upgrades_f, 1);
         field!(decor_f, 4);
         field!(styles_f, 1);
@@ -1305,6 +1396,18 @@ impl SaveFile {
         put32(&mut self.merged, rb.campaigns_f.data + i * 4, v);
         self.edited = true;
     }
+    fn bit_get(&self, f: &RogueField, bit: usize) -> bool {
+        if bit >= f.n * 8 {
+            return false;
+        }
+        self.merged[f.data + bit / 8] & (1 << (bit % 8)) != 0
+    }
+    pub fn hub_area_built(&self, rb: &RogueBlock, i: usize) -> bool {
+        rb.ok && self.bit_get(&rb.built_f, i)
+    }
+    pub fn hub_upgrade_on(&self, rb: &RogueBlock, i: usize) -> bool {
+        rb.ok && self.bit_get(&rb.upgrades_f, i)
+    }
     pub fn set_hub_upgrade(&mut self, bit: usize, on: bool) {
         let Some(rb) = self.rogue_block() else { return };
         if !rb.ok || bit >= rb.upgrades_f.n * 8 {
@@ -1329,6 +1432,248 @@ impl SaveFile {
         } else {
             self.merged[off] &= !(1 << (bit % 8));
         }
+        self.edited = true;
+    }
+    /// Area position on the hub map. On disk each `areaCoords` entry is 4 bytes:
+    /// `s8 x, s8 y` followed by two pad bytes (`struct Coords8` is two s8 members;
+    /// the compiler pads the serialized stride to 4). Reading the pair as `s16`
+    /// gives nonsense (Town Square would be x=257), and stride 2 desyncs every
+    /// array that follows. Pinned in `hub_field_editors_land_on_the_walked_offsets`.
+    ///
+    /// `RogueHub_ClearProgress` memsets the whole hub map and then calls
+    /// `RogueHub_BuildArea` (which sets the built bit AND x/y together), so in a
+    /// game-written save only BUILT areas have coordinates; unbuilt ones read as
+    /// (0,0) and are never consulted (`RogueHub_GetAreaAt` skips unbuilt areas).
+    /// Setting a coordinate on an unbuilt area is inert -- it gets overwritten the
+    /// moment the game builds that area -- so this setter deliberately does NOT
+    /// touch the built flag. Build separately with `hub-area`.
+    pub fn hub_area_coord(&self, rb: &RogueBlock, i: usize) -> Option<(i8, i8)> {
+        if !rb.ok || i >= rb.coords_f.n {
+            return None;
+        }
+        let o = rb.coords_f.data + i * 4;
+        Some((self.merged[o] as i8, self.merged[o + 1] as i8))
+    }
+    /// Raw coordinate bytes (x, y, pad0, pad1) so the GUI/CLI can show what is
+    /// actually on disk, including a non-zero pad from a foreign editor.
+    pub fn hub_area_coord_raw(&self, rb: &RogueBlock, i: usize) -> Option<[u8; 4]> {
+        if !rb.ok || i >= rb.coords_f.n {
+            return None;
+        }
+        let o = rb.coords_f.data + i * 4;
+        Some([
+            self.merged[o],
+            self.merged[o + 1],
+            self.merged[o + 2],
+            self.merged[o + 3],
+        ])
+    }
+    pub fn set_hub_area_coord(&mut self, i: usize, x: i8, y: i8) {
+        let Some(rb) = self.rogue_block() else { return };
+        if !rb.ok || i >= rb.coords_f.n {
+            return;
+        }
+        let off = rb.coords_f.data + i * 4;
+        self.merged[off] = x as u8;
+        self.merged[off + 1] = y as u8;
+        // pad bytes zeroed, as the game's padded Coords8 leaves them
+        self.merged[off + 2] = 0;
+        self.merged[off + 3] = 0;
+        self.edited = true;
+    }
+    /// Warnings for placing area `i` at (x,y), computed the way the game resolves
+    /// hub travel. Travel is tile-adjacency: `RogueHub_GetAreaAtConnection` walks
+    /// one tile from an area's coordinate in a direction that area's ROM-side
+    /// `connectionWarps` allow, and `RogueHub_FindAreaAtCoord` returns the first
+    /// BUILT area sitting on that tile. So a hand-placed coordinate can break the
+    /// map in two ways the game itself never produces:
+    ///  * two built areas on one tile -> the second is unreachable (its tile
+    ///    resolves to the first match, and nothing warps to it);
+    ///  * an area with no built neighbour in any direction it can connect -> no
+    ///    warp path exists, so the area is unreachable except by another edit.
+    /// These are advisory: the game does not re-validate coords on load.
+    pub fn hub_coord_warnings(&self, rb: &RogueBlock, i: usize, x: i8, y: i8) -> Vec<String> {
+        let mut out = Vec::new();
+        if !rb.ok || i >= rb.coords_f.n {
+            return out;
+        }
+        // 1. tile collision with another BUILT area
+        for j in 0..rb.coords_f.n {
+            if j == i || !self.hub_area_built(rb, j) {
+                continue;
+            }
+            if self.hub_area_coord(rb, j) == Some((x, y)) {
+                let other = HUB_AREAS.get(j).copied().unwrap_or("?");
+                out.push(format!(
+                    "tile ({x},{y}) already holds BUILT area {j} {other}; one of the two will be unreachable"
+                ));
+            }
+        }
+        // 2. adjacency. The ROM `connectionWarps` table is per-area and not in the
+        //    save, so the conservative check is: at least one built neighbour in a
+        //    4-connected direction. The game additionally requires the *direction*
+        //    to be warpable for both areas, which this cannot know from the save.
+        let neighbours: [(i8, i8); 4] = [(0, 1), (0, -1), (1, 0), (-1, 0)];
+        let mover_built = self.hub_area_built(rb, i);
+        let touches = neighbours.iter().any(|(dx, dy)| {
+            // s8 arithmetic wraps like the game's s8 coords; keep it in i16 so the
+            // wrap is explicit rather than a Rust overflow panic.
+            let nx = (x as i16 + *dx as i16) as i8;
+            let ny = (y as i16 + *dy as i16) as i8;
+            (0..rb.coords_f.n).any(|j| {
+                j != i && self.hub_area_built(rb, j) && self.hub_area_coord(rb, j) == Some((nx, ny))
+            })
+        });
+        if !touches && mover_built {
+            out.push(format!(
+                "({x},{y}) has no built 4-connected neighbour; the game reaches areas by walking between adjacent tiles, so this area may be unreachable"
+            ));
+        }
+        // 3. moving can also ORPHAN whatever used to sit next to this area's old
+        //    tile: an area that was only reachable through here loses its last
+        //    door. Only meaningful when the mover is built (an unbuilt area is not
+        //    anybody's door).
+        if let (true, Some((ox, oy))) = (mover_built, self.hub_area_coord(rb, i)) {
+            let supports = |k: usize| -> bool {
+                let (kx, ky) = match self.hub_area_coord(rb, k) {
+                    Some(c) => c,
+                    None => return true, // no coordinate to reason about
+                };
+                neighbours.iter().any(|(dx, dy)| {
+                    let nx = (kx as i16 + *dx as i16) as i8;
+                    let ny = (ky as i16 + *dy as i16) as i8;
+                    // the mover still supports k if its NEW tile lands next to k
+                    if nx == x && ny == y {
+                        return true;
+                    }
+                    (0..rb.coords_f.n).any(|j| {
+                        // exclude the mover and the candidate orphan: after the move
+                        // i is at (x,y), handled above, and k is not its own support
+                        j != i
+                            && j != k
+                            && self.hub_area_built(rb, j)
+                            && self.hub_area_coord(rb, j) == Some((nx, ny))
+                    })
+                })
+            };
+            for (dx, dy) in neighbours {
+                let nx = (ox as i16 + dx as i16) as i8;
+                let ny = (oy as i16 + dy as i16) as i8;
+                for j in 0..rb.coords_f.n {
+                    if j == i || !self.hub_area_built(rb, j) {
+                        continue;
+                    }
+                    if self.hub_area_coord(rb, j) == Some((nx, ny)) && !supports(j) {
+                        let other = HUB_AREAS.get(j).copied().unwrap_or("?");
+                        out.push(format!(
+                            "area {j} {other} at ({nx},{ny}) touches this area's old tile and has no other built neighbour; moving here would strand it"
+                        ));
+                    }
+                }
+            }
+        }
+        out
+    }
+    /// `homeDecorations` entry: `u8 x, u8 y, u8 decorVariant, u8 active:1`.
+    /// 160 outdoor slots (offset 0) then 32 indoor slots (offset 160).
+    pub fn hub_decoration(&self, rb: &RogueBlock, i: usize) -> Option<(u8, u8, u8, bool)> {
+        if !rb.ok || i >= rb.decor_f.n {
+            return None;
+        }
+        let o = rb.decor_f.data + i * 4;
+        Some((
+            self.merged[o],
+            self.merged[o + 1],
+            self.merged[o + 2],
+            self.merged[o + 3] & 1 != 0,
+        ))
+    }
+    pub fn set_hub_decoration(&mut self, i: usize, x: u8, y: u8, variant: u8, active: bool) {
+        let Some(rb) = self.rogue_block() else { return };
+        if !rb.ok || i >= rb.decor_f.n {
+            return;
+        }
+        let o = rb.decor_f.data + i * 4;
+        self.merged[o] = x;
+        self.merged[o + 1] = y;
+        self.merged[o + 2] = variant;
+        // bit 0 = active; bits 1..7 are the declared `unused : 7` padding
+        let keep = self.merged[o + 3] & !1;
+        self.merged[o + 3] = keep | u8::from(active);
+        self.edited = true;
+    }
+    /// How many decoration slots the save marks active. The game only renders
+    /// active slots, so the GUI lists just those (out of `decor_f.n`).
+    pub fn decor_on_count(&self, rb: &RogueBlock) -> usize {
+        if !rb.ok {
+            return 0;
+        }
+        (0..rb.decor_f.n)
+            .filter(|&k| self.hub_decoration(rb, k).map_or(false, |(_, _, _, on)| on))
+            .count()
+    }
+    /// `homeStyles[0]` house exterior, `[1]` house interior, `[2]` path
+    /// (`rogue_hub.c` indexes them with `HOME_STYLE_HOUSE_EXTERIOR` etc.).
+    pub fn hub_style(&self, rb: &RogueBlock, i: usize) -> Option<u8> {
+        if !rb.ok || i >= rb.styles_f.n {
+            return None;
+        }
+        Some(self.merged[rb.styles_f.data + i])
+    }
+    pub fn set_hub_style(&mut self, i: usize, v: u8) {
+        let Some(rb) = self.rogue_block() else { return };
+        if !rb.ok || i >= rb.styles_f.n {
+            return;
+        }
+        self.merged[rb.styles_f.data + i] = v;
+        self.edited = true;
+    }
+    /// `homeWanderingMonSpecies` is NOT a species id: the game stores
+    /// `species + FOLLOWMON_SHINY_OFFSET(10000)` when the follow-mon is shiny
+    /// (`MonSpeciesToFollowSpecies`), which is why live saves show values like
+    /// 10374. 0 = SPECIES_NONE (no follow-mon in that slot).
+    pub fn hub_wander_mon(&self, rb: &RogueBlock, i: usize) -> Option<(u16, bool)> {
+        if !rb.ok || i >= rb.wander_f.n {
+            return None;
+        }
+        let raw = le16(&self.merged, rb.wander_f.data + i * 2);
+        if raw == 0 {
+            return Some((0, false));
+        }
+        let shiny = raw >= FOLLOWMON_SHINY_OFFSET;
+        Some((
+            if shiny {
+                raw - FOLLOWMON_SHINY_OFFSET
+            } else {
+                raw
+            },
+            shiny,
+        ))
+    }
+    pub fn set_hub_wander_mon(&mut self, i: usize, species: u16, shiny: bool) {
+        let Some(rb) = self.rogue_block() else { return };
+        if !rb.ok || i >= rb.wander_f.n {
+            return;
+        }
+        let raw = if species == 0 {
+            0
+        } else {
+            species + if shiny { FOLLOWMON_SHINY_OFFSET } else { 0 }
+        };
+        put16(&mut self.merged, rb.wander_f.data + i * 2, raw);
+        self.edited = true;
+    }
+    /// `weatherState` is not a weather id either: the game writes `Random()` into
+    /// it and derives the visible weather from `state % 5` (spring/summer) or
+    /// `state % 6` (autumn/winter) through a per-season table
+    /// (`rogue_controller.c:GetDesiredWeather`). Editing the raw value changes the
+    /// weather only for the current season.
+    pub fn set_hub_weather_state(&mut self, v: u16) {
+        let Some(rb) = self.rogue_block() else { return };
+        if !rb.ok {
+            return;
+        }
+        put16(&mut self.merged, rb.time_off - 2, v);
         self.edited = true;
     }
     pub fn set_hub_time(&mut self, minutes: u16) {
@@ -1437,6 +1782,369 @@ impl SaveFile {
         put16(&mut self.merged, o + 2, q);
         self.edited = true;
     }
+
+    // ---- bag add / remove / capacity --------------------------------------
+    //
+    // `UpdateBagItemsPointers()` (src/item.c) splits the flat 450-slot array into
+    // one CONTIGUOUS RUN per pocket, walking pockets 1..9 in order and stopping at
+    // the first id whose pocket differs: "Expects items to always be sorted".
+    // A real v2.2.0 bag is exactly that (probe on a live save: 64 packed slots in
+    // runs 1,2,3,5,6,7,8,9 — the empty Stones pocket simply leaves no run).
+    //
+    // So every scripted edit must (a) keep runs contiguous, (b) keep the run
+    // order ascending by pocket, and (c) keep zero-quantity slots at the tail,
+    // never in the middle. These helpers do the whole-array rewrite so the
+    // invariants hold by construction, and they mirror the game's own capacity
+    // accounting (`Rogue_GetBagCapacity`, `GetBagUnreservedFreeSlots`,
+    // `GetBagReservedFreeSlots`): key items have their own 50-slot budget and
+    // every pocket stacks to `MAX_BAG_ITEM_CAPACITY` = 999.
+
+    /// Which bag array an edit targets: the live SaveBlock1 bag, or the stashed
+    /// hub-state bag inside the Rogue block (`sRunRestoreBlock`).
+    fn bag_slot_off(&self, stash: bool) -> Option<usize> {
+        if stash {
+            self.rogue_block()
+                .filter(|rb| rb.stash.ok)
+                .map(|rb| rb.stash.base + 624)
+        } else {
+            Some(SB1_BASE + BAG_OFF)
+        }
+    }
+
+    /// Raw (id, qty) for the whole bag array, with quantities decoded. The live
+    /// bag XORs quantity with the low 16 bits of the key; the stashed bag is a
+    /// plain memcpy in `SerializeRogueBlockInternal` and is NOT obfuscated
+    /// (confirmed on a real save: raw reads 5,5,2,11,3 / XOR reads garbage).
+    fn bag_slots_raw(&self, stash: bool) -> Option<Vec<(u16, u16)>> {
+        let off = self.bag_slot_off(stash)?;
+        let k16 = if stash {
+            0
+        } else {
+            (self.enc_key() & 0xFFFF) as u16
+        };
+        let cap = if stash { STASH_BAG_CAP } else { BAG_CAP };
+        Some(
+            (0..cap)
+                .map(|i| {
+                    (
+                        le16(&self.merged, off + i * 4),
+                        le16(&self.merged, off + i * 4 + 2) ^ k16,
+                    )
+                })
+                .collect(),
+        )
+    }
+
+    /// Rewrite the whole bag array from a decoded slot list; trailing slots are
+    /// zeroed so no stale ids linger past the new end.
+    fn write_bag_slots(&mut self, stash: bool, slots: &[(u16, u16)]) {
+        let Some(off) = self.bag_slot_off(stash) else {
+            return;
+        };
+        let k16 = if stash {
+            0
+        } else {
+            (self.enc_key() & 0xFFFF) as u16
+        };
+        let cap = if stash { STASH_BAG_CAP } else { BAG_CAP };
+        for i in 0..cap {
+            let (id, qty) = slots.get(i).copied().unwrap_or((0, 0));
+            put16(&mut self.merged, off + i * 4, id);
+            put16(&mut self.merged, off + i * 4 + 2, qty ^ k16);
+        }
+        self.edited = true;
+    }
+
+    /// u8 `bagCapacityUpgrades` at SB1+0x4AD.
+    pub fn bag_capacity_upgrades(&self) -> u8 {
+        self.merged[SB1_BASE + BAG_CAP_UPGRADES_OFF]
+    }
+    pub fn set_bag_capacity_upgrades(&mut self, v: u8) {
+        self.merged[SB1_BASE + BAG_CAP_UPGRADES_OFF] = v.min(BAG_MAX_CAPACITY_UPGRADES as u8);
+        self.edited = true;
+    }
+    /// `Rogue_GetBagCapacity()`.
+    pub fn bag_capacity(&self) -> usize {
+        let up = self.bag_capacity_upgrades() as usize;
+        if up >= BAG_MAX_CAPACITY_UPGRADES {
+            BAG_CAP
+        } else {
+            (BAG_BASE_CAPACITY + up * BAG_SLOTS_PER_UPGRADE).min(BAG_CAP)
+        }
+    }
+    /// u8 `bagSortMode` at SB1+0x4AC (0 type, 1 name, 2 value, 3 amount). The
+    /// editor's own sort keys off pocket + id, which matches the game's
+    /// primary key; sort mode only permutes WITHIN a run.
+    pub fn bag_sort_mode(&self) -> u8 {
+        self.merged[SB1_BASE + BAG_SORT_MODE_OFF]
+    }
+
+    /// How many slots the game would consider used, per pocket, for a given bag.
+    fn bag_run_summary(slots: &[(u16, u16)]) -> Vec<(u8, usize)> {
+        let mut out: Vec<(u8, usize)> = Vec::new();
+        for (id, _qty) in slots {
+            // Exactly the game's terminator: `itemId == ITEM_NONE`. A slot with a
+            // real id and quantity 0 is still counted as part of the pocket run
+            // by UpdateBagItemsPointers, so it must be counted here too.
+            if *id == 0 {
+                break;
+            }
+            let p = item_pocket(*id);
+            if p == 0 {
+                out.push((0, 1)); // pocketless: already broken, flag it
+                continue;
+            }
+            if out.last().map(|(pp, _)| *pp) == Some(p) {
+                out.last_mut().unwrap().1 += 1;
+            } else {
+                out.push((p, 1));
+            }
+        }
+        out
+    }
+
+    /// Bag health report: run contiguity, pocketless ids, over-capacity,
+    /// over-stacked quantities. Empty = the bag is exactly what the game expects.
+    pub fn bag_warnings(&self, stash: bool) -> Vec<String> {
+        let Some(slots) = self.bag_slots_raw(stash) else {
+            return vec!["bag not found".to_string()];
+        };
+        let mut w = Vec::new();
+        let runs = Self::bag_run_summary(&slots);
+        if runs.windows(2).any(|p| p[0].0 > p[1].0) {
+            w.push(format!(
+                "pocket runs are out of order ({}) — UpdateBagItemsPointers stops at the first reversal, so items after it are invisible in-game",
+                runs.iter().map(|(p, n)| format!("{p}x{n}")).collect::<Vec<_>>().join(" ")
+            ));
+        }
+        for (id, _) in slots.iter().take_while(|(id, _)| *id != 0) {
+            if item_pocket(*id) == item_pockets::POCKET_NONE {
+                w.push(format!(
+                    "id {id} ({}) has no pocket and must be removed — the game's pointer scan stops there and hides everything after it",
+                    item_name(*id)
+                ));
+            }
+        }
+        let (filled, key) = Self::bag_counts(&slots);
+        let (cap, key_budget) = if stash {
+            (STASH_BAG_CAP, BAG_RESERVED_SLOTS)
+        } else {
+            (self.bag_capacity(), BAG_RESERVED_SLOTS)
+        };
+        if filled > cap {
+            w.push(format!(
+                "{filled} filled slots exceed capacity {cap}; the tail is invisible to the game"
+            ));
+        }
+        if key > key_budget {
+            w.push(format!(
+                "{key} key items exceed their {key_budget}-slot reserved budget"
+            ));
+        }
+        for (i, (id, q)) in slots.iter().enumerate() {
+            if *id == 0 {
+                break;
+            }
+            if *q == 0 {
+                w.push(format!(
+                    "slot {i}: id {id} ({}) has quantity 0 — the game still counts it as a used slot; write again to drop it",
+                    item_name(*id)
+                ));
+            }
+            if *q > MAX_STACK {
+                w.push(format!(
+                    "slot {i}: id {id} quantity {q} exceeds the {MAX_STACK} per-stack cap"
+                ));
+            }
+        }
+        w
+    }
+    fn bag_counts(slots: &[(u16, u16)]) -> (usize, usize) {
+        let mut filled = 0;
+        let mut key = 0;
+        for (id, _qty) in slots {
+            if *id == 0 {
+                break;
+            }
+            filled += 1;
+            if item_pocket(*id) == item_pockets::POCKET_KEY_ITEMS {
+                key += 1;
+            }
+        }
+        (filled, key)
+    }
+
+    /// Mirror of `AddBagItem`: merge into an under-full stack of the same id,
+    /// then insert a new slot in sorted position if the pocket's slot budget
+    /// allows. Returns a human-readable summary.
+    pub fn add_bag_item(&mut self, id: u16, qty: u16, stash: bool) -> Result<String, String> {
+        if qty == 0 {
+            return Err("quantity must be >= 1".to_string());
+        }
+        let pocket = item_pocket(id);
+        if pocket == item_pockets::POCKET_NONE {
+            return Err(format!(
+                "item {id} ({}) has no bag pocket — the game would refuse it (POCKET_NONE)",
+                item_name(id)
+            ));
+        }
+        let mut slots = self
+            .bag_slots_raw(stash)
+            .ok_or_else(|| "bag not found (is the Rogue block decodable?)".to_string())?;
+        // Head of the array exactly as UpdateBagItemsPointers sees it: it ends
+        // at the first ITEM_NONE slot. Quantity-0 ghosts inside the head are
+        // dropped (the game's own ShrinkBagItems ends up rewriting them away).
+        let mut head: Vec<(u16, u16)> = slots
+            .drain(..)
+            .take_while(|(i, _)| *i != 0)
+            .filter(|(_, q)| *q != 0)
+            .collect();
+        let mut left = qty;
+        let mut merged = 0u16;
+        for s in head.iter_mut() {
+            if left == 0 {
+                break;
+            }
+            if s.0 == id && s.1 < MAX_STACK {
+                let take = (MAX_STACK - s.1).min(left);
+                s.1 += take;
+                left -= take;
+                merged += take;
+            }
+        }
+        let (filled, key) = Self::bag_counts(&head);
+        let (cap, key_budget) = if stash {
+            (STASH_BAG_CAP, BAG_RESERVED_SLOTS)
+        } else {
+            (self.bag_capacity(), BAG_RESERVED_SLOTS)
+        };
+        let budget = if pocket == item_pockets::POCKET_KEY_ITEMS {
+            key_budget.saturating_sub(key)
+        } else {
+            cap.saturating_sub(BAG_RESERVED_SLOTS)
+                .saturating_sub(filled - key)
+        };
+        let mut inserted = 0usize;
+        while left > 0 {
+            if budget < inserted + 1 {
+                return Err(format!(
+                    "bag full: {filled} of {cap} slots used, {budget} free slot(s) left for pocket {pocket} ({}); {left} of {qty} still unplaced — nothing written",
+                    pocket_name(pocket)
+                ));
+            }
+            let take = left.min(MAX_STACK);
+            head.push((id, take));
+            left -= take;
+            inserted += 1;
+        }
+        head.sort_by_key(|(i, _)| bag_sort_key(*i));
+        let used = head.len();
+        self.write_bag_slots(stash, &head);
+        Ok(format!(
+            "{}: merged {merged} into existing stacks, opened {inserted} new slot(s); bag now {used}/{} (item {} {})",
+            if stash { "stash bag" } else { "bag" },
+            if stash { STASH_BAG_CAP } else { cap },
+            id,
+            item_name(id)
+        ))
+    }
+
+    /// Mirror of `RemoveBagItem`: take from stacks until `qty` is satisfied.
+    /// Emptied slots collapse and the array is re-compacted, so no zero-quantity
+    /// hole is left inside a pocket run.
+    pub fn remove_bag_item(&mut self, id: u16, qty: u16, stash: bool) -> Result<String, String> {
+        let Some(mut slots) = self.bag_slots_raw(stash) else {
+            return Err("bag not found (is the Rogue block decodable?)".to_string());
+        };
+        let owned: u32 = slots
+            .iter()
+            .take_while(|(i, _)| *i != 0)
+            .filter(|(i, _)| *i == id)
+            .map(|(_, q)| *q as u32)
+            .sum();
+        if owned == 0 {
+            return Err(format!(
+                "no {} (id {id}) in the {}",
+                item_name(id),
+                if stash { "stashed bag" } else { "bag" }
+            ));
+        }
+        let want = (qty as u32).min(owned);
+        let mut left = want;
+        for s in slots.iter_mut() {
+            if left == 0 {
+                break;
+            }
+            if s.0 == id && s.1 > 0 {
+                let take = (s.1 as u32).min(left) as u16;
+                s.1 -= take;
+                left -= take as u32;
+            }
+        }
+        // drop empty slots, keep the rest in the game's order
+        let mut head: Vec<(u16, u16)> =
+            slots.iter().take_while(|(i, _)| *i != 0).copied().collect();
+        head.retain(|(_, q)| *q != 0);
+        let used = head.len();
+        self.write_bag_slots(stash, &head);
+        Ok(format!(
+            "removed {want} x {} (id {id}); {} left; bag now {used} slots",
+            item_name(id),
+            owned - want,
+        ))
+    }
+
+    /// Set one quantity in place and re-normalise the array (drop empty slots,
+    /// keep pocket runs contiguous). Setting 0 removes that stack.
+    pub fn set_bag_slot_qty(&mut self, i: usize, qty: u16, stash: bool) -> Result<(), String> {
+        let Some(mut slots) = self.bag_slots_raw(stash) else {
+            return Err("bag not found".to_string());
+        };
+        if i >= slots.len() {
+            return Err(format!("slot {i} out of range"));
+        }
+        if slots[i].0 != 0 && qty > MAX_STACK {
+            return Err(format!("quantity {qty} exceeds the {MAX_STACK} stack cap"));
+        }
+        slots[i].1 = qty;
+        let mut head: Vec<(u16, u16)> = slots
+            .iter()
+            .take_while(|(id, _)| *id != 0)
+            .filter(|(_, q)| *q != 0)
+            .copied()
+            .collect();
+        head.sort_by_key(|(id, _)| bag_sort_key(*id));
+        self.write_bag_slots(stash, &head);
+        Ok(())
+    }
+
+    /// Re-sort the whole bag by (pocket, id) — the same primary key the game
+    /// uses. Use after hand-editing to restore the contiguous-run invariant.
+    pub fn sort_bag(&mut self, stash: bool) -> Result<String, String> {
+        let Some(slots) = self.bag_slots_raw(stash) else {
+            return Err("bag not found".to_string());
+        };
+        let mut head: Vec<(u16, u16)> = slots
+            .iter()
+            .take_while(|(id, _)| *id != 0)
+            .filter(|(_, q)| *q != 0)
+            .copied()
+            .collect();
+        let before = self.bag_warnings(stash);
+        head.sort_by_key(|(id, _)| bag_sort_key(*id));
+        self.write_bag_slots(stash, &head);
+        Ok(format!(
+            "sorted {} slots by pocket+id{}; {} order warning(s) before, {} after",
+            head.len(),
+            if before.is_empty() {
+                ""
+            } else {
+                " (fixing a broken run order)"
+            },
+            before.len(),
+            self.bag_warnings(stash).len()
+        ))
+    }
     pub fn set_player_name(&mut self, s: &str) {
         let enc = gen3_encode(s, 7);
         self.merged[0..7].copy_from_slice(&enc);
@@ -1488,218 +2196,13 @@ impl SaveFile {
     }
 }
 
-// ---------------------------------------------------------------- CLI dump
-fn cli_dump(path: &str) {
-    let sf = match SaveFile::open(path) {
-        Ok(sf) => sf,
-        Err(e) => {
-            eprintln!("error: {e}");
-            std::process::exit(1);
-        }
-    };
-    say!("file: {path}");
-    say!(
-        "active slot: {} (ctr {} / {})",
-        sf.active_slot / 14 + 1,
-        sf.sectors[0].counter,
-        sf.sectors[14].counter
-    );
-    say!(
-        "slot1 valid: {}  slot2 valid: {}",
-        sf.slot_valid(0),
-        sf.slot_valid(14)
-    );
-    let (h, m, s) = sf.play_time();
-    say!(
-        "player: {:?} TID {} SID {}  playtime {:02}:{:02}:{:02}  money {}",
-        sf.player_name(),
-        sf.trainer_id(),
-        sf.secret_id(),
-        h,
-        m,
-        s,
-        sf.money()
-    );
-    if let Some(rb) = sf.rogue_block() {
-        say!(
-            "\nrogue block: saveVersion {} ({}) fmt{}",
-            rb.version,
-            rogue_version_name(rb.version),
-            rb.format
-        );
-        if rb.has_num_species {
-            say!("  lastKnownNumSpecies {}", rb.last_num_species);
-        }
-        if rb.ok {
-            say!(
-                "  hub time {:02}:{:02}  season {} (day {}/{}; counter {})  weather {}  debug {}",
-                rb.time_of_day / 60,
-                rb.time_of_day % 60,
-                SEASONS[(rb.season / DAYS_PER_SEASON) as usize % SEASON_COUNT],
-                rb.season % DAYS_PER_SEASON + 1,
-                DAYS_PER_SEASON,
-                rb.season,
-                rb.weather,
-                rb.is_debug
-            );
-            say!(
-                "  quests {}  campaigns {}  daycare {}  safari {}",
-                rb.quests_f.n,
-                rb.campaigns_f.n,
-                rb.daycare_f.n,
-                rb.safari_f.n
-            );
-            for i in 0..rb.daycare_f.n.min(3) {
-                let off = rb.daycare_f.data + i * DAYCARE_ELEMSZ;
-                let mo = Mon::from_bytes(&sf.merged[off..off + BOXSZ]);
-                if mo.species() != 0 {
-                    say!(
-                        "  daycare[{i}] {} ({}) lvl {} species={}",
-                        mo.nickname(),
-                        species_name(mo.species()),
-                        mo.level().unwrap_or(0),
-                        mo.species()
-                    );
-                }
-            }
-            let filled = (0..rb.safari_f.n)
-                .filter_map(|i| sf.safari_mon(&rb, i))
-                .filter(|s| s.species() != 0)
-                .count();
-            say!("  safari: {filled} filled (edit with: --cli-edit FILE safari ...)");
-            for i in 0..rb.unique_f.n {
-                if let Some((cid, sp, cd)) = sf.unique_mon(&rb, i) {
-                    if cid != 0 || sp != 0 {
-                        say!(
-                            "  unique-mon[{i}] id {cid} species {} ({}) countdown {cd}",
-                            sp,
-                            species_name(sp)
-                        );
-                    }
-                }
-            }
-            if rb.stash.ok {
-                say!(
-                    "  stashed hub state (sRunRestoreBlock): money {} playTime {}",
-                    rb.stash.money,
-                    rb.stash.play_time
-                );
-                for (i, mo) in rb.stash.party.iter().enumerate() {
-                    if mo.species() != 0 {
-                        say!(
-                            "    stash party[{i}] {} ({}) lvl {}",
-                            mo.nickname(),
-                            species_name(mo.species()),
-                            mo.level().unwrap_or(0)
-                        );
-                    }
-                }
-                for (i, mo) in rb.stash.daycare.iter().enumerate() {
-                    if mo.species() != 0 {
-                        say!(
-                            "    stash daycare[{i}] {} ({})",
-                            mo.nickname(),
-                            species_name(mo.species())
-                        );
-                    }
-                }
-            }
-        } else {
-            say!("  (stream layout mismatch — header only)");
-        }
-    }
-    for (i, mo) in sf.party().iter().enumerate() {
-        say!(
-            "\nparty[{i}] {} species={} ({})",
-            i,
-            mo.species(),
-            species_name(mo.species())
-        );
-        say!(
-            "  OT={:?} lvl={} nature={} shiny={} genderFlag={} ball={} exp={} friendship={}",
-            mo.ot_name(),
-            mo.level().unwrap_or(0),
-            NATURES[mo.nature() as usize],
-            mo.is_shiny(),
-            mo.gender_flag(),
-            mo.ball(),
-            mo.exp(),
-            mo.friendship()
-        );
-        say!("  IVs={:?} EVs={:?}", mo.ivs(), mo.evs());
-        say!(
-            "  moves={:?} pp={:?}",
-            mo.moves().map(|m| title_lookup(MOVES, m)),
-            mo.pps()
-        );
-        say!(
-            "  checksum {} ({}), bad_egg={}",
-            mo.checksum_stored(),
-            if mo.checksum_ok() { "OK" } else { "BAD" },
-            mo.is_bad_egg()
-        );
-        if let Some((hp, max, st)) = mo.cached_stats() {
-            say!(
-                "  stats cur/max = {hp}/{max}  atk={} def={} spe={} spa={} spd={}",
-                st[0],
-                st[1],
-                st[2],
-                st[3],
-                st[4]
-            );
-        }
-    }
-    for bx in 0..ACTIVE_BOXES {
-        let mons: Vec<Mon> = (0..BOX_SLOTS)
-            .map(|s| sf.box_mon(bx, s))
-            .filter(|m| m.species() != 0)
-            .collect();
-        if mons.is_empty() {
-            continue;
-        }
-        let bad = mons.iter().filter(|m| !m.checksum_ok()).count();
-        // Levels are derived from exp (box structs have no level byte).
-        let roster: Vec<String> = mons
-            .iter()
-            .map(|m| format!("{} L{}", species_name(m.species()), m.level().unwrap_or(0)))
-            .collect();
-        say!(
-            "box {bx} ({:?}): {} mons{}, {}",
-            sf.box_name(bx),
-            mons.len(),
-            if bad == 0 {
-                String::new()
-            } else {
-                format!(" ({bad} BAD checksum)")
-            },
-            roster.join(", ")
-        );
-    }
-    let items: Vec<String> = sf
-        .bag_items()
-        .into_iter()
-        .chain(sf.pc_items())
-        .filter(|(id, _)| *id != 0)
-        .map(|(id, q)| format!("{}x{}", q, item_name(id)))
-        .collect();
-    say!("\nitems: {}", items.join(", "));
-}
-
 fn main() -> eframe::Result<()> {
-    let args: Vec<String> = std::env::args().collect();
-    if args.len() >= 3 && args[1] == "--cli-edit" {
-        cli_edit(&args[2], &args[3..]);
-        return Ok(());
-    }
-    if args.len() == 3 && args[1] == "--cli" {
-        cli_dump(&args[2]);
-        return Ok(());
-    }
-
-    // GUI mode. A save may be passed to open it instantly:
-    //   er-save-editor FILE.sav            (positional)
+    // The CLI does exactly one thing: pass a save to open it in the GUI.
+    //   er-save-editor FILE.sav
     //   er-save-editor --open FILE.sav     (explicit, equivalent)
-    // Opening is read-only; nothing is written without Save / Save As.
+    // All editing happens in the GUI, and opening is read-only: nothing is
+    // written to disk unless the user presses Save / Save As.
+    let args: Vec<String> = std::env::args().collect();
     let mut open_path: Option<String> = None;
     let mut i = 1;
     while i < args.len() {
@@ -1712,31 +2215,7 @@ fn main() -> eframe::Result<()> {
                 }
             }
             "--help" | "-h" => {
-                say!(
-                    "usage: er-save-editor [FILE.sav | --open FILE.sav]   GUI (opens file if given)\n\
-                    \x20      er-save-editor --cli FILE.sav                 decode save to stdout (read-only)\n\
-                    \x20      er-save-editor --cli-edit FILE ...            scripted edits (see --help-edit)"
-                );
-                return Ok(());
-            }
-            "--help-edit" => {
-                say!(
-                    "--cli-edit FILE <subcommand> [--dry-run]\n\
-                    \x20 iv PARTY_IDX IV_IDX VALUE [refresh|no-refresh]   set one IV, refresh cached stat\n\
-                    \x20 money AMOUNT                                     set money (currently loaded state)\n\
-                    \x20 iv-stash PARTY_IDX IV_IDX VALUE                  IV on stashed hub party mon\n\
-                    \x20 stash-money AMOUNT                               set stashed hub money (Rogue block)\n\
-                    \x20 hub-time MINUTES                                 hub time-of-day (0..1439)\n\
-                    \x20 hub-season N                                     0 spring..3 winter\n\
-                    \x20 quest INDEX FLAGS [MAXDIFF]                      quest state bitmask\n\
-                    \x20 campaign INDEX UNLOCKED COMPLETED [BEST]         0/1 flags\n\
-                    \x20 diff-toggle BIT 0|1                              lab difficulty toggle\n\
-                    \x20 diff-range IDX VALUE                             lab range slot\n\
-                    \x20 safari IDX SPECIES NATURE SHINY BALL PRI IV0,..,IV5   one safari-zone spawn entry\n\
-                    \x20 unique-mon IDX CUSTOMID SPECIES COUNTDOWN        dynamic unique-mon spawn slot\n\
-                    \x20 noop                                             reseal without data change\n\
-                    --dry-run computes edits + checksums in memory and writes zero bytes."
-                );
+                say!("usage: er-save-editor [FILE.sav | --open FILE.sav]   open a save in the GUI");
                 return Ok(());
             }
             s if s.starts_with('-') => {
@@ -1765,377 +2244,6 @@ fn main() -> eframe::Result<()> {
             Box::new(ed)
         }),
     )
-}
-
-// ---------------------------------------------------------------- CLI edit mode
-// --cli-edit FILE money AMOUNT
-// --cli-edit FILE iv PARTY_IDX IV_IDX VALUE [refresh|no-refresh]
-// Write-consent rule: the editor writes to disk ONLY when the user explicitly
-// triggers a write. --cli-edit implies consent by invocation; --dry-run is the
-// escape hatch that computes every edit + checksum but writes zero bytes.
-// There is no autosave, backup, or temp-file path anywhere in the crate.
-fn cli_arg_err(what: &str) -> ! {
-    eprintln!("error: bad {what}");
-    std::process::exit(1);
-}
-
-fn cli_edit(path: &str, args_in: &[String]) {
-    let dry_run = args_in.iter().any(|a| a == "--dry-run");
-    let args: Vec<String> = args_in
-        .iter()
-        .filter(|a| *a != "--dry-run")
-        .cloned()
-        .collect();
-    let mut sf = match SaveFile::open(path) {
-        Ok(sf) => sf,
-        Err(e) => {
-            eprintln!("error: {e}");
-            std::process::exit(1);
-        }
-    };
-    // argument-count guard: missing CLI args exit cleanly instead of panicking
-    let need: usize = match args[0].as_str() {
-        "noop" => 1,
-        "money" | "stash-money" | "hub-time" | "hub-season" => 2,
-        "quest" | "diff-toggle" | "diff-range" => 3,
-        "campaign" | "iv" | "iv-stash" => 4,
-        "unique-mon" => 5,
-        "safari" => 8,
-        _ => 0,
-    };
-    if args.len() < need {
-        eprintln!(
-            "error: {} takes {need} argument(s) (see --help-edit)",
-            args[0]
-        );
-        std::process::exit(1);
-    }
-    match args[0].as_str() {
-        "noop" => {
-            if dry_run {
-                say!("dry run: would resave {path} (checksums recomputed); no bytes written");
-                return;
-            }
-            sf.edited = true;
-            sf.save(path).expect("save failed");
-            say!("resaved {path} (all checksums recomputed, no data change)");
-            return;
-        }
-        "money" => {
-            let v: u32 = args[1].parse().unwrap();
-            say!("money {} -> {}", sf.money(), v);
-            sf.set_money(v);
-        }
-        "stash-money" => {
-            let v: u32 = args[1].parse().unwrap();
-            let rb = sf.rogue_block().ok_or_else(|| "no Rogue block".to_string());
-            match rb {
-                Ok(rb) if rb.stash.ok => {
-                    say!("stashed hub money {} -> {}", sf.stash_money(), v);
-                    sf.set_stash_money(v);
-                }
-                _ => {
-                    eprintln!("error: stashed hub state not found/decodable");
-                    std::process::exit(1);
-                }
-            }
-        }
-        // Rogue-block fields. All of these require a cleanly decoded block; they
-        // never guess when the stream layout drifts.
-        "hub-time" => {
-            let mins: u16 = args[1].parse().unwrap();
-            let rb = sf.rogue_block().unwrap_or_default();
-            if !rb.ok {
-                eprintln!("error: Rogue block not decodable (layout mismatch)");
-                std::process::exit(1);
-            }
-            say!(
-                "hub time {:02}:{:02} -> {:02}:{:02}",
-                rb.time_of_day / 60,
-                rb.time_of_day % 60,
-                mins / 60,
-                mins % 60
-            );
-            sf.set_hub_time(mins);
-        }
-        "hub-season" => {
-            let s: u8 = args[1].parse().unwrap();
-            let rb = sf.rogue_block().unwrap_or_default();
-            if !rb.ok {
-                eprintln!("error: Rogue block not decodable (layout mismatch)");
-                std::process::exit(1);
-            }
-            let cur = (rb.season / DAYS_PER_SEASON) as usize % SEASON_COUNT;
-            say!(
-                "season {} (counter {}) -> {} (counter {})",
-                SEASONS[cur],
-                rb.season,
-                SEASONS[s as usize % SEASON_COUNT],
-                (s % SEASON_COUNT as u8) * DAYS_PER_SEASON
-            );
-            sf.set_hub_season(s);
-        }
-        "unique-mon" => {
-            // unique-mon IDX CUSTOMID SPECIES COUNTDOWN
-            let idx: usize = args[1]
-                .parse()
-                .unwrap_or_else(|_| cli_arg_err("unique-mon index"));
-            let cid: u32 = args[2]
-                .parse()
-                .unwrap_or_else(|_| cli_arg_err("customMonId"));
-            let sp: u16 = args[3].parse().unwrap_or_else(|_| cli_arg_err("species"));
-            let cd: u16 = args[4].parse().unwrap_or_else(|_| cli_arg_err("countdown"));
-            let rb = sf.rogue_block().unwrap_or_default();
-            if !rb.ok {
-                eprintln!("error: Rogue block not decodable (layout mismatch)");
-                std::process::exit(1);
-            }
-            match sf.unique_mon(&rb, idx) {
-                Some((o_id, o_sp, o_cd)) => say!(
-                    "unique-mon[{idx}]: id {o_id} {} ({}) countdown {o_cd} -> id {cid} {} ({}) countdown {cd}",
-                    o_sp,
-                    species_name(o_sp),
-                    sp,
-                    species_name(sp)
-                ),
-                None => {
-                    eprintln!("error: unique-mon index {idx} out of range");
-                    std::process::exit(1);
-                }
-            }
-            sf.set_unique_mon(idx, cid, sp, cd);
-        }
-        "safari" => {
-            // safari IDX SPECIES NATURE SHINY BALL PRIORITY IV0,IV1,IV2,IV3,IV4,IV5
-            // (one entry per invocation: keeps the CLI narrow instead of growing
-            // a per-field flag matrix; the GUI is the place for interactive tweaks)
-            let idx: usize = args[1]
-                .parse()
-                .unwrap_or_else(|_| cli_arg_err("safari index"));
-            let sp: u16 = args[2].parse().unwrap_or_else(|_| cli_arg_err("species"));
-            let nat: u8 = args[3].parse().unwrap_or_else(|_| cli_arg_err("nature"));
-            let shiny: u8 = args[4].parse().unwrap_or_else(|_| cli_arg_err("shiny 0|1"));
-            let ball: u8 = args[5].parse().unwrap_or_else(|_| cli_arg_err("pokeball"));
-            let pri: u8 = args[6].parse().unwrap_or_else(|_| cli_arg_err("priority"));
-            let ivs: Vec<u8> = args[7]
-                .split(',')
-                .map(|s| {
-                    s.trim()
-                        .parse::<u8>()
-                        .unwrap_or_else(|_| cli_arg_err("IV list (6 values 0-31)"))
-                })
-                .collect();
-            if ivs.len() != 6 {
-                eprintln!("error: need exactly 6 IVs, got {}", ivs.len());
-                std::process::exit(1);
-            }
-            let rb = sf.rogue_block().unwrap_or_default();
-            if !rb.ok {
-                eprintln!("error: Rogue block not decodable (layout mismatch)");
-                std::process::exit(1);
-            }
-            let Some(mut s) = sf.safari_mon(&rb, idx) else {
-                eprintln!("error: safari index {idx} out of range");
-                std::process::exit(1);
-            };
-            say!(
-                "safari[{idx}]: {} ({}) nat {} ivs [{}, {}, {}, {}, {}, {}] -> {} ({}) nat {}",
-                s.species(),
-                species_name(s.species()),
-                s.nature(),
-                s.iv(0),
-                s.iv(1),
-                s.iv(2),
-                s.iv(3),
-                s.iv(4),
-                s.iv(5),
-                sp,
-                species_name(sp),
-                nat
-            );
-            s.set_species(sp);
-            s.set_nature(nat);
-            s.set_shiny(shiny != 0);
-            s.set_pokeball(ball);
-            s.priority = pri;
-            for (k, v) in ivs.iter().enumerate() {
-                s.set_iv(k, *v);
-            }
-            sf.set_safari_mon(idx, &s);
-        }
-        "quest" => {
-            // quest INDEX FLAGS [MAXDIFF]  (FLAGS = bitmask, see QUEST_STATE_*; 0x ok)
-            let idx: usize = args[1]
-                .parse()
-                .unwrap_or_else(|_| cli_arg_err("quest index"));
-            let flags: u16 = match args[2]
-                .strip_prefix("0x")
-                .or_else(|| args[2].strip_prefix("0X"))
-            {
-                Some(h) => u16::from_str_radix(h, 16)
-                    .unwrap_or_else(|_| cli_arg_err("quest flags (decimal or 0x hex)")),
-                None => args[2]
-                    .parse()
-                    .unwrap_or_else(|_| cli_arg_err("quest flags")),
-            };
-            let rb = sf.rogue_block().unwrap_or_default();
-            if !rb.ok || idx >= rb.quests_f.n {
-                eprintln!("error: Rogue block not decodable, or quest index out of range");
-                std::process::exit(1);
-            }
-            let w0 = le32(&sf.merged, rb.quests_f.data + idx * 8);
-            let name = tables_extra::QUEST_NAMES.get(idx).copied().unwrap_or("?");
-            let hc = args
-                .get(3)
-                .map(|s| s.parse().unwrap())
-                .unwrap_or_else(|| ((w0 >> 16) & 7) as u8);
-            say!(
-                "quest[{idx}] {:?}: flags {:#04x} maxDiff {} -> {:#04x} maxDiff {}",
-                name,
-                (w0 & 0xFFFF) as u16,
-                (w0 >> 16) & 7,
-                flags,
-                hc
-            );
-            sf.set_quest_state(idx, flags, hc);
-        }
-        "campaign" => {
-            // campaign INDEX UNLOCKED COMPLETED [BEST]  (0/1 flags)
-            let idx: usize = args[1].parse().unwrap();
-            let u: bool = args[2].parse::<u8>().unwrap() != 0;
-            let c: bool = args[3].parse::<u8>().unwrap() != 0;
-            let rb = sf.rogue_block().unwrap_or_default();
-            if !rb.ok || idx >= rb.campaigns_f.n {
-                eprintln!("error: Rogue block not decodable, or campaign index out of range");
-                std::process::exit(1);
-            }
-            let v = le32(&sf.merged, rb.campaigns_f.data + idx * 4);
-            let best: u16 = args
-                .get(4)
-                .map(|s| s.parse().unwrap())
-                .unwrap_or((v >> 16) as u16);
-            say!(
-                "campaign[{idx}] {:?}: unlocked={} completed={} best={} -> {} {} {}",
-                CAMPAIGN_NAMES.get(idx).copied().unwrap_or("?"),
-                v & 1,
-                (v >> 1) & 1,
-                v >> 16,
-                u,
-                c,
-                best
-            );
-            sf.set_campaign(idx, u, c, best);
-        }
-        "diff-toggle" => {
-            // diff-toggle BIT 0|1  (lab difficulty toggle, see CONFIG_TOGGLE_*)
-            let bit: usize = args[1].parse().unwrap();
-            let on: bool = args[2].parse::<u8>().unwrap() != 0;
-            let rb = sf.rogue_block().unwrap_or_default();
-            if !rb.ok || bit >= rb.diff_toggle_f.n * 8 || bit >= CONFIG_TOGGLES.len() {
-                eprintln!("error: Rogue block not decodable, or toggle bit out of range");
-                std::process::exit(1);
-            }
-            let byte = sf.merged[rb.diff_toggle_f.data + bit / 8];
-            say!(
-                "toggle[{bit}] {:?}: {} -> {}",
-                CONFIG_TOGGLES[bit],
-                byte >> (bit % 8) & 1,
-                on as u8
-            );
-            let mut b = byte;
-            if on {
-                b |= 1 << (bit % 8);
-            } else {
-                b &= !(1 << (bit % 8));
-            }
-            sf.set_diff_toggle(bit / 8, b);
-        }
-        "diff-range" => {
-            // diff-range IDX VALUE  (lab range slot, see CONFIG_RANGE_*)
-            let idx: usize = args[1].parse().unwrap();
-            let v: u8 = args[2].parse().unwrap();
-            let rb = sf.rogue_block().unwrap_or_default();
-            if !rb.ok || idx >= rb.diff_range_f.n {
-                eprintln!("error: Rogue block not decodable, or range index out of range");
-                std::process::exit(1);
-            }
-            say!(
-                "range[{idx}] {:?}: {} -> {}",
-                CONFIG_RANGES.get(idx).copied().unwrap_or("?"),
-                sf.merged[rb.diff_range_f.data + idx],
-                v
-            );
-            sf.set_diff_range(idx, v);
-        }
-        "iv" => {
-            let pi: usize = args[1].parse().unwrap();
-            let ii: usize = args[2].parse().unwrap();
-            let v: u8 = args[3].parse().unwrap();
-            let refresh = args.get(4).map(|s| s.as_str()) != Some("no-refresh");
-            let mut mons = sf.party();
-            assert!(pi < mons.len(), "party index out of range");
-            let m = &mut mons[pi];
-            say!(
-                "before: ivs={:?} stats={:?}",
-                m.ivs(),
-                m.cached_stats().map(|s| s.2)
-            );
-            m.set_iv(ii, v);
-            if refresh {
-                let lvl = m.level().unwrap() as u32;
-                let nat = m.nature() as usize;
-                match base_stats(m.species()) {
-                    Some(bs) => {
-                        let newv =
-                            calc_stat(bs[ii] as u32, v as u32, m.evs()[ii] as u32, lvl, nat, ii);
-                        let split = nature_split(nat, ii);
-                        if ii == 0 {
-                            m.set_cached_hp(newv as u16);
-                        } else {
-                            m.set_cached_stat(ii - 1, newv as u16);
-                        }
-                        say!("refreshed stat idx {ii} -> {} (nature split {split})", newv);
-                    }
-                    // A species missing from the base-stat table must not lose the edit or
-                    // abort the run: the IV is still valid, only the cached-stat refresh is
-                    // skipped, and the user is told explicitly rather than silently.
-                    None => say!(
-                        "WARNING: no base stats for species {} - IV updated, cached stats NOT refreshed",
-                        m.species()
-                    ),
-                }
-            }
-            m.seal();
-            sf.set_party_mon(pi, m);
-        }
-        "iv-stash" => {
-            // same as iv, but on the stashed hub party inside the Rogue block
-            let pi: usize = args[1].parse().unwrap();
-            let ii: usize = args[2].parse().unwrap();
-            let v: u8 = args[3].parse().unwrap();
-            let rb = sf.rogue_block().unwrap_or_default();
-            if !rb.stash.ok || pi >= rb.stash.party.len() {
-                eprintln!("error: stashed hub party not decodable, or index out of range");
-                std::process::exit(1);
-            }
-            let mut m = rb.stash.party[pi].clone();
-            say!("stash[{}] before: ivs={:?}", pi, m.ivs());
-            m.set_iv(ii, v);
-            m.seal();
-            sf.set_stash_mon(pi, &m);
-            say!("stash[{pi}] ivs -> {:?}", m.ivs());
-        }
-        _ => {
-            eprintln!("unknown subcommand");
-            std::process::exit(1);
-        }
-    }
-    if dry_run {
-        say!("dry run: edits computed + checksums verified in memory; no bytes written to {path}");
-        return;
-    }
-    sf.save(path).expect("save failed");
-    say!("saved {path} (mon + sector checksums recomputed)");
 }
 
 /// vanilla gNatureStatTable: nature index boosts stat (nat/5) and lowers
@@ -2316,13 +2424,17 @@ mod tests {
         put16(&mut merged, base + 3, ROGUE_SECRET);
         merged[base + 5] = 1;
         put16(&mut merged, base + 6, 1434);
+        // A real (nonzero) SaveBlock2 encryption key, so tests that check the
+        // XOR obfuscation of money and bag quantities cannot pass by accident
+        // with an identity key.
+        put32(&mut merged, ENC_KEY_OFF, 0x1234_ABCD);
         let mut o = base + 8;
         // emit a count prefix and skip the element bytes; zeros are fine
         for (n, elemsz) in [
             (232usize, 8usize), // quests
             (7, 4),             // campaigns
             (2, 1),             // areaBuiltFlags
-            (11, 4),            // areaCoords (Coords16 era)
+            (11, 4),            // areaCoords (padded Coords8: s8 x, s8 y + 2 pad)
             (6, 1),             // upgradeFlags
             (192, 4),           // homeDecorations
             (3, 1),             // homeStyles
@@ -2431,6 +2543,117 @@ mod tests {
     }
 
     #[test]
+    fn hub_coord_validator_flags_unreachable_and_stranding_moves() {
+        // Build a chain: Labs(0,0) - AdvEntrance(1,0) - Safari(2,0).
+        // Everything else stays unbuilt, so Safari is a leaf whose only door is
+        // AdvEntrance and Labs is a leaf whose only door is AdvEntrance too.
+        let mut sf = synth_save();
+        sf.set_hub_area(2, true);
+        sf.set_hub_area(1, true);
+        sf.set_hub_area(3, true);
+        sf.set_hub_area_coord(2, 0, 0);
+        sf.set_hub_area_coord(1, 1, 0);
+        sf.set_hub_area_coord(3, 2, 0);
+        let rb = sf.rogue_block().unwrap();
+
+        // a clean move that keeps the mover attached: Safari (2,0) -> (1,-1) is
+        // diagonally off the chain, but (1,0) is AdvEntrance, so (1,-1) is below
+        // AdvEntrance and therefore 4-connected to it -> clean
+        let w = sf.hub_coord_warnings(&rb, 3, 1, -1);
+        assert!(
+            w.is_empty(),
+            "placement 4-connected to built AdvEntrance should be clean, got {w:?}"
+        );
+        // (the mover's own OLD tile never counts as its new neighbour: moving the
+        // leaf Safari from (2,0) to (2,1) really does isolate it)
+        let w = sf.hub_coord_warnings(&rb, 3, 2, 1);
+        assert!(
+            w.iter()
+                .any(|s| s.contains("no built 4-connected neighbour")),
+            "self-old-tile support must not count: {w:?}"
+        );
+
+        // a detached island: unreachable by the game's adjacency travel
+        let w = sf.hub_coord_warnings(&rb, 3, 40, 40);
+        assert_eq!(w.len(), 1, "expected exactly the island warning: {w:?}");
+        assert!(w[0].contains("no built 4-connected neighbour"));
+
+        // tile collision with a BUILT area
+        let w = sf.hub_coord_warnings(&rb, 3, 0, 0);
+        assert!(
+            w.iter().any(|s| s.contains("already holds BUILT area 2")),
+            "collision not reported: {w:?}"
+        );
+
+        // taking Safari off the chain strands nothing (Safari is the leaf), but
+        // moving the MIDDLE area away orphans both ends.
+        let w = sf.hub_coord_warnings(&rb, 1, 9, 9);
+        assert!(
+            w.iter()
+                .any(|s| s.contains("Labs") && s.contains("would strand it")),
+            "orphaned Labs not reported: {w:?}"
+        );
+        assert!(
+            w.iter()
+                .any(|s| s.contains("Safari Zone") && s.contains("would strand it")),
+            "orphaned Safari not reported: {w:?}"
+        );
+
+        // a move that keeps one end attached must not warn about that end:
+        // AdvEntrance (1,0) -> (1,1) leaves Safari(2,0) supported only by... nothing,
+        // but Labs(0,0) is still adjacent to nothing either. Both strand. Instead
+        // place it at (2,-1): then it is adjacent to Safari(2,0), so Safari keeps
+        // its door and only Labs is stranded.
+        let w = sf.hub_coord_warnings(&rb, 1, 2, -1);
+        assert!(
+            w.iter()
+                .any(|s| s.contains("Labs") && s.contains("would strand it")),
+            "Labs should still be stranded: {w:?}"
+        );
+        assert!(
+            !w.iter().any(|s| s.contains("Safari Zone")),
+            "Safari keeps a neighbour at (2,0); should not be reported: {w:?}"
+        );
+
+        // an UNBUILT area getting a coordinate gets no reachability advice: the
+        // coord is inert until the game builds the area itself
+        let w = sf.hub_coord_warnings(&rb, 6, 50, 50);
+        assert!(
+            w.is_empty(),
+            "unbuilt area should produce no warnings: {w:?}"
+        );
+    }
+
+    /// The decoration id stored in `homeDecorations[].decorVariant` indexes a
+    /// game-generated enum. `tools/gen_deco_variants.py` reproduces that enum from
+    /// the game's own exporter; this pins the two tables stay index-aligned and
+    /// anchors them on what a real v2.2.0 save actually stores.
+    #[test]
+    fn decor_variant_table_matches_the_games_generated_enum() {
+        assert_eq!(
+            deco_variants::DECOR_VARIANTS.len(),
+            deco_variants::DECOR_VARIANT_NAMES.len(),
+            "pretty names and enum names must stay index-aligned"
+        );
+        // The game seeds slot 0 of the yard with DECOR_VARIANT_OUTFIT_CHANGING_WARDROBE
+        // at (21,19) in RogueHub_ClearProgress; `er2.sav` and the pristine backup both
+        // carry exactly that, so it is the one id we can verify from save data.
+        assert_eq!(decor_name(119), "outfit changing wardrobe");
+        assert_eq!(
+            deco_variants::DECOR_VARIANT_NAMES[119],
+            "DECOR_VARIANT_OUTFIT_CHANGING_WARDROBE"
+        );
+        // ids 0 and 178 are not "empty": 0 is a real placeable tile, 178 is the
+        // in-game remove action. Nothing in the save uses either as a blank marker.
+        assert_eq!(decor_name(0), "path 5x5");
+        assert_eq!(
+            deco_variants::DECOR_VARIANT_NAMES[deco_variants::DECOR_VARIANT_REMOVE],
+            "DECOR_VARIANT_REMOVE_DECOR_DEFAULT"
+        );
+        assert_eq!(decor_name(255), "out-of-range decoration id");
+    }
+
+    #[test]
     fn save_reseals_sectors_and_keeps_shape() {
         // in-memory only: save() must recompute sector checksums and byte size.
         // (We only call the checksum logic here; the disk write path is gated by
@@ -2440,6 +2663,240 @@ mod tests {
             let data = &sf.merged[k * DATASZ..(k + 1) * DATASZ];
             let _ = sector_crc(data); // must not panic; folds to u16
         }
+    }
+
+    #[test]
+    fn live_save_round_trips_byte_identically() {
+        // The strongest regression net we have: parse a real save, re-serialize
+        // through save() into a temp file, and require byte equality. This
+        // proves sector rotation, counters, footers, and the mGBA trailer all
+        // survive untouched when nothing was edited. Skips (green) if the
+        // fixture is not on this machine, so CI without saves stays green.
+        let fixture = std::env::var("ER_TEST_SAVE").ok();
+        let Some(path) = fixture.filter(|p| std::path::Path::new(p).exists()) else {
+            eprintln!("live_save_round_trip: ER_TEST_SAVE not set/found, skipping");
+            return;
+        };
+        let original = std::fs::read(&path).unwrap();
+        let mut sf = SaveFile::open(&path).expect("live save must parse");
+        let out = std::env::temp_dir().join("er_roundtrip_test.sav");
+        sf.save(out.to_str().unwrap()).expect("temp write ok");
+        let rewritten = std::fs::read(&out).unwrap();
+        assert_eq!(
+            original.len(),
+            rewritten.len(),
+            "re-serialized size must match"
+        );
+        assert_eq!(
+            original, rewritten,
+            "noop round trip must be byte-identical"
+        );
+        std::fs::remove_file(out).ok();
+    }
+
+    #[test]
+    #[ignore = "manual: prints hub snapshot the GUI renders, run with --ignored"]
+    fn dump_hub_for_gui_crosscheck() {
+        let path = std::env::var("ER_TEST_SAVE").unwrap();
+        let sf = SaveFile::open(&path).unwrap();
+        let rb = sf.rogue_block().unwrap();
+        for i in 0..rb.coords_f.n {
+            let built = sf.hub_area_built(&rb, i);
+            let (x, y) = sf.hub_area_coord(&rb, i).unwrap();
+            println!(
+                "area {i}: built={built} coord=({x},{y}) raw={:?}",
+                sf.hub_area_coord_raw(&rb, i).unwrap()
+            );
+        }
+        println!("weather={}", rb.weather);
+        for i in 0..rb.wander_f.n {
+            if let Some((sp, shiny)) = sf.hub_wander_mon(&rb, i) {
+                if sp != 0 {
+                    println!("wander {i}: species={sp} shiny={shiny}");
+                }
+            }
+        }
+        for i in 0..rb.styles_f.n {
+            println!("style {i}: {}", sf.hub_style(&rb, i).unwrap());
+        }
+        println!("decor active count = {}", sf.decor_on_count(&rb));
+    }
+
+    #[test]
+    fn pocket_name_never_panics_and_names_every_pocket() {
+        // Regression: the GUI Items tab renders pocket_name() per row; an
+        // earlier version sliced a "POCKET_" prefix off display names that
+        // don't have it and panicked on "Items" (opening the tab killed the
+        // app). Every u8 must produce a label, known pockets must name right.
+        assert_eq!(pocket_name(3), "Medicine (pocket 3)");
+        assert_eq!(pocket_name(1), "Items (pocket 1)");
+        for p in 0..=255u8 {
+            let s = pocket_name(p);
+            assert!(!s.is_empty());
+            assert!(s.contains(&format!("pocket {p}")) || s.contains("POCKET_NONE"));
+        }
+    }
+
+    #[test]
+    fn hub_field_editors_land_on_the_walked_offsets() {
+        // The hub arrays are only reachable through the sequential stream walk,
+        // so this pins every hub setter against the same walked offsets the
+        // getters report -- a wrong stride here desyncs the rest of the block.
+        let mut sf = synth_save();
+        let rb = sf.rogue_block().unwrap();
+        assert_eq!(rb.coords_f.n, 11);
+        assert_eq!(rb.decor_f.n, 192);
+        assert_eq!(rb.styles_f.n, 3);
+        assert_eq!(rb.wander_f.n, 10);
+
+        // coords: 4-byte entries of `s8 x, s8 y` + 2 pad bytes, NOT s16 and NOT
+        // stride 2. Town Square written as (-2, 3) must read back as s8 pair and
+        // the two following bytes must be zero pad, not part of a 16-bit y.
+        sf.set_hub_area_coord(0, -2, 3);
+        let o = rb.coords_f.data;
+        assert_eq!(
+            &sf.merged[o..o + 4],
+            &[0xFE, 0x03, 0x00, 0x00],
+            "areaCoords entry must be s8 x, s8 y, then 2 pad bytes"
+        );
+        assert_eq!(sf.hub_area_coord(&rb, 0), Some((-2, 3)));
+        assert_eq!(sf.hub_area_coord_raw(&rb, 0), Some([0xFE, 0x03, 0, 0]));
+        // stride 4 must hold: entry 1 starts 4 bytes after entry 0
+        sf.set_hub_area_coord(1, 120, -1);
+        assert_eq!(
+            &sf.merged[o + 4..o + 8],
+            &[120, 0xFF, 0x00, 0x00],
+            "coords stride must be exactly 4"
+        );
+        assert_eq!(sf.hub_area_coord(&rb, 1), Some((120, -1)));
+        // an s16 misread would give these instead -- must NOT match
+        assert_ne!(
+            (sf.merged[o] as i16 | ((sf.merged[o + 1] as i16) << 8)),
+            -2,
+            "reading x as s16 must not yield the real x"
+        );
+        // negative x survives: (i8)0xFE == -2
+        assert_eq!(sf.merged[o] as i8, -2);
+
+        // The built bit and the coordinate are independent writes here, matching
+        // what the game does in BuildArea but not coupling them: setting a coord
+        // on an UNBUILT area is inert (the game overwrites it when it builds the
+        // area, and GetAreaAt skips unbuilt areas), so the setter must not
+        // silently build anything.
+        sf.set_hub_area_coord(10, 30, 40);
+        assert!(
+            !sf.hub_area_built(&rb, 10),
+            "moving must not raise built bit"
+        );
+        sf.set_hub_area(10, true);
+        assert!(sf.hub_area_built(&rb, 10));
+        assert_eq!(
+            sf.hub_area_coord(&rb, 10),
+            Some((30, 40)),
+            "build must not move"
+        );
+        sf.set_hub_area(10, false);
+        assert!(!sf.hub_area_built(&rb, 10));
+        assert_eq!(sf.hub_area_coord(&rb, 10), Some((30, 40)));
+
+        // decorations: u8 x, u8 y, u8 variant, u8 active:1 -- toggling active
+        // must not disturb the variant byte or the unused 7 bits.
+        let d = rb.decor_f.data;
+        sf.merged[d + 3] = 0b1000_0000; // foreign non-zero unused bits
+        sf.set_hub_decoration(0, 12, 9, 47, true);
+        assert_eq!(sf.hub_decoration(&rb, 0), Some((12, 9, 47, true)));
+        assert_eq!(sf.merged[d + 3], 0b1000_0001, "only bit 0 may change");
+        sf.set_hub_decoration(0, 12, 9, 47, false);
+        assert_eq!(sf.merged[d + 3], 0b1000_0000);
+        assert_eq!(sf.hub_decoration(&rb, 0), Some((12, 9, 47, false)));
+        // slot 160 is the first indoor slot, 640 bytes after slot 0
+        sf.set_hub_decoration(160, 1, 2, 3, true);
+        assert_eq!(
+            &sf.merged[d + 640..d + 644],
+            &[1, 2, 3, 1],
+            "indoor decor slot must sit at stride 4"
+        );
+        assert_eq!(
+            sf.hub_decoration(&rb, 192),
+            None,
+            "decor index must be bounded"
+        );
+
+        // styles: 3 separate u8s; editing interior must leave exterior/path alone
+        let st = rb.styles_f.data;
+        sf.set_hub_style(1, 5);
+        assert_eq!(
+            &sf.merged[st..st + 3],
+            &[0, 5, 0],
+            "styles are 3 independent u8s"
+        );
+        assert_eq!(sf.hub_style(&rb, 1), Some(5));
+        assert_eq!(sf.hub_style(&rb, 3), None, "style index must be bounded");
+
+        // wandering follow-mons: u16 species with shiny as +10000, not a flag bit
+        let w = rb.wander_f.data;
+        sf.set_hub_wander_mon(3, 612, true); // Haxorus shiny
+        assert_eq!(le16(&sf.merged, w + 3 * 2), 612 + FOLLOWMON_SHINY_OFFSET);
+        assert_eq!(sf.hub_wander_mon(&rb, 3), Some((612, true)));
+        sf.set_hub_wander_mon(4, 263, false);
+        assert_eq!(le16(&sf.merged, w + 4 * 2), 263);
+        assert_eq!(sf.hub_wander_mon(&rb, 4), Some((263, false)));
+        assert_eq!(
+            sf.hub_wander_mon(&rb, 3),
+            Some((612, true)),
+            "u16 writes must not bleed into the neighbour slot"
+        );
+        // 0 means SPECIES_NONE: shiny bit must not leak a phantom follow-mon
+        sf.set_hub_wander_mon(4, 0, true);
+        assert_eq!(le16(&sf.merged, w + 4 * 2), 0);
+        assert_eq!(sf.hub_wander_mon(&rb, 4), Some((0, false)));
+
+        // weather: raw u16 seed (the game takes state % 5 / % 6 per season).
+        // `weather` is decoded onto the block, so a re-decode must see the write.
+        sf.set_hub_weather_state(5);
+        assert_eq!(sf.rogue_block().unwrap().weather, 5);
+        sf.set_hub_weather_state(0xFFFF);
+        let rbw = sf.rogue_block().unwrap();
+        assert_eq!(rbw.weather, 0xFFFF);
+        // buckets as the game computes them: %5 spring/summer, %6 autumn/winter.
+        // (Same buckets as the live save's 3105 -- different seeds, same weather.)
+        assert_eq!(rbw.weather % 5, 0);
+        assert_eq!(rbw.weather % 6, 3);
+        assert_eq!(3105 % 5, 0);
+        assert_eq!(3105 % 6, 3);
+
+        // every hub write above must keep the stream walk intact
+        let rb2 = sf.rogue_block().unwrap();
+        assert!(rb2.ok, "hub edits must not desync the block walk");
+        assert_eq!(rb2.coords_f.n, 11);
+        assert_eq!(rb2.decor_f.n, 192);
+        assert_eq!(rb2.safari_f.n, 60);
+        assert_eq!(rb2.mastery_f.n, 72);
+        assert!(rb2.stash.ok, "stash anchor must survive hub edits");
+        // out-of-range writes are no-ops, not panics or corruption: the bytes of
+        // the following arrays must be untouched, and reads bound-check cleanly.
+        let before_mastery: Vec<u8> = sf.merged[rb.mastery_f.data..rb.mastery_f.data + 8].to_vec();
+        sf.set_hub_area_coord(99, 1, 1);
+        sf.set_hub_area(99, true);
+        sf.set_hub_decoration(9999, 1, 1, 1, true);
+        sf.set_hub_style(9, 9);
+        sf.set_hub_wander_mon(99, 5, false);
+        let rb3 = sf.rogue_block().unwrap();
+        assert_eq!(rb3.coords_f.n, 11, "walk must survive bad-index writes");
+        assert_eq!(
+            &sf.merged[rb3.mastery_f.data..rb3.mastery_f.data + 8],
+            before_mastery,
+            "out-of-range hub writes must not spill into later arrays"
+        );
+        assert_eq!(sf.hub_area_coord(&rb3, 11), None);
+        assert_eq!(sf.hub_decoration(&rb3, 192), None);
+        assert_eq!(sf.hub_style(&rb3, 3), None);
+        assert_eq!(sf.hub_wander_mon(&rb3, 10), None);
+        // slot 9 was never written (synth stream zero-fills the elements): a
+        // raw 0 is SPECIES_NONE, not a follow-mon
+        assert_eq!(sf.hub_wander_mon(&rb3, 9), Some((0, false)));
+        // slot 3 keeps its shiny entry despite all the out-of-range writes
+        assert_eq!(sf.hub_wander_mon(&rb3, 3), Some((612, true)));
     }
 
     #[test]
@@ -2454,6 +2911,180 @@ mod tests {
         uniq.sort();
         uniq.dedup();
         assert_eq!(uniq.len(), 24);
+    }
+
+    #[test]
+    fn bag_inserts_keep_pocket_runs_contiguous() {
+        // UpdateBagItemsPointers walks the flat array once and stops at the
+        // first pocket change, so a pocket run that appears twice puts the
+        // second copy beyond the game's reach. Every mutation must leave one
+        // contiguous run per pocket, in ascending pocket order.
+        let mut sf = synth_save();
+        // Pocket ids from the generated table: Medicine 3, Stones 4, Balls 5,
+        // Held 2 (per-item order inside a run is ascending id).
+        assert_eq!(item_pocket(39), item_pockets::POCKET_MEDICINE); // Potion
+        assert_eq!(item_pocket(1), item_pockets::POCKET_POKE_BALLS); // Poke Ball
+        assert_eq!(item_pocket(265), item_pockets::POCKET_STONES);
+        assert_eq!(item_pocket(64), item_pockets::POCKET_HELD_ITEMS);
+
+        sf.set_bag_capacity_upgrades(3);
+        assert_eq!(sf.bag_capacity(), 110);
+
+        // Start from a legal bag: medicine run, then stones, then balls,
+        // each pocket exactly once, in ascending pocket order.
+        sf.write_bag_slots(false, &[(39, 20), (40, 5), (265, 3), (1, 10), (2, 5)]);
+        assert_eq!(
+            SaveFile::bag_run_summary(&sf.bag_slots_raw(false).unwrap()),
+            vec![(3, 2), (4, 1), (5, 2)]
+        );
+        assert!(sf.bag_warnings(false).is_empty());
+
+        // Medicine added now must land inside the medicine run, not at the tail.
+        sf.add_bag_item(39, 5, false).unwrap(); // merges into the Potion stack
+        sf.add_bag_item(44, 1, false).unwrap(); // new medicine slot (Revive)
+        sf.add_bag_item(1, 4, false).unwrap(); // merges into the Poke Ball stack
+        let runs = SaveFile::bag_run_summary(&sf.bag_slots_raw(false).unwrap());
+        assert_eq!(runs, vec![(3, 3), (4, 1), (5, 2)]);
+        assert!(sf.bag_warnings(false).is_empty());
+        let slots = sf.bag_slots_raw(false).unwrap();
+        let potion = slots.iter().find(|(i, _)| *i == 39).unwrap();
+        assert_eq!(potion.1, 25, "existing stack must absorb the merge");
+        let ball = slots.iter().find(|(i, _)| *i == 1).unwrap();
+        assert_eq!(ball.1, 14, "existing ball stack must absorb the merge");
+        // The new medicine slot must sit between the other two medicine ids,
+        // not at the tail of the array.
+        let medicine_ids: Vec<u16> = slots
+            .iter()
+            .take_while(|(i, _)| *i != 0)
+            .filter(|(i, _)| item_pocket(*i) == item_pockets::POCKET_MEDICINE)
+            .map(|(i, _)| *i)
+            .collect();
+        assert_eq!(medicine_ids, vec![39, 40, 44], "sorted insertion point");
+
+        // Removal collapses emptied slots so no hole opens inside a run.
+        sf.remove_bag_item(44, 1, false).unwrap();
+        let runs = SaveFile::bag_run_summary(&sf.bag_slots_raw(false).unwrap());
+        assert_eq!(runs, vec![(3, 2), (4, 1), (5, 2)]);
+        assert!(sf.bag_warnings(false).is_empty());
+
+        // A pocketless id can never be placed: the game would have no pocket
+        // to point at.
+        assert!(sf.add_bag_item(0xFFFF, 1, false).is_err());
+    }
+
+    #[test]
+    fn bag_quantity_xor_and_ghost_slot_handling() {
+        // Live bag quantities are XOR'd with the low 16 bits of the SaveBlock2
+        // encryption key; the stashed bag is a plain memcpy and is NOT obfuscated.
+        let mut sf = synth_save();
+        let key = sf.enc_key() & 0xFFFF;
+        assert_ne!(key, 0, "synthetic save must carry a real key");
+        sf.write_bag_slots(false, &[(1, 1234)]);
+        let raw = le16(&sf.merged, SB1_BASE + BAG_OFF + 2);
+        assert_eq!(raw ^ key as u16, 1234, "quantity must be written XOR'd");
+        assert_eq!(sf.bag_slots_raw(false).unwrap()[0], (1, 1234));
+
+        // The game ends a run on itemId == ITEM_NONE only; a zero quantity with
+        // a real id is a ghost the game still counts. Writes must leave the
+        // array terminated, not leave a live id with qty 0 in the middle.
+        sf.write_bag_slots(false, &[(1, 5), (2, 0), (3, 9)]);
+        sf.sort_bag(false).unwrap();
+        let after = sf.bag_slots_raw(false).unwrap();
+        assert_eq!(after[0], (1, 5));
+        assert_eq!(after[1], (3, 9));
+        assert_eq!(after[2], (0, 0), "array must be re-terminated");
+    }
+
+    #[test]
+    fn bag_capacity_and_key_item_budgets() {
+        // Rogue_GetBagCapacity: 450 - 37*10 + upgrades*10, capped at 450.
+        // Key items live inside the same array but out of a 50-slot budget.
+        let mut sf = synth_save();
+        sf.set_bag_capacity_upgrades(0);
+        assert_eq!(sf.bag_capacity(), 80);
+        sf.set_bag_capacity_upgrades(37);
+        assert_eq!(sf.bag_capacity(), 450);
+        sf.set_bag_capacity_upgrades(200);
+        assert_eq!(sf.bag_capacity(), 450, "upgrade count must clamp");
+
+        // Fill ordinary slots past capacity: warnings must fire, and an add
+        // must refuse rather than write an unreachable tail.
+        let mut sf = synth_save();
+        sf.set_bag_capacity_upgrades(0);
+        let many: Vec<(u16, u16)> = (0..100).map(|i| (5, (i as u16) + 1)).collect();
+        sf.write_bag_slots(false, &many);
+        let warns = sf.bag_warnings(false);
+        assert!(
+            warns.iter().any(|w| w.contains("exceed capacity")),
+            "over-capacity bag must warn: {warns:?}"
+        );
+        // Stack cap is 999 for every pocket.
+        let tall: Vec<(u16, u16)> = vec![(5, 5000)];
+        sf.write_bag_slots(false, &tall);
+        assert!(sf
+            .bag_warnings(false)
+            .iter()
+            .any(|w| w.contains("per-stack cap")));
+    }
+
+    #[test]
+    fn stash_bag_is_not_obfuscated() {
+        // The stashed hub-state bag sits inside sRunRestoreBlock and is
+        // serialized by memcpy: quantities must land raw, with no XOR.
+        let mut sf = synth_save();
+        let key = sf.enc_key() & 0xFFFF;
+        assert_ne!(key, 0);
+        sf.add_bag_item(44, 6, true).unwrap();
+        let rb = sf.rogue_block().unwrap();
+        let off = rb.stash.base + 624;
+        assert_eq!(le16(&sf.merged, off), 44);
+        assert_eq!(
+            le16(&sf.merged, off + 2),
+            6,
+            "stash quantity must NOT be XOR'd with the key"
+        );
+        assert_eq!(sf.bag_slots_raw(true).unwrap()[0], (44, 6));
+    }
+
+    #[test]
+    fn pocket_table_reproduces_live_save_runs() {
+        // The table's whole point: fed a real bag, it must reproduce exactly
+        // the contiguous runs the game sees. Pins against a live save shape.
+        // Potion/Medicine ordering from the generated table, not hand-typed.
+        assert_eq!(item_pockets::POCKET_ORDER.len(), 9);
+        // The display order and the numeric constants must agree; the generator
+        // emits both from the same source, and this fails if they ever drift.
+        assert_eq!(
+            item_pockets::POCKET_ORDER
+                .iter()
+                .map(|(_, v)| *v)
+                .collect::<Vec<_>>(),
+            vec![
+                item_pockets::POCKET_ITEMS,
+                item_pockets::POCKET_HELD_ITEMS,
+                item_pockets::POCKET_MEDICINE,
+                item_pockets::POCKET_STONES,
+                item_pockets::POCKET_POKE_BALLS,
+                item_pockets::POCKET_TM_HM,
+                item_pockets::POCKET_BERRIES,
+                item_pockets::POCKET_POKEBLOCK,
+                item_pockets::POCKET_KEY_ITEMS,
+            ]
+        );
+        assert_eq!(item_pocket(2), item_pockets::POCKET_POKE_BALLS);
+        assert_eq!(item_pocket(68), item_pockets::POCKET_MEDICINE);
+        // Evolution items are baked into POCKET_ITEMS by rogue_baked.c even
+        // though items.h parks them elsewhere; the table carries that patch.
+        for id in item_pockets::EVO_ITEMS {
+            assert_eq!(
+                item_pocket(*id),
+                item_pockets::POCKET_ITEMS,
+                "evolution item {id} must resolve to the Items pocket"
+            );
+        }
+        // Ids with no pocket are unusable and must be rejected by the editor.
+        assert_eq!(item_pocket(0), 0);
+        assert_eq!(item_pocket(0xFFFF), 0);
     }
 }
 
@@ -2488,6 +3119,13 @@ struct Editor {
     hide_empty_items: bool,
     show_empty_safari: bool,
     dirty: bool,
+    // bag add-row state (persists across frames so the combo/search survives)
+    bag_add_id: u16,
+    bag_add_qty: u16,
+    bag_add_stash: bool,
+    // one-line feedback from mon-editor actions that cannot self-correct
+    // (e.g. "no base stats in table for this species")
+    mon_note: Option<String>,
 }
 
 impl Default for Editor {
@@ -2503,6 +3141,10 @@ impl Default for Editor {
             quest_filter: String::new(),
             hide_empty_items: true,
             show_empty_safari: false,
+            bag_add_id: 1,
+            bag_add_qty: 1,
+            bag_add_stash: false,
+            mon_note: None,
             dirty: false,
         }
     }
@@ -2671,7 +3313,11 @@ impl Editor {
         let season_idx = (season / DAYS_PER_SEASON) as usize % SEASON_COUNT;
         let mut weather = rb.weather;
         ui.horizontal(|ui| {
-            ui.label(format!("save v{}", rb.version));
+            ui.label(format!(
+                "save stamp {} ({})",
+                rb.version,
+                rogue_version_name(rb.version)
+            ));
             ui.label(format!("hub time {:02}:{:02}", tod / 60, tod % 60));
             if ui
                 .add(
@@ -2866,7 +3512,7 @@ impl Editor {
             }
         });
 
-        ui.collapsing("Hub map (areas + upgrades)", |ui| {
+        ui.collapsing("Hub map (areas, upgrades, coordinates)", |ui| {
             let area_snap: Vec<u8> = {
                 let sf = self.file.as_ref().unwrap();
                 (0..rb.built_f.n)
@@ -2879,14 +3525,84 @@ impl Editor {
                     .map(|k| sf.merged[rb.upgrades_f.data + k])
                     .collect()
             };
+            let coord_snap: Vec<(i8, i8)> = {
+                let sf = self.file.as_ref().unwrap();
+                (0..rb.coords_f.n)
+                    .map(|k| sf.hub_area_coord(&rb, k).unwrap_or((0, 0)))
+                    .collect()
+            };
+            let built_snap: Vec<bool> = {
+                let sf = self.file.as_ref().unwrap();
+                (0..HUB_AREAS.len())
+                    .map(|k| sf.hub_area_built(&rb, k))
+                    .collect()
+            };
             let mut area_edits: Vec<(usize, bool)> = Vec::new();
             let mut up_edits: Vec<(usize, bool)> = Vec::new();
-            ui.strong("Areas built");
-            for i in 0..HUB_AREAS.len() {
-                let byte = area_snap.get(i / 8).copied().unwrap_or(0);
-                let mut on = byte >> (i % 8) & 1 != 0;
-                if ui.checkbox(&mut on, HUB_AREAS[i]).changed() {
-                    area_edits.push((i, on));
+            let mut coord_edits: Vec<(usize, i8, i8)> = Vec::new();
+            ui.horizontal(|ui| {
+                ui.strong("Areas built");
+                ui.label(
+                    egui::RichText::new("(built = present on the map; coordinates are separate)")
+                        .small()
+                        .weak(),
+                );
+            });
+            egui::Grid::new("hubareas")
+                .num_columns(4)
+                .spacing([16.0, 2.0])
+                .show(ui, |ui| {
+                    for i in 0..HUB_AREAS.len() {
+                        let byte = area_snap.get(i / 8).copied().unwrap_or(0);
+                        let mut on = byte >> (i % 8) & 1 != 0;
+                        if ui.checkbox(&mut on, HUB_AREAS[i]).changed() {
+                            area_edits.push((i, on));
+                        }
+                        // editable position for this area
+                        let (cx, cy) = coord_snap.get(i).copied().unwrap_or((0, 0));
+                        let mut x = cx as i32;
+                        let mut y = cy as i32;
+                        let xw = ui
+                            .add(
+                                egui::DragValue::new(&mut x)
+                                    .clamp_range(-128..=127)
+                                    .speed(1),
+                            )
+                            .on_hover_text("area x (s8, hub-map tile)");
+                        let yw = ui
+                            .add(
+                                egui::DragValue::new(&mut y)
+                                    .clamp_range(-128..=127)
+                                    .speed(1),
+                            )
+                            .on_hover_text("area y (s8, hub-map tile)");
+                        if (xw.changed() || yw.changed())
+                            && (-128..=127).contains(&x)
+                            && (-128..=127).contains(&y)
+                        {
+                            coord_edits.push((i, x as i8, y as i8));
+                        }
+                        let (ox, oy) = coord_snap.get(i).copied().unwrap_or((0, 0));
+                        let adj = if built_snap.get(i).copied().unwrap_or(false) {
+                            format!("({ox},{oy})")
+                        } else {
+                            format!("({ox},{oy}) unbuilt")
+                        };
+                        ui.label(egui::RichText::new(adj).monospace().small());
+                        if i % 4 == 3 {
+                            ui.end_row();
+                        }
+                    }
+                });
+            if !coord_edits.is_empty() {
+                let sf = self.file.as_ref().unwrap();
+                for &(i, x, y) in &coord_edits {
+                    for w in sf.hub_coord_warnings(&rb, i, x, y) {
+                        ui.label(
+                            egui::RichText::new(format!("area {i} {}: {w}", HUB_AREAS[i]))
+                                .color(egui::Color32::from_rgb(220, 150, 60)),
+                        );
+                    }
                 }
             }
             ui.add_space(6.0);
@@ -2906,7 +3622,7 @@ impl Editor {
                         }
                     }
                 });
-            if !area_edits.is_empty() || !up_edits.is_empty() {
+            if !area_edits.is_empty() || !up_edits.is_empty() || !coord_edits.is_empty() {
                 if let Some(sf) = self.file.as_mut() {
                     for (i, on) in area_edits {
                         sf.set_hub_area(i, on);
@@ -2914,9 +3630,207 @@ impl Editor {
                     for (i, on) in up_edits {
                         sf.set_hub_upgrade(i, on);
                     }
+                    for (i, x, y) in coord_edits {
+                        sf.set_hub_area_coord(i, x, y);
+                    }
                 }
                 self.dirty = true;
             }
+        });
+
+        ui.collapsing("House (decorations, styles, follow-mons, weather)", |ui| {
+            let style_snap: Vec<u8> = {
+                let sf = self.file.as_ref().unwrap();
+                (0..rb.styles_f.n)
+                    .map(|k| sf.hub_style(&rb, k).unwrap_or(0))
+                    .collect()
+            };
+            let wander_snap: Vec<(u16, bool)> = {
+                let sf = self.file.as_ref().unwrap();
+                (0..rb.wander_f.n)
+                    .map(|k| sf.hub_wander_mon(&rb, k).unwrap_or((0, false)))
+                    .collect()
+            };
+            let weather_snap = rb.weather;
+            let mut style_edits: Vec<(usize, u8)> = Vec::new();
+            let mut wander_edits: Vec<(usize, u16, bool)> = Vec::new();
+            let mut weather_edit: Option<u16> = None;
+
+            ui.strong("Home styles");
+            egui::Grid::new("hubstyles")
+                .num_columns(2)
+                .spacing([16.0, 2.0])
+                .show(ui, |ui| {
+                    for (i, names) in [
+                        ("Exterior", HOME_STYLE_EXTERIOR),
+                        ("Interior", HOME_STYLE_INTERIOR),
+                        ("Path", HOME_STYLE_PATH),
+                    ]
+                    .into_iter()
+                    .enumerate()
+                    {
+                        let cur = style_snap.get(i).copied().unwrap_or(0);
+                        ui.label(names.0);
+                        let mut v = cur as i32;
+                        if ui
+                            .add(
+                                egui::DragValue::new(&mut v)
+                                    .clamp_range(0..=(names.1.len() as i32 - 1))
+                                    .speed(1),
+                            )
+                            .changed()
+                            && (0..names.1.len() as i32).contains(&v)
+                        {
+                            style_edits.push((i, v as u8));
+                        }
+                        let label = names
+                            .1
+                            .get(cur as usize)
+                            .copied()
+                            .unwrap_or("unknown (out of range for the enum)");
+                        ui.label(format!("{label}  [{}]", style_snap.get(i).copied().unwrap_or(0)));
+                        ui.end_row();
+                    }
+                });
+
+            ui.add_space(6.0);
+            ui.strong("Weather state");
+            ui.label(
+                "Raw u16 seed, not a weather id. The game derives the visible weather as state % 5 (spring/summer) or % 6 (autumn/winter).",
+            );
+            let mut wsv = weather_snap as i32;
+            if ui
+                .add(egui::DragValue::new(&mut wsv).clamp_range(0..=65535).speed(1))
+                .changed()
+                && (0..=65535).contains(&wsv)
+            {
+                weather_edit = Some(wsv as u16);
+            }
+            ui.label(format!(
+                "{}: spring/summer bucket {}, autumn/winter bucket {}",
+                weather_snap,
+                weather_snap % 5,
+                weather_snap % 6
+            ));
+
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                ui.strong("House follow-mons");
+                ui.label(
+                    egui::RichText::new("species in the house; * marks a shiny follow-mon")
+                        .small()
+                        .weak(),
+                );
+            });
+            egui::Grid::new("hubwander")
+                .num_columns(3)
+                .spacing([12.0, 2.0])
+                .show(ui, |ui| {
+                    for i in 0..wander_snap.len() {
+                        let (sp, shiny) = wander_snap.get(i).copied().unwrap_or((0, false));
+                        ui.label(format!("[{i}] {}", if sp == 0 { "-".to_string() } else { format!("#{sp} {}", species_name(sp)) }));
+                        let mut v = sp as i32;
+                        let sw = ui
+                            .add(egui::DragValue::new(&mut v).clamp_range(0..=65535).speed(1))
+                            .on_hover_text("follow-mon species id (0 = none)");
+                        let mut sh = shiny;
+                        let cw = ui.checkbox(&mut sh, "shiny");
+                        if (sw.changed() || cw.changed()) && (0..=65535).contains(&v) {
+                            wander_edits.push((i, v as u16, sh));
+                        }
+                        ui.end_row();
+                    }
+                });
+
+            if !style_edits.is_empty() || !wander_edits.is_empty() || weather_edit.is_some() {
+                if let Some(sf) = self.file.as_mut() {
+                    for (i, v) in style_edits {
+                        sf.set_hub_style(i, v);
+                    }
+                    for (i, sp, sh) in wander_edits {
+                        sf.set_hub_wander_mon(i, sp, sh);
+                    }
+                    if let Some(v) = weather_edit {
+                        sf.set_hub_weather_state(v);
+                    }
+                }
+                self.dirty = true;
+            }
+            ui.add_space(6.0);
+            let decor_on = {
+                let sf = self.file.as_ref().unwrap();
+                sf.decor_on_count(&rb)
+            };
+            ui.collapsing(format!("Decorations ({decor_on} on)"), |ui| {
+                ui.label(
+                    "192 slots: 0..160 outdoor, 160..192 indoor. Each is x, y, variant, active.",
+                );
+                let snap: Vec<(u8, u8, u8, bool)> = {
+                    let sf = self.file.as_ref().unwrap();
+                    (0..rb.decor_f.n)
+                        .map(|k| sf.hub_decoration(&rb, k).unwrap_or((0, 0, 0, false)))
+                        .collect()
+                };
+                let mut edits: Vec<(usize, u8, u8, u8, bool)> = Vec::new();
+                egui::ScrollArea::vertical()
+                    .max_height(240.0)
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        egui::Grid::new("hubdecor")
+                            .num_columns(6)
+                            .spacing([10.0, 1.0])
+                            .show(ui, |ui| {
+                                for i in 0..snap.len() {
+                                    let (dx, dy, var, act) = snap[i];
+                                    if !act {
+                                        continue; // only slots the game actually placed
+                                    }
+                                    // Slots below HOME_DECOR_OUTSIDE are the outdoor
+                                    // garden; the rest are indoor rooms.
+                                    let region = if i < HOME_DECOR_OUTSIDE {
+                                        "outdoor"
+                                    } else {
+                                        "indoor"
+                                    };
+                                    ui.label(format!("[{i}] ({region}) {}", decor_name(var)));
+                                    let mut x = dx as i32;
+                                    let mut y = dy as i32;
+                                    let mut v = var as i32;
+                                    let xw = ui.add(egui::DragValue::new(&mut x).clamp_range(0..=255).speed(1));
+                                    let yw = ui.add(egui::DragValue::new(&mut y).clamp_range(0..=255).speed(1));
+                                    let vw = ui.add(egui::DragValue::new(&mut v).clamp_range(0..=255).speed(1)).on_hover_text(format!(
+                                        "decoration id; the game's own enum name is {} (id {} is the in-game 'remove' action, never stored in the save)",
+                                        deco_variants::DECOR_VARIANT_NAMES
+                                            .get(var as usize)
+                                            .copied()
+                                            .unwrap_or("(out of range)"),
+                                        deco_variants::DECOR_VARIANT_REMOVE
+                                    ));
+                                    let mut a = act;
+                                    let aw = ui.checkbox(&mut a, "on");
+                                    if (xw.changed()
+                                        || yw.changed()
+                                        || vw.changed()
+                                        || aw.changed())
+                                        && (0..=255).contains(&x)
+                                        && (0..=255).contains(&y)
+                                        && (0..=255).contains(&v)
+                                    {
+                                        edits.push((i, x as u8, y as u8, v as u8, a));
+                                    }
+                                    ui.end_row();
+                                }
+                            });
+                    });
+                if !edits.is_empty() {
+                    if let Some(sf) = self.file.as_mut() {
+                        for (i, x, y, v, a) in edits {
+                            sf.set_hub_decoration(i, x, y, v, a);
+                        }
+                    }
+                    self.dirty = true;
+                }
+            });
         });
 
         ui.collapsing("Difficulty / adventure settings (lab)", |ui| {
@@ -3539,6 +4453,49 @@ impl Editor {
                     }
                 }
             });
+            // Gen 3 party stats are *cached in the save*: an IV/EV/level change
+            // does nothing in-game until the mon is recalculated by battle or
+            // level-up. This button does what the game would do, immediately.
+            ui.horizontal(|ui| {
+                if ui
+                    .button("recalculate stats from IV/EV/level/nature")
+                    .clicked()
+                {
+                    let lvl = m.level().unwrap_or(0) as u32;
+                    let nat = m.nature() as usize;
+                    match base_stats(m.species()) {
+                        Some(bs) => {
+                            let evs = m.evs();
+                            let ivs = m.ivs();
+                            let hp =
+                                calc_stat(bs[0] as u32, ivs[0] as u32, evs[0] as u32, lvl, nat, 0);
+                            m.set_cached_hp(hp as u16);
+                            for i in 1..6 {
+                                let v = calc_stat(
+                                    bs[i] as u32,
+                                    ivs[i] as u32,
+                                    evs[i] as u32,
+                                    lvl,
+                                    nat,
+                                    i,
+                                );
+                                m.set_cached_stat(i - 1, v as u16);
+                            }
+                            self.mon_note = Some(format!("stats recalculated at level {lvl}"));
+                            changed = true;
+                        }
+                        None => {
+                            self.mon_note = Some(format!(
+                                "no base stats in table for species {} - stats NOT recalculated",
+                                m.species()
+                            ));
+                        }
+                    }
+                }
+                if let Some(note) = &self.mon_note {
+                    ui.colored_label(egui::Color32::GOLD, note);
+                }
+            });
         }
 
         if changed {
@@ -3548,14 +4505,92 @@ impl Editor {
     }
 
     fn items_ui(&mut self, ui: &mut egui::Ui) {
-        let Some(sf) = &self.file else { return };
+        // Read everything out of the save first, then drop the borrow, so the
+        // widgets below can mutate `self` (filter / add-row state) freely.
+        //
+        // Bag header: the bag is one flat array the game splits into contiguous
+        // per-pocket runs on load (`UpdateBagItemsPointers`), and it does NOT
+        // re-sort after loading — so quantity edits go through
+        // set_bag_slot_qty (re-compacts, keeps runs intact) and new ids only
+        // ever arrive via add_bag_item, which inserts in sorted position.
+        let (bag_items, pc_items, cap, mut cap_up, warnings) = match &self.file {
+            Some(sf) => (
+                sf.bag_items(),
+                sf.pc_items(),
+                sf.bag_capacity(),
+                sf.bag_capacity_upgrades(),
+                sf.bag_warnings(false),
+            ),
+            None => return,
+        };
+        let used = bag_items.iter().take_while(|(id, _)| *id != 0).count();
         ui.checkbox(&mut self.hide_empty_items, "hide empty slots");
         let mut edits: Vec<(bool, usize, u16, u16)> = Vec::new();
+
+        let (cap_bumped, do_sort) = ui
+            .horizontal(|ui| {
+                ui.label(format!("bag {used}/{cap} slots"));
+                let r = ui.add(
+                    egui::DragValue::new(&mut cap_up)
+                        .clamp_range(0..=37)
+                        .suffix(" upgrades"),
+                );
+                let sort = ui
+                    .button("sort bag (pocket, evo-first, id)")
+                    .on_hover_text(
+                        "the game's canonical bag order: pocket runs, evolution items \
+                         grouped first inside each run, then ascending id",
+                    )
+                    .clicked();
+                (r.changed(), sort)
+            })
+            .inner;
+        for w in warnings {
+            ui.colored_label(
+                egui::Color32::from_rgb(210, 130, 40),
+                format!("warning: {w}"),
+            );
+        }
+
+        // Add row: searchable item picker + quantity + stash target toggle.
+        let mut do_add = false;
+        ui.horizontal(|ui| {
+            ui.label("add to bag:");
+            Self::filtered_combo(
+                ui,
+                "bag_add_item",
+                &mut self.item_filter,
+                all_items(),
+                self.bag_add_id,
+                &mut |id| self.bag_add_id = id,
+            );
+            ui.add(
+                egui::DragValue::new(&mut self.bag_add_qty)
+                    .clamp_range(1..=999)
+                    .prefix("x"),
+            );
+            ui.checkbox(&mut self.bag_add_stash, "stashed (hub) bag");
+            if ui
+                .button(format!(
+                    "Add {} x{}",
+                    item_name(self.bag_add_id),
+                    self.bag_add_qty
+                ))
+                .clicked()
+            {
+                do_add = true;
+            }
+        });
+
         for (bag, label) in [(true, "Bag"), (false, "PC (x256 box)")] {
             ui.strong(label);
-            let items: Vec<(u16, u16)> = if bag { sf.bag_items() } else { sf.pc_items() };
+            let items: Vec<(u16, u16)> = if bag {
+                bag_items.clone()
+            } else {
+                pc_items.clone()
+            };
             egui::Grid::new(label)
-                .num_columns(4)
+                .num_columns(if bag { 5 } else { 4 })
                 .striped(true)
                 .show(ui, |ui| {
                     let mut shown = 0;
@@ -3566,9 +4601,13 @@ impl Editor {
                         shown += 1;
                         ui.monospace(format!("{i:3}"));
                         let name = item_name(id);
-                        if ui.button(format!("{id:5} {name}")).clicked() {
-                            // simple cycle-to-empty behavior: clicking opens a search below
+                        if bag {
+                            let p = item_pocket(id);
+                            ui.label(pocket_name(p));
+                        } else {
+                            ui.label("");
                         }
+                        ui.label(format!("{id:5} {name}"));
                         let mut q = qty;
                         if ui
                             .add(egui::DragValue::new(&mut q).clamp_range(0..=999))
@@ -3576,18 +4615,46 @@ impl Editor {
                         {
                             edits.push((bag, i, id, q));
                         }
-                        if shown % 4 == 0 {
+                        if shown % 2 == 0 {
                             ui.end_row();
                         }
                     }
-                    if shown % 4 != 0 {
+                    if shown % 2 != 0 {
                         ui.end_row();
                     }
                 });
         }
         for (bag, i, id, q) in edits {
             if let Some(sf) = self.file.as_mut() {
-                sf.set_item(bag, i, id, q);
+                if bag {
+                    let _ = sf.set_bag_slot_qty(i, q, false);
+                } else {
+                    sf.set_item(false, i, id, q);
+                }
+            }
+            self.dirty = true;
+        }
+        if cap_bumped {
+            if let Some(sf) = self.file.as_mut() {
+                sf.set_bag_capacity_upgrades(cap_up);
+            }
+            self.dirty = true;
+        }
+        if do_sort {
+            if let Some(sf) = self.file.as_mut() {
+                self.status = sf
+                    .sort_bag(false)
+                    .unwrap_or_else(|e| format!("sort failed: {e}"));
+            }
+            self.dirty = true;
+        }
+        if do_add {
+            let (id, qty, stash) = (self.bag_add_id, self.bag_add_qty, self.bag_add_stash);
+            if let Some(sf) = self.file.as_mut() {
+                self.status = match sf.add_bag_item(id, qty, stash) {
+                    Ok(m) => m,
+                    Err(e) => format!("add refused: {e}"),
+                };
             }
             self.dirty = true;
         }

@@ -298,7 +298,7 @@ test suite (`rogue_block_roundtrip_synth`):
 | questStates | 8 | 232 |
 | campaignData | 4 | 7 |
 | hubMap.areaBuiltFlags | 1 | 2 |
-| hubMap.areaCoords | 4 (Coords16) | 11 |
+| hubMap.areaCoords | 4 (`Coords8` + 2 pad, see §13) | 11 |
 | hubMap.upgradeFlags | 1 | 6 |
 | hubMap.homeDecorations | 4 | 192 |
 | hubMap.homeStyles | 1 | 3 |
@@ -362,7 +362,62 @@ Rogue's daycare is `daycarePokemon[3]` inside the Rogue save block *and* mirrore
 in-run and out-of-run daycare are separate. Quest state is `RogueQuestState` bitfields
 (`stateFlags:16`, `highestCompleteDifficulty:3`, `highestCollectedRewardDifficulty:3`).
 
-## 13. Verification checklist for any editor
+## 13. Hub map fields (v2.2.0)
+
+**`areaCoords[11]` has a 4-byte stride, not 2.** `include/rogue.h` declares
+`struct Coords8 areaCoords[AREA_COUNT]` (`s8 x; s8 y;` = 2 bytes) and `SerializeArray` uses
+`sizeof(struct Coords8)` — but a stride-2 read desynchronises every field after it
+(`upgradeFlags`, `homeDecorations`, styles, wander slots, weather, time, season, safari, daycare,
+difficulty, …) in both real saves, and the game's own accessor
+(`src/rogue_hub.c:4212`) reads `x + (i + 1) * 4` while walking neighbours. The observed layout is
+`s8 x, s8 y` followed by two zero pad bytes. Brute-forcing x/y per area against `er2.sav` and a
+second independent save pinned this: stride 4 validates all downstream era pins, stride 2 does not.
+Consequences: coords are **signed 8-bit** (−128..127), and the built flag and coordinate are
+**separate state** — every area in both saves carries a coordinate, built or not (unbuilt areas
+hold sentinel positions such as `(-1,0)` that the game ignores).
+
+**Reachability model.** The player moves between areas by walking onto edge tiles whose neighbour
+exists: `RogueHub_GetAreaAtConnection` looks up the adjacent coordinate in `gRogueHubAreas` and
+returns NULL unless that area's built bit is set. There is no warp table in the save. So a
+coordinate is only meaningful if the tile is 4-connected to another built area, and two built
+areas on the same tile are one unreachable area. The editor validates exactly these three failure
+modes (collision, island, stranded neighbour) before applying a `hub-coord` edit. The game's own
+builder uses a spiral search for a free adjacent tile (`RogueHub_BuildArea` →
+`FindAdjacentTileForArea`); `RogueHub_ClearProgress` then hard-codes the canonical layout and
+zeroes coords 4..10, confirming the coord table is per-save state and not ROM data.
+
+**`weatherState` is a raw u16 seed, not a weather id.** `RogueToD_UpdateWeather` buckets it with a
+different modulo per season: `% 5` for spring/summer (`W_SUNNY, W_RAIN, W_STORM, W_FOG, W_SUNRISE`)
+and `% 6` for autumn/winter (same set + `W_SNOW`). `0xFFFF` is the "no save data yet" sentinel:
+`0xFFFF % 5 = 0` (sunny, matching the live save) and `0xFFFF % 6 = 3` (fog, matching an all-`0xFF`
+backup save). Setting `0xFFFF` therefore restores the game's default behaviour.
+
+**`statueLevel` is never serialized.** `SerializeRogueBlockInternal` writes `weatherState`,
+`timeOfDayMinutes`, `seasonCounter` but no statue field — it is derived from quest-completion state
+on load (`RogueHub_SetStatueLevel` after the version-notify call). Edit quest state instead.
+
+**`homeWanderingMonSpecies[10]` (u16).** A follow-mon's shininess is encoded in the same u16:
+`FollowMon_GetMonGraphics` compares against `species + FOLLOWMON_SHINY_OFFSET`, and the game sets
+`SHINY_FOLLOWS = 1` in `include/config/rogue.h` (v2.2.0). The offset is **10000**
+(`include/rogue_hub.h:211`), so a shiny Haxorus (2728) is stored as 12728. `0` means
+`SPECIES_NONE`, not the first species. Follow-mons only spawn inside the player's house.
+
+**`homeStyles[3]` (u8).** Indices are the order `RogueHub_InitHouseStyles` uses: 0 = exterior
+(`gRogueHouseExteriorStyles`, 4 variants, first entry has `species = 0xFFFF`), 1 = interior
+(`gRogueHouseInteriorStyles`, 1 variant — the game forces any out-of-range value back to 0),
+2 = path (`gRogueHousePathStyles`, 6 variants). Out-of-range values are clamped on load, so write
+only in-range ids.
+
+**`homeDecorations[192]` (4 B each: `u8 x, y, decorVariant, active:1`).** Slot ranges from
+`include/constants/rogue_hub.h`: 0..159 are the **outside** yard (`HOME_DECOR_OUTSIDE_COUNT 160`,
+x/y limited to 21..106), 160..191 are **inside** the house (`HOME_DECOR_INSIDE_COUNT 32`, x/y 5..20
+/ 5..15). `decorVariant` indexes the ROM table `sDecorationVariants` (`src/rogue_hub.c:237`) —
+`0` means no decoration; the game skips the first entry when cycling. Valid ids observed in the
+table run up to ~118 (`DECOR_VARIANT_WARDROBE_3`). `active` is a 1-bit flag — write 0 or 1, not the
+whole byte. Reference point: `RogueHub_ClearProgress` seeds slot 0 at (21,19) with
+`DECOR_VARIANT_OUTFIT_CHANGING_WARDROBE` (id 104), and that is exactly what a real save carries.
+
+## 14. Verification checklist for any editor
 
 1. Pick the live slot by footer counter; validate every sector checksum.
 2. Decode with the *Rogue* struct sizes (104 for party).

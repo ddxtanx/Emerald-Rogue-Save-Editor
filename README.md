@@ -33,10 +33,14 @@ Pokémon- and sector-level checksum so the game accepts the result.
 - **Rogue save block** (the adventure state the vanilla layout has no room for):
   - Quests (all 232 slots, named, with state flags + highest-completed difficulty)
   - Campaigns (unlock/complete/best score)
-  - Hub map: built areas and every named hub upgrade
+  - Hub map: built areas, every named hub upgrade, **area coordinates** (move areas on the hub
+    grid, with reachability warnings for islands / collisions / stranded neighbours), house
+    exterior/interior/path styles, the 192 decoration slots (160 yard + 32 indoor), and the 10
+    follow-mon slots incl. shininess
   - Lab difficulty settings: all 20 config toggles and 9 range slots (battle format, game mode,
     difficulty preset, revision mode, trainer order, …)
-  - Hub time-of-day, season, weather; daycare (current state and stashed state)
+  - Hub time-of-day, season, weather (raw seed; the editor shows what each season's bucket yields);
+    daycare (current state and stashed state)
 - **In-adventure vs. hub state split**: SaveBlock1 holds whichever state is currently loaded; the other one
   is stashed inside the Rogue block (`sRunRestoreBlock`). The editor shows and edits **both** — stashed hub
   party, bag, daycare, money, and play time — so you can fix the state that the game is not currently showing.
