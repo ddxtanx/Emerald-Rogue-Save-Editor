@@ -2084,15 +2084,26 @@ fn cli_edit(path: &str, args_in: &[String]) {
             if refresh {
                 let lvl = m.level().unwrap() as u32;
                 let nat = m.nature() as usize;
-                let bs = base_stats(m.species()).expect("base stats not in table");
-                let newv = calc_stat(bs[ii] as u32, v as u32, m.evs()[ii] as u32, lvl, nat, ii);
-                let split = nature_split(nat, ii);
-                if ii == 0 {
-                    m.set_cached_hp(newv as u16);
-                } else {
-                    m.set_cached_stat(ii - 1, newv as u16);
+                match base_stats(m.species()) {
+                    Some(bs) => {
+                        let newv =
+                            calc_stat(bs[ii] as u32, v as u32, m.evs()[ii] as u32, lvl, nat, ii);
+                        let split = nature_split(nat, ii);
+                        if ii == 0 {
+                            m.set_cached_hp(newv as u16);
+                        } else {
+                            m.set_cached_stat(ii - 1, newv as u16);
+                        }
+                        say!("refreshed stat idx {ii} -> {} (nature split {split})", newv);
+                    }
+                    // A species missing from the base-stat table must not lose the edit or
+                    // abort the run: the IV is still valid, only the cached-stat refresh is
+                    // skipped, and the user is told explicitly rather than silently.
+                    None => say!(
+                        "WARNING: no base stats for species {} - IV updated, cached stats NOT refreshed",
+                        m.species()
+                    ),
                 }
-                say!("refreshed stat idx {ii} -> {} (nature split {split})", newv);
             }
             m.seal();
             sf.set_party_mon(pi, m);
