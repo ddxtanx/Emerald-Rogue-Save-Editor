@@ -526,6 +526,25 @@ mod tests {
             println!("style {i}: {}", sf.hub_style(&rb, i).unwrap());
         }
         println!("decor active count = {}", sf.decor_on_count(&rb));
+        // Which props, where: the house grid paints one marker per active slot, and
+        // "what is this icon?" can only be answered from these bytes.
+        for k in 0..rb.decor_f.n {
+            if let Some((x, y, v, active)) = sf.hub_decoration(&rb, k) {
+                if active {
+                    println!(
+                        "decor slot {k}: ({x},{y}) variant {} {:?} range={} name={:?}",
+                        v.raw(),
+                        v,
+                        if k < HOME_DECOR_OUTSIDE {
+                            "outdoor"
+                        } else {
+                            "indoor"
+                        },
+                        deco_variants::DECOR_VARIANTS.get(v.raw() as usize)
+                    );
+                }
+            }
+        }
     }
 
     #[test]
