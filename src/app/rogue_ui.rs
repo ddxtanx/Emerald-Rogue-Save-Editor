@@ -2,10 +2,46 @@
 //! safari roster, unique mons.
 
 use super::*;
+use crate::domain::DecorVariant;
 use crate::searchable_combo::Opts;
 use crate::tables_extra;
 
 impl Editor {
+    /// One Lab-config slot whose value is a named option list. Generic over the
+    /// domain so each slot is validated against its own option table: the raw
+    /// value on disk stays addressable even when it is outside that table.
+    fn typed_range_picker<D: crate::domain::Domain>(
+        &self,
+        ui: &mut egui::Ui,
+        id: impl std::hash::Hash,
+        cur: u8,
+    ) -> Option<u8> {
+        let dom = D::from_raw(cur);
+        let mut picked = None;
+        egui::ComboBox::from_id_source(id)
+            .selected_text(format!(
+                "{cur} — {}",
+                if dom.is_known() { dom.name() } else { "?" }
+            ))
+            .show_ui(ui, |ui| {
+                for v in crate::domain::values::<D>() {
+                    if ui
+                        .selectable_label(v.raw() == cur, format!("{} — {}", v.raw(), v.name()))
+                        .clicked()
+                    {
+                        picked = Some(v.raw());
+                    }
+                }
+            });
+        if !dom.is_known() {
+            ui.colored_label(
+                egui::Color32::GOLD,
+                format!("stored value {cur} is not one of this slot's options"),
+            );
+        }
+        picked
+    }
+
     pub(crate) fn rogue_ui(&mut self, ui: &mut egui::Ui) {
         let rb = match self.file.as_ref().and_then(|sf| sf.rogue_block()) {
             Some(rb) => rb,
@@ -31,8 +67,16 @@ impl Editor {
         let stash_named = rb.stash.ok && rb.stash.party.iter().any(|m| m.species() != 0);
         ui.heading("Rogue adventure state");
         let mut tod = rb.time_of_day;
-        let season = rb.season; // day counter, NOT a season index
-        let season_idx = (season / DAYS_PER_SEASON) as usize % SEASON_COUNT;
+        // `seasonCounter` stores DAYS, not a season index. SeasonDay derives the
+        // season so this row cannot get the units wrong.
+        let season_day = self
+            .file
+            .as_ref()
+            .unwrap()
+            .season_day(&rb)
+            .unwrap_or(crate::domain::SeasonDay::from_raw(rb.season));
+        let season = season_day.season();
+        let season_idx = season.index() as usize;
         let mut weather = rb.weather;
         ui.horizontal(|ui| {
             ui.label(format!(
@@ -60,18 +104,38 @@ impl Editor {
                 }
                 self.dirty = true;
             }
+            if ui
+                .button("−1 season")
+                .on_hover_text("move the day counter back one season (2 days)")
+                .clicked()
+            {
+                if let Some(sf) = self.file.as_mut() {
+                    sf.set_season_day(season_day.advanced_seasons(-1));
+                }
+                self.dirty = true;
+            }
+            if ui
+                .button("+1 season")
+                .on_hover_text("move the day counter forward one season (2 days)")
+                .clicked()
+            {
+                if let Some(sf) = self.file.as_mut() {
+                    sf.set_season_day(season_day.advanced_seasons(1));
+                }
+                self.dirty = true;
+            }
             egui::ComboBox::from_id_source("season")
                 .selected_text(format!(
                     "{} (day {}/{})",
-                    SEASONS[season_idx],
-                    season % DAYS_PER_SEASON + 1,
+                    season.name(),
+                    season_day.day_in_season() + 1,
                     DAYS_PER_SEASON
                 ))
                 .show_ui(ui, |ui| {
                     for (s, name) in SEASONS.iter().enumerate() {
                         if ui.selectable_label(season_idx == s, *name).clicked() {
                             if let Some(sf) = self.file.as_mut() {
-                                sf.set_hub_season(s as u8);
+                                sf.set_hub_season(crate::domain::Season::from_index(s as u8));
                             }
                             self.dirty = true;
                         }
@@ -259,13 +323,13 @@ impl Editor {
             let coord_snap: Vec<(i8, i8)> = {
                 let sf = self.file.as_ref().unwrap();
                 (0..rb.coords_f.n)
-                    .map(|k| sf.hub_area_coord(&rb, k).unwrap_or((0, 0)))
+                    .map(|k| sf.hub_area_coord_at(&rb, k).unwrap_or((0, 0)))
                     .collect()
             };
             let built_snap: Vec<bool> = {
                 let sf = self.file.as_ref().unwrap();
                 (0..HUB_AREAS.len())
-                    .map(|k| sf.hub_area_built(&rb, k))
+                    .map(|k| sf.hub_area_built_at(&rb, k))
                     .collect()
             };
             let coord_raw_snap: Vec<Option<[u8; 4]>> = {
@@ -342,7 +406,7 @@ impl Editor {
             if !coord_edits.is_empty() {
                 let sf = self.file.as_ref().unwrap();
                 for &(i, x, y) in &coord_edits {
-                    for w in sf.hub_coord_warnings(&rb, i, x, y) {
+                    for w in sf.hub_coord_warnings_at(&rb, i, x, y) {
                         ui.label(
                             egui::RichText::new(format!("area {i} {}: {w}", HUB_AREAS[i]))
                                 .color(egui::Color32::from_rgb(220, 150, 60)),
@@ -357,7 +421,11 @@ impl Editor {
                 .spacing([16.0, 2.0])
                 .show(ui, |ui| {
                     for i in 0..HUB_UPGRADES.len() {
-                        let mut on = self.file.as_ref().unwrap().hub_upgrade_on(&rb, i);
+                        let mut on = self
+                            .file
+                            .as_ref()
+                            .unwrap()
+                            .hub_upgrade_on(&rb, crate::domain::Upgrade::from_raw(i as u8));
                         if ui.checkbox(&mut on, HUB_UPGRADES[i]).changed() {
                             up_edits.push((i, on));
                         }
@@ -369,13 +437,13 @@ impl Editor {
             if !area_edits.is_empty() || !up_edits.is_empty() || !coord_edits.is_empty() {
                 if let Some(sf) = self.file.as_mut() {
                     for (i, on) in area_edits {
-                        sf.set_hub_area(i, on);
+                        sf.set_hub_area(crate::domain::HubArea::from_raw(i as u8), on);
                     }
                     for (i, on) in up_edits {
-                        sf.set_hub_upgrade(i, on);
+                        sf.set_hub_upgrade(crate::domain::Upgrade::from_raw(i as u8), on);
                     }
                     for (i, x, y) in coord_edits {
-                        sf.set_hub_area_coord(i, x, y);
+                        sf.set_hub_area_coord(crate::domain::HubArea::from_raw(i as u8), x, y);
                     }
                 }
                 self.dirty = true;
@@ -388,9 +456,10 @@ impl Editor {
             ui.add_space(8.0);
             let style_snap: Vec<u8> = {
                 let sf = self.file.as_ref().unwrap();
-                (0..rb.styles_f.n)
-                    .map(|k| sf.hub_style(&rb, k).unwrap_or(0))
-                    .collect()
+                match sf.home_styles(&rb) {
+                    Some((ext, int, path)) => vec![ext.raw(), int.raw(), path.raw()],
+                    None => (0..rb.styles_f.n).map(|k| sf.hub_style(&rb, k).unwrap_or(0)).collect(),
+                }
             };
             let wander_snap: Vec<(u16, bool)> = {
                 let sf = self.file.as_ref().unwrap();
@@ -404,6 +473,9 @@ impl Editor {
             let mut weather_edit: Option<u16> = None;
 
             ui.strong("Home styles");
+            // One picker for all three slots, generic over the domain trait:
+            // each slot offers its own table's values, so an outdoor value can
+            // never be offered for the indoor slot.
             egui::Grid::new("hubstyles")
                 .num_columns(2)
                 .spacing([16.0, 2.0])
@@ -492,7 +564,14 @@ impl Editor {
             if !style_edits.is_empty() || !wander_edits.is_empty() || weather_edit.is_some() {
                 if let Some(sf) = self.file.as_mut() {
                     for (i, v) in style_edits {
-                        sf.set_hub_style(i, v);
+                        match i {
+                            0 => sf.set_exterior_style(crate::domain::ExteriorStyle::from_raw(v)),
+                            1 => sf.set_interior_style(crate::domain::InteriorStyle::from_raw(v)),
+                            2 => sf.set_path_style(crate::domain::PathStyle::from_raw(v)),
+                            // a save with more style slots than the three the game
+                            // defines: write it raw rather than dropping the edit
+                            _ => sf.set_hub_style(i, v),
+                        }
                     }
                     for (i, sp, sh) in wander_edits {
                         sf.set_hub_wander_mon(i, sp, sh);
@@ -512,13 +591,13 @@ impl Editor {
                 ui.label(
                     "192 slots: 0..160 outdoor, 160..192 indoor. Each is x, y, variant, active.",
                 );
-                let snap: Vec<(u8, u8, u8, bool)> = {
+                let snap: Vec<(u8, u8, crate::domain::DecorVariant, bool)> = {
                     let sf = self.file.as_ref().unwrap();
                     (0..rb.decor_f.n)
-                        .map(|k| sf.hub_decoration(&rb, k).unwrap_or((0, 0, 0, false)))
+                        .map(|k| sf.hub_decoration(&rb, k).unwrap_or((0, 0, crate::domain::DecorVariant::from_raw(0), false)))
                         .collect()
                 };
-                let mut edits: Vec<(usize, u8, u8, u8, bool)> = Vec::new();
+                let mut edits: Vec<(usize, u8, u8, crate::domain::DecorVariant, bool)> = Vec::new();
                 egui::ScrollArea::vertical()
                     .max_height(240.0)
                     .auto_shrink([false, false])
@@ -539,16 +618,16 @@ impl Editor {
                                     } else {
                                         "indoor"
                                     };
-                                    ui.label(format!("[{i}] ({region}) {}", decor_name(var)));
+                                    ui.label(format!("[{i}] ({region}) {}", decor_name(var.raw())));
                                     let mut x = dx as i32;
                                     let mut y = dy as i32;
-                                    let mut v = var as i32;
+                                    let mut v = var.raw() as i32;
                                     let xw = ui.add(egui::DragValue::new(&mut x).clamp_range(0..=255).speed(1));
                                     let yw = ui.add(egui::DragValue::new(&mut y).clamp_range(0..=255).speed(1));
                                     let vw = ui.add(egui::DragValue::new(&mut v).clamp_range(0..=255).speed(1)).on_hover_text(format!(
                                         "decoration id; the game's own enum name is {} (id {} is the in-game 'remove' action, never stored in the save)",
                                         deco_variants::DECOR_VARIANT_NAMES
-                                            .get(var as usize)
+                                            .get(var.raw() as usize)
                                             .copied()
                                             .unwrap_or("(out of range)"),
                                         deco_variants::DECOR_VARIANT_REMOVE
@@ -563,7 +642,7 @@ impl Editor {
                                         && (0..=255).contains(&y)
                                         && (0..=255).contains(&v)
                                     {
-                                        edits.push((i, x as u8, y as u8, v as u8, a));
+                                        edits.push((i, x as u8, y as u8, DecorVariant::from_raw(v as u8), a));
                                     }
                                     ui.end_row();
                                 }
@@ -581,10 +660,12 @@ impl Editor {
         });
 
         ui.collapsing("Difficulty / adventure settings (lab)", |ui| {
-            let t_snap: Vec<u8> = {
+            let t_snap: Vec<bool> = {
                 let sf = self.file.as_ref().unwrap();
-                (0..rb.diff_toggle_f.n)
-                    .map(|k| sf.merged[rb.diff_toggle_f.data + k])
+                (0..rb.diff_toggle_f.n * 8)
+                    .map(|i| {
+                        sf.diff_toggle_bit(&rb, crate::domain::ConfigToggle::from_raw(i as u8))
+                    })
                     .collect()
             };
             let r_snap: Vec<u8> = {
@@ -593,38 +674,33 @@ impl Editor {
                     .map(|k| sf.merged[rb.diff_range_f.data + k])
                     .collect()
             };
-            let mut t_edits: Vec<(usize, u8)> = Vec::new();
-            let mut r_edits: Vec<(usize, u8)> = Vec::new();
+            let mut t_edits: Vec<(crate::domain::ConfigToggle, bool)> = Vec::new();
+            let mut r_edits: Vec<(crate::domain::ConfigRange, u8)> = Vec::new();
             ui.strong("Toggles");
             egui::Grid::new("difftoggle")
                 .num_columns(2)
                 .spacing([16.0, 2.0])
                 .show(ui, |ui| {
-                    for i in 0..CONFIG_TOGGLES.len().min(rb.diff_toggle_f.n * 8) {
-                        let byte = t_snap.get(i / 8).copied().unwrap_or(0);
-                        let mut on = byte >> (i % 8) & 1 != 0;
-                        if ui.checkbox(&mut on, CONFIG_TOGGLES[i]).changed() {
-                            t_edits.push((i, if on { 1 } else { 0 }));
+                    for (i, t) in crate::domain::values::<crate::domain::ConfigToggle>()
+                        .into_iter()
+                        .enumerate()
+                    {
+                        if i >= rb.diff_toggle_f.n * 8 {
+                            break;
+                        }
+                        let mut on = *t_snap.get(i).unwrap_or(&false);
+                        if ui.checkbox(&mut on, t.name()).changed() {
+                            t_edits.push((t, on));
                         }
                         if i % 2 == 1 {
                             ui.end_row();
                         }
                     }
                 });
-            // pack bit edits back into byte writes
             if !t_edits.is_empty() {
-                let mut bytes = t_snap.clone();
-                for (bit, want) in t_edits {
-                    let b = &mut bytes[bit / 8];
-                    if want == 1 {
-                        *b |= 1 << (bit % 8);
-                    } else {
-                        *b &= !(1 << (bit % 8));
-                    }
-                }
                 if let Some(sf) = self.file.as_mut() {
-                    for k in 0..bytes.len().min(rb.diff_toggle_f.n) {
-                        sf.set_diff_toggle(k, bytes[k]);
+                    for (t, on) in t_edits {
+                        sf.set_diff_toggle_bit(t, on);
                     }
                 }
                 self.dirty = true;
@@ -636,43 +712,60 @@ impl Editor {
                 let label = CONFIG_RANGES.get(i).copied().unwrap_or("?");
                 ui.horizontal(|ui| {
                     ui.add_sized([190.0, 0.0], egui::Label::new(label).truncate(true));
-                    let opts: &[&str] = match i {
-                        3 => BATTLE_FORMATS,
-                        5 => GAME_MODES,
-                        6 => DIFF_PRESETS,
-                        7 => REVISION_MODES,
-                        8 => TRAINER_ORDERS,
-                        _ => &[],
-                    };
+                    // Which value domain applies is a property of the slot, not a
+                    // literal at the call site (`ConfigRange::options`).
+                    let range = crate::domain::ConfigRange::from_raw(i as u8);
+                    let opts = range.options();
                     if opts.is_empty() {
                         let mut n = v as i32;
                         if ui
                             .add(egui::DragValue::new(&mut n).clamp_range(-128..=255))
                             .changed()
                         {
-                            r_edits.push((i, n as u8));
+                            r_edits.push((range, n as u8));
                         }
-                        if i == 0 {
+                        if range.is_signed() {
                             ui.label("(trainer level shift, signed)");
                         }
                     } else {
-                        let cur = opts.get(v as usize).copied().unwrap_or("?");
-                        egui::ComboBox::from_id_source(format!("rng{i}"))
-                            .selected_text(format!("{v} — {cur}"))
-                            .show_ui(ui, |ui| {
-                                for (o, name) in opts.iter().enumerate() {
-                                    if ui.selectable_label(v as usize == o, *name).clicked() {
-                                        r_edits.push((i, o as u8));
-                                    }
-                                }
-                            });
+                        let picked = match i {
+                            3 => self.typed_range_picker::<crate::domain::BattleFormat>(
+                                ui,
+                                format!("rng{i}"),
+                                v,
+                            ),
+                            5 => self.typed_range_picker::<crate::domain::GameMode>(
+                                ui,
+                                format!("rng{i}"),
+                                v,
+                            ),
+                            6 => self.typed_range_picker::<crate::domain::DiffPreset>(
+                                ui,
+                                format!("rng{i}"),
+                                v,
+                            ),
+                            7 => self.typed_range_picker::<crate::domain::RevisionMode>(
+                                ui,
+                                format!("rng{i}"),
+                                v,
+                            ),
+                            8 => self.typed_range_picker::<crate::domain::TrainerOrder>(
+                                ui,
+                                format!("rng{i}"),
+                                v,
+                            ),
+                            _ => None,
+                        };
+                        if let Some(nv) = picked {
+                            r_edits.push((range, nv));
+                        }
                     }
                 });
             }
             if !r_edits.is_empty() {
                 if let Some(sf) = self.file.as_mut() {
-                    for (i, v) in r_edits {
-                        sf.set_diff_range(i, v);
+                    for (range, v) in r_edits {
+                        sf.set_diff_range(range, v);
                     }
                 }
                 self.dirty = true;
@@ -722,43 +815,45 @@ impl Editor {
                             s.set_species(sp);
                             edits.push((i, s.clone()));
                         }
+                        // The picker's selected text is only as good as its id
+                        // list, so also name the id on disk (Rogue form ids have
+                        // no entry in the vanilla species table and read blank).
+                        ui.label(format!(
+                            "= {} (id {sp})",
+                            crate::game_data::species_name(sp)
+                        ));
                         let mut nick = s.nickname();
                         if ui.add(egui::TextEdit::singleline(&mut nick).desired_width(84.0)).changed() {
                             s.set_nickname(&nick);
                             edits.push((i, s.clone()));
                         }
-                        // IVs in the same party order the struct packs them
-                        // (hp, atk, def, spe, spa, spd) — labelled, because six
-                        // bare "IV" fields are impossible to read.
-                        const IV_NAMES: [&str; 6] = ["hp", "atk", "def", "spe", "spa", "spd"];
-                        for k in 0..6 {
-                            let mut v = s.iv(k) as i32;
+                        // StatIdx labels the six columns the struct actually
+                        // packs, in struct order; an unlabeled run of six IV
+                        // boxes is unusable, and a hand-written label list can
+                        // silently disagree with the index it prints.
+                        for st in crate::domain::StatIdx::ALL {
+                            let mut v = s.iv(st) as i32;
                             if ui
                                 .add(
                                     egui::DragValue::new(&mut v)
                                         .clamp_range(0..=31)
-                                        .prefix(format!("{} ", IV_NAMES[k])),
+                                        .prefix(format!("{} ", st.label())),
                                 )
                                 .changed()
                             {
-                                s.set_iv(k, v as u8);
+                                s.set_iv(st, v as u8);
                                 edits.push((i, s.clone()));
                             }
                         }
-                        let mut nat = s.nature() as usize;
-                        let mut nat_changed = false;
+                        let nat = s.nature();
                         if let Some(n) = self.combo(
                             ui,
                             &format!("saf{i}nat"),
                             crate::tables::NATURE_IDS,
-                            nat as u16,
+                            nat.raw() as u16,
                             &Opts::named().no_id().compact(),
                         ) {
-                            nat = n as usize;
-                            nat_changed = true;
-                        }
-                        if nat_changed {
-                            s.set_nature(nat as u8);
+                            s.set_nature(crate::domain::Nature::from_raw(n as u8));
                             edits.push((i, s.clone()));
                         }
                         let mut sh = s.shiny();
@@ -769,19 +864,18 @@ impl Editor {
                         // Ball / ability slot / gender flag: the game copies all
                         // three into the wild mon it generates, so they are worth
                         // showing here even though the mon does not exist yet.
-                        let mut ball = s.pokeball();
+                        let ball = s.pokeball();
                         if let Some(id) = self.combo(
                             ui,
                             &format!("saf{i}ball"),
                             crate::game_data::BALLS,
-                            ball as u16,
+                            ball.raw(),
                             &Opts::named().compact().with_none("(no ball)"),
                         ) {
-                            ball = id as u8;
-                            s.set_pokeball(ball);
+                            s.set_pokeball(crate::domain::Ball::from_raw(id));
                             edits.push((i, s.clone()));
                         }
-                        let mut ab = s.ability_num() as i32;
+                        let mut ab = s.ability_slot().raw() as i32;
                         if ui
                             .add(
                                 egui::DragValue::new(&mut ab)
@@ -791,10 +885,10 @@ impl Editor {
                             .on_hover_text("slot index into this species' ability list")
                             .changed()
                         {
-                            s.set_ability_num(ab as u8);
+                            s.set_ability_slot(crate::domain::AbilitySlot::from_raw(ab as u8));
                             edits.push((i, s.clone()));
                         }
-                        let mut gf = s.gender_flag() as i32;
+                        let mut gf = s.gender().raw() as i32;
                         if ui
                             .add(egui::DragValue::new(&mut gf).clamp_range(0..=7).prefix("gender "))
                             .on_hover_text(
@@ -803,7 +897,7 @@ impl Editor {
                             )
                             .changed()
                         {
-                            s.set_gender_flag(gf as u8);
+                            s.set_gender(crate::domain::GenderFlag::from_raw(gf as u8));
                             edits.push((i, s.clone()));
                         }
                         let mut pr = s.priority as i32;

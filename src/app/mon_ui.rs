@@ -143,15 +143,24 @@ impl Editor {
                 ui.label("Nature");
                 // 25 values, no useful ids: same picker as everything else, with
                 // the numbers hidden (nature 7 means nothing; "Relaxed" does).
+                let nat = m.nature();
                 if let Some(n) = self.combo(
                     ui,
                     "nature",
                     crate::tables::NATURE_IDS,
-                    m.nature() as u16,
+                    nat.raw() as u16,
                     &Opts::named().no_id().compact(),
                 ) {
-                    m.set_nature(n as u8);
+                    m.set_nature(crate::domain::Nature::from_raw(n as u8));
                     changed = true;
+                }
+                if !nat.is_known() {
+                    // pid%25 XOR the modifier can exceed 24. Shown rather than
+                    // clamped, because clamping would rewrite the mon.
+                    ui.colored_label(
+                        egui::Color32::GOLD,
+                        format!("nature value {} is outside 0..=24 — left exactly as stored", nat.raw()),
+                    );
                 }
                 ui.label("Shiny");
                 let mut sh = m.is_shiny();
@@ -164,10 +173,10 @@ impl Editor {
                 // so printing the raw bit claimed Metagross (flag 7, ratio
                 // MON_GENDERLESS) was "Female (7)".
                 let sp = m.species();
-                let gflag = m.gender_flag();
-                let derived = crate::lookup::gender_for_species(sp, gflag);
+                let gflag = m.gender();
+                let derived = crate::lookup::gender_for_species(sp, gflag.raw());
                 let shown = derived.unwrap_or(match gflag {
-                    0 => crate::lookup::Gender::Male,
+                    crate::domain::GenderFlag::Male => crate::lookup::Gender::Male,
                     _ => crate::lookup::Gender::Female,
                 });
                 let fixed = crate::lookup::gender_is_fixed(sp) == Some(true);
@@ -178,8 +187,18 @@ impl Editor {
                         if fixed {
                             // Editing the flag cannot change what the game shows.
                             ui.label(format!(
-                                "fixed by species; stored flag {gflag} is ignored by the game"
+                                "fixed by species; stored flag {} is ignored by the game",
+                                gflag.raw()
                             ));
+                        } else if !gflag.is_expected() {
+                            ui.colored_label(
+                                egui::Color32::GOLD,
+                                format!(
+                                    "stored gender flag {} is not 0/1 — this save's struct layout \
+                                     does not match what the editor assumed",
+                                    gflag.raw()
+                                ),
+                            );
                         } else {
                             if derived.is_none() {
                                 ui.label(format!(
@@ -188,19 +207,22 @@ impl Editor {
                             }
                             for (val, g) in [
                                 (
-                                    crate::lookup::flag_for_gender(crate::lookup::Gender::Male),
+                                    crate::domain::GenderFlag::Male,
                                     crate::lookup::Gender::Male,
                                 ),
                                 (
-                                    crate::lookup::flag_for_gender(crate::lookup::Gender::Female),
+                                    crate::domain::GenderFlag::Female,
                                     crate::lookup::Gender::Female,
                                 ),
                             ] {
                                 if ui
-                                    .selectable_label(shown == g, format!("{} ({})", g.label(), val))
+                                    .selectable_label(
+                                        shown == g,
+                                        format!("{} ({})", g.label(), val.raw()),
+                                    )
                                     .clicked()
                                 {
-                                    m.set_gender_flag(val);
+                                    m.set_gender(val);
                                     changed = true;
                                 }
                             }
@@ -211,23 +233,43 @@ impl Editor {
                 // 3 in this build (2 normal + 1 hidden); the old loop ran
                 // 0..2, which left hidden abilities unselectable.
                 ui.label("Ability");
+                let slot = m.ability_slot();
                 egui::ComboBox::from_id_source("ability")
                     .selected_text(format!(
                         "{} (slot {})",
-                        crate::lookup::ability_label(sp, m.ability_num()),
-                        m.ability_num()
+                        crate::lookup::ability_label(sp, slot.raw()),
+                        slot.raw()
                     ))
                     .show_ui(ui, |ui| {
-                        for a in 0..=crate::lookup::MAX_ABILITY_SLOT {
+                        // The three slots the game's NUM_ABILITY_SLOTS allows...
+                        for a in [
+                            crate::domain::AbilitySlot::First,
+                            crate::domain::AbilitySlot::Second,
+                            crate::domain::AbilitySlot::Hidden,
+                        ] {
                             if ui
                                 .selectable_label(
-                                    m.ability_num() == a,
-                                    format!("{} (slot {a})", crate::lookup::ability_label(sp, a)),
+                                    slot == a,
+                                    format!(
+                                        "{} (slot {})",
+                                        crate::lookup::ability_label(sp, a.raw()),
+                                        a.raw()
+                                    ),
                                 )
                                 .clicked()
                             {
-                                m.set_ability_num(a);
+                                m.set_ability_slot(a);
                                 changed = true;
+                            }
+                        }
+                        // ...plus anything else actually on disk, so a save we are
+                        // misreading is shown rather than silently rewritten.
+                        if let crate::domain::AbilitySlot::Unexpected(v) = slot {
+                            if ui
+                                .selectable_label(true, format!("stored slot {v} — out of range"))
+                                .clicked()
+                            {
+                                changed = false;
                             }
                         }
                     });
@@ -237,9 +279,9 @@ impl Editor {
         ui.add_space(6.0);
         ui.horizontal(|ui| {
             ui.label("IVs");
-            let names = ["HP", "Atk", "Def", "Spe", "SpA", "SpD"];
-            for (i, nm) in names.iter().enumerate() {
-                let mut v = m.ivs()[i];
+            for st in crate::domain::StatIdx::ALL {
+                let nm = st.label();
+                let mut v = m.iv(st);
                 if ui
                     .add(
                         egui::DragValue::new(&mut v)
@@ -248,13 +290,13 @@ impl Editor {
                     )
                     .changed()
                 {
-                    m.set_iv(i, v);
+                    m.set_iv(st, v);
                     changed = true;
                 }
             }
             if ui.button("31 all").clicked() {
-                for i in 0..6 {
-                    m.set_iv(i, 31);
+                for st in crate::domain::StatIdx::ALL {
+                    m.set_iv(st, 31);
                 }
                 changed = true;
             }
@@ -486,9 +528,29 @@ impl Editor {
                     .clicked()
                 {
                     let lvl = m.level().unwrap_or(0) as u32;
-                    let nat = m.nature() as usize;
-                    match base_stats(m.species()) {
-                        Some(bs) => {
+                    let nat = m.nature();
+                    // The nature modifier table has 25 rows; an out-of-range
+                    // nature has no row, so recalculation cannot be done
+                    // correctly and is refused rather than guessed at.
+                    let nat_idx = if nat.is_known() {
+                        Some(nat.raw() as usize)
+                    } else {
+                        None
+                    };
+                    match (nat_idx, base_stats(m.species())) {
+                        (None, _) => {
+                            self.mon_note = Some(format!(
+                                "nature value {} is outside 0..=24 - stats NOT recalculated",
+                                nat.raw()
+                            ));
+                        }
+                        (Some(_), None) => {
+                            self.mon_note = Some(format!(
+                                "no base stats in table for species {} - stats NOT recalculated",
+                                m.species()
+                            ));
+                        }
+                        (Some(nat), Some(bs)) => {
                             let evs = m.evs();
                             let ivs = m.ivs();
                             let hp =
@@ -507,12 +569,6 @@ impl Editor {
                             }
                             self.mon_note = Some(format!("stats recalculated at level {lvl}"));
                             changed = true;
-                        }
-                        None => {
-                            self.mon_note = Some(format!(
-                                "no base stats in table for species {} - stats NOT recalculated",
-                                m.species()
-                            ));
                         }
                     }
                 }

@@ -868,6 +868,45 @@ mod tests {
         }
     }
 
+    /// The Rogue tab is the largest surface of typed-domain widgets (season row,
+    /// home styles, Lab config toggles and ranges, safari roster). Two things
+    /// must hold: it must not panic on a real save, and rendering it must not
+    /// touch the file — opening a save is not consent to write it.
+    #[test]
+    fn rogue_tab_renders_against_a_real_save_without_writing_it() {
+        use egui::{Event, RawInput};
+        let Some(mut app) = editor_with_save() else {
+            return;
+        };
+        let path = app.path.clone().unwrap();
+        let before = std::fs::read(&path).unwrap();
+
+        let ctx = egui::Context::default();
+        // Widen the window so nothing is squeezed out, and drive a pointer so
+        // hover code paths run.
+        for _ in 0..4 {
+            let input = RawInput {
+                screen_rect: Some(egui::Rect::from_min_max(
+                    egui::Pos2::ZERO,
+                    egui::Pos2::new(1500.0, 1200.0),
+                )),
+                focused: true,
+                events: vec![Event::PointerMoved(egui::Pos2::new(5.0, 5.0))],
+                ..Default::default()
+            };
+            let _ = ctx.run(input, |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    app.rogue_ui(ui);
+                });
+            });
+        }
+        let after = std::fs::read(&path).unwrap();
+        assert_eq!(
+            before, after,
+            "rendering the Rogue tab must not write the save"
+        );
+    }
+
     #[test]
     fn roster_order_is_party_then_fusions_then_boxes_with_no_empty_slots() {
         let Some(app) = editor_with_save() else {

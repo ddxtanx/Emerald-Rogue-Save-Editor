@@ -131,17 +131,6 @@ pub fn gender_for_species(sp: u16, flag: u8) -> Option<Gender> {
     })
 }
 
-/// The flag value the game keeps for a gender. Only meaningful for
-/// variable-ratio species; for fixed-gender species the game leaves the stored
-/// bits alone (a genderless mon's flag is whatever it was at generation, e.g.
-/// `0xE0` with the upper ribbon bits around it).
-pub fn flag_for_gender(g: Gender) -> u8 {
-    match g {
-        Gender::Male => 0,
-        Gender::Female | Gender::Genderless => 1,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

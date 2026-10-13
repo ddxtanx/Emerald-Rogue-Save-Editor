@@ -227,7 +227,10 @@ pub(crate) fn item_name(id: u16) -> &'static str {
 /// Effective pocket for a bag-placed item id (1..=9; 0 = pocketless). The game
 /// refuses to add pocketless ids to the bag at all (`ItemId_GetPocket` ==
 /// `POCKET_NONE` in `AddBagItem`), so this gates every scripted insert.
-pub(crate) fn item_pocket(id: u16) -> u8 {
+pub(crate) fn item_pocket(id: u16) -> crate::domain::Pocket {
+    crate::domain::Pocket::from_raw(item_pocket_raw(id))
+}
+pub(crate) fn item_pocket_raw(id: u16) -> u8 {
     if id == 0 {
         return 0;
     }
@@ -249,20 +252,17 @@ pub(crate) fn is_evo_item(id: u16) -> bool {
 /// The editor's canonical sort key: pocket run order (the functional
 /// invariant), evo items first within a run (the game's display rule), then
 /// ascending id (the game's final tie-break).
-pub(crate) fn bag_sort_key(id: u16) -> (u8, bool, u16) {
+pub(crate) fn bag_sort_key(id: u16) -> (crate::domain::Pocket, bool, u16) {
     (item_pocket(id), !is_evo_item(id), id)
 }
 
-pub(crate) fn pocket_name(p: u8) -> String {
-    // POCKET_ORDER stores human display names ("Items", "Held Items"), NOT the
-    // C constant names — never slice a fixed prefix off them (this panicked on
-    // "Items" once the GUI started rendering pocket labels).
-    match crate::item_pockets::POCKET_ORDER
-        .iter()
-        .find(|(_, v)| *v == p)
-    {
-        Some((name, v)) => format!("{name} (pocket {v})"),
-        None => format!("unpocketed (POCKET_NONE = {p})"),
+pub(crate) fn pocket_name(p: crate::domain::Pocket) -> String {
+    // Display names in POCKET_ORDER are human labels ("Items"), not the C
+    // constant names — never slice a prefix off them (that panicked once).
+    if p.is_known() {
+        format!("{} (pocket {})", p.name(), p.raw())
+    } else {
+        format!("unpocketed (POCKET_NONE = {})", p.raw())
     }
 }
 

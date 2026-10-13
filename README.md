@@ -172,6 +172,11 @@ docs/FORMAT.md     the reverse-engineered save layout, with offsets and sources
 docs/screenshot.png
 ```
 
+- Field values are typed against the game's own enums (`Nature`, `SeasonDay`,
+  `HubArea`, the three separate home-style types, …) so a season index cannot be
+  passed where a day counter belongs. Types keep out-of-domain bytes verbatim
+  rather than clamping them, so a save round-trips byte for byte.
+
 ## Development notes
 
 `tools/` holds the scripts that produced the format knowledge and the generated tables. They expect a local checkout

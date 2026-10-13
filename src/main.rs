@@ -22,6 +22,7 @@ mod app;
 mod area_popup;
 mod basestats;
 mod deco_variants;
+mod domain;
 mod format;
 mod game_data;
 mod icons;

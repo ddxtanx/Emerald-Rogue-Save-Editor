@@ -19,6 +19,7 @@
 //!   reported by `SaveFile::hub_coord_warnings` and shown before/while the move is
 //!   made, not after the fact.
 
+use crate::domain::{DecorVariant, HubArea};
 use crate::format::HOME_DECOR_OUTSIDE;
 use crate::game_data::HUB_AREAS;
 use crate::savefile::{RogueBlock, SaveFile};
@@ -110,13 +111,16 @@ impl super::Editor {
         let built: Vec<bool> = {
             let sf: &SaveFile = self.file.as_ref().unwrap();
             (0..HUB_AREAS.len())
-                .map(|i| sf.hub_area_built(rb, i))
+                .map(|i| sf.hub_area_built(rb, HubArea::from_raw(i as u8)))
                 .collect()
         };
         let coords: Vec<(i8, i8)> = {
             let sf: &SaveFile = self.file.as_ref().unwrap();
             (0..HUB_AREAS.len())
-                .map(|i| sf.hub_area_coord(rb, i).unwrap_or((0, 0)))
+                .map(|i| {
+                    sf.hub_area_coord(rb, HubArea::from_raw(i as u8))
+                        .unwrap_or((0, 0))
+                })
                 .collect()
         };
 
@@ -327,7 +331,7 @@ impl super::Editor {
         if !coord_edits.is_empty() {
             let sf: &SaveFile = self.file.as_ref().unwrap();
             for &(i, x, y) in &coord_edits {
-                for w in sf.hub_coord_warnings(rb, i, x, y) {
+                for w in sf.hub_coord_warnings(rb, HubArea::from_raw(i as u8), x, y) {
                     ui.label(
                         egui::RichText::new(format!("moving {} to ({x},{y}): {w}", HUB_AREAS[i]))
                             .color(Color32::from_rgb(220, 150, 60)),
@@ -339,10 +343,10 @@ impl super::Editor {
         if !coord_edits.is_empty() || !built_edits.is_empty() {
             if let Some(sf) = self.file.as_mut() {
                 for (i, x, y) in coord_edits {
-                    sf.set_hub_area_coord(i, x, y);
+                    sf.set_hub_area_coord(HubArea::from_raw(i as u8), x, y);
                 }
                 for (i, on) in built_edits {
-                    sf.set_hub_area(i, on);
+                    sf.set_hub_area(HubArea::from_raw(i as u8), on);
                 }
             }
             self.dirty = true;
@@ -356,10 +360,17 @@ impl super::Editor {
     /// on them. Click an empty tile to drop the chosen prop there, click a prop to
     /// select it, and use the buttons to change or clear the selected prop.
     pub(crate) fn house_visual(&mut self, ui: &mut Ui, rb: &RogueBlock) {
-        let snap: Vec<(u8, u8, u8, bool)> = {
+        let snap: Vec<(u8, u8, crate::domain::DecorVariant, bool)> = {
             let sf: &SaveFile = self.file.as_ref().unwrap();
             (0..rb.decor_f.n)
-                .map(|k| sf.hub_decoration(rb, k).unwrap_or((0, 0, 0, false)))
+                .map(|k| {
+                    sf.hub_decoration(rb, k).unwrap_or((
+                        0,
+                        0,
+                        crate::domain::DecorVariant::from_raw(0),
+                        false,
+                    ))
+                })
                 .collect()
         };
         let slots = snap.len();
@@ -370,7 +381,7 @@ impl super::Editor {
             .data(|d| d.get_temp::<DecorSel>(egui::Id::new("house_decor_sel")))
             .unwrap_or_default();
         let variant_table = decor_variant_table();
-        let mut mut_edits: Vec<(usize, u8, u8, u8, bool)> = Vec::new();
+        let mut mut_edits: Vec<(usize, u8, u8, DecorVariant, bool)> = Vec::new();
 
         ui.label(
             egui::RichText::new(
@@ -385,14 +396,19 @@ impl super::Editor {
                 ui,
                 "house_decor_variant",
                 variant_table,
-                sel.variant as u16,
+                sel.variant.raw() as u16,
                 &crate::searchable_combo::Opts::named().no_id().compact(),
             ) {
-                sel.variant = v as u8;
+                sel.variant = DecorVariant::from_raw(v as u8);
             }
             if ui.button("clear selected slot").clicked() {
                 if let Some(i) = sel.slot {
-                    let (x, y, v, _) = snap.get(i).copied().unwrap_or((0, 0, 0, false));
+                    let (x, y, v, _) = snap.get(i).copied().unwrap_or((
+                        0,
+                        0,
+                        crate::domain::DecorVariant::from_raw(0),
+                        false,
+                    ));
                     mut_edits.push((i, x, y, v, false));
                 }
             }
@@ -461,7 +477,7 @@ impl super::Editor {
                         "slot {i}: {} at ({x},{y})",
                         variant_table
                             .iter()
-                            .find(|(id, _)| *id as u8 == v)
+                            .find(|(id, _)| *id as u8 == v.raw())
                             .map(|(_, n)| *n)
                             .unwrap_or("(unknown prop)")
                     ));
@@ -518,7 +534,7 @@ impl super::Editor {
 #[derive(Clone, Copy, Default)]
 struct DecorSel {
     slot: Option<usize>,
-    variant: u8,
+    variant: DecorVariant,
 }
 
 /// `(id, name)` table for the searchable prop picker. `decorVariant` indexes
@@ -749,13 +765,14 @@ mod functional {
     fn coord(app: &super::super::Editor, area: usize) -> (i8, i8) {
         let sf = app.file.as_ref().unwrap();
         let rb = sf.rogue_block().unwrap();
-        sf.hub_area_coord(&rb, area).unwrap_or((0, 0))
+        sf.hub_area_coord(&rb, crate::domain::HubArea::from_raw(area as u8))
+            .unwrap_or((0, 0))
     }
 
     fn built(app: &super::super::Editor, area: usize) -> bool {
         let sf = app.file.as_ref().unwrap();
         let rb = sf.rogue_block().unwrap();
-        sf.hub_area_built(&rb, area)
+        sf.hub_area_built(&rb, crate::domain::HubArea::from_raw(area as u8))
     }
 
     /// A tile inside the view that holds no built building.

@@ -417,6 +417,37 @@ table run up to ~118 (`DECOR_VARIANT_WARDROBE_3`). `active` is a 1-bit flag — 
 whole byte. Reference point: `RogueHub_ClearProgress` seeds slot 0 at (21,19) with
 `DECOR_VARIANT_OUTFIT_CHANGING_WARDROBE` (id 104), and that is exactly what a real save carries.
 
+## 13b. Typed field domains (`src/domain.rs`)
+
+The game declares most of these fields as anonymous enums. The editor mirrors them
+as distinct Rust types so the compiler catches unit errors that raw integers allow:
+`set_season_day(SeasonDay)` cannot take a season index, and the three `homeStyles`
+slots are three separate types (an exterior id is meaningless indoors, and vice
+versa: exterior has 5 entries, interior 6, path 5).
+
+Every type keeps the byte it read. `from_raw` never rejects, `raw()` returns what
+was on disk, and `is_known()` tells the UI whether to name the value or warn. That
+is a format requirement, not a style choice: Rogue ball ids run past the vanilla
+table, ability slot 2 only exists in the expansion build's 2-bit field, and the
+effective nature (`pid % 25` XOR the stored modifier) can exceed 24. An enum that
+clamped on read would turn a byte the game wrote into a byte the editor invented,
+which breaks the byte-for-byte round-trip the tests hold.
+
+| Type | Field | Domain |
+|---|---|---|
+| `Nature` | nature (pid XOR modifier) | 0..=24 named, `Unexpected(u8)` otherwise |
+| `GenderFlag` | `genderFlag` | 0/1, `Unexpected` on older-struct misreads |
+| `AbilitySlot` | `abilityNum` | 0/1/2 (2 = hidden, 2-bit field only) |
+| `StatIdx` | IV/EV column order | hp, atk, def, spe, spa, spd |
+| `Season` / `SeasonDay` | `seasonCounter` | the field stores DAYS (2 per season, wraps over 8) |
+| `ExteriorStyle`/`InteriorStyle`/`PathStyle` | `homeStyles[0..3]` | separate tables, separate types |
+| `HubArea` / `Upgrade` | `areaBuiltFlags`, `upgradeFlags` | named by `HUB_AREAS` / `HUB_UPGRADES` |
+| `DecorVariant` | `homeDecorations[].decorVariant` | `DecorationExporter` enum order |
+| `Ball` | ball | id-keyed, not positional (Rogue ids exceed the vanilla table) |
+| `Pocket` | item pocket | id-keyed; `POCKET_NONE` items cannot be bagged |
+| `ConfigToggle` / `ConfigRange` | Lab difficulty config | toggle bit / range slot |
+| `BattleFormat`..`TrainerOrder` | range slot values | one option table per slot |
+
 ## 14. Verification checklist for any editor
 
 1. Pick the live slot by footer counter; validate every sector checksum.

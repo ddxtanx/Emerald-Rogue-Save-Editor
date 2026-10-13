@@ -106,7 +106,10 @@ impl SafariMon {
         Self::set_bf(&mut self.w0, 0, 0xFFFF, v as u32);
     }
     /// IVs in party order: hp, atk, def, spe, spa, spd
-    pub fn iv(&self, i: usize) -> u8 {
+    pub fn iv(&self, i: crate::domain::StatIdx) -> u8 {
+        self.iv_at(i.index())
+    }
+    pub fn iv_at(&self, i: usize) -> u8 {
         (match i {
             0 => Self::bf(self.w0, 16, 31),
             1 => Self::bf(self.w0, 21, 31),
@@ -116,7 +119,10 @@ impl SafariMon {
             _ => Self::bf(self.w1, 10, 31),
         }) as u8
     }
-    pub fn set_iv(&mut self, i: usize, v: u8) {
+    pub fn set_iv(&mut self, i: crate::domain::StatIdx, v: u8) {
+        self.set_iv_at(i.index(), v)
+    }
+    pub fn set_iv_at(&mut self, i: usize, v: u8) {
         match i {
             0 => Self::set_bf(&mut self.w0, 16, 31, v as u32),
             1 => Self::set_bf(&mut self.w0, 21, 31, v as u32),
@@ -132,29 +138,30 @@ impl SafariMon {
     pub fn set_shiny(&mut self, v: bool) {
         Self::set_bf(&mut self.w0, 31, 1, v as u32);
     }
-    pub fn pokeball(&self) -> u8 {
-        Self::bf(self.w1, 15, 31) as u8
+    pub fn pokeball(&self) -> crate::domain::Ball {
+        crate::domain::Ball::from_raw(Self::bf(self.w1, 15, 31) as u16)
     }
-    pub fn set_pokeball(&mut self, v: u8) {
-        Self::set_bf(&mut self.w1, 15, 31, v as u32);
+    pub fn set_pokeball(&mut self, v: crate::domain::Ball) {
+        // 5-bit field: the low 5 bits are what the game can store.
+        Self::set_bf(&mut self.w1, 15, 31, v.raw() as u32 & 31);
     }
-    pub fn nature(&self) -> u8 {
-        Self::bf(self.w1, 20, 31) as u8
+    pub fn nature(&self) -> crate::domain::Nature {
+        crate::domain::Nature::from_raw(Self::bf(self.w1, 20, 31) as u8)
     }
-    pub fn set_nature(&mut self, v: u8) {
-        Self::set_bf(&mut self.w1, 20, 31, v as u32);
+    pub fn set_nature(&mut self, v: crate::domain::Nature) {
+        Self::set_bf(&mut self.w1, 20, 31, v.raw() as u32);
     }
-    pub fn ability_num(&self) -> u8 {
-        Self::bf(self.w1, 25, 3) as u8
+    pub fn ability_slot(&self) -> crate::domain::AbilitySlot {
+        crate::domain::AbilitySlot::from_raw(Self::bf(self.w1, 25, 3) as u8)
     }
-    pub fn set_ability_num(&mut self, v: u8) {
-        Self::set_bf(&mut self.w1, 25, 3, v as u32);
+    pub fn set_ability_slot(&mut self, v: crate::domain::AbilitySlot) {
+        Self::set_bf(&mut self.w1, 25, 3, v.raw() as u32);
     }
-    pub fn gender_flag(&self) -> u8 {
-        Self::bf(self.w1, 27, 1) as u8
+    pub fn gender(&self) -> crate::domain::GenderFlag {
+        crate::domain::GenderFlag::from_raw(Self::bf(self.w1, 27, 1) as u8)
     }
-    pub fn set_gender_flag(&mut self, v: u8) {
-        Self::set_bf(&mut self.w1, 27, 1, v as u32);
+    pub fn set_gender(&mut self, v: crate::domain::GenderFlag) {
+        Self::set_bf(&mut self.w1, 27, 1, v.raw() as u32);
     }
     pub fn nickname(&self) -> String {
         gen3_decode(&self.nick)
@@ -590,13 +597,19 @@ impl SaveFile {
         }
         self.merged[f.data + bit / 8] & (1 << (bit % 8)) != 0
     }
-    pub fn hub_area_built(&self, rb: &RogueBlock, i: usize) -> bool {
+    /// Built state of one hub area. `HubArea` is the index type, so passing an
+    /// upgrade bit or a season number here is a type error.
+    pub fn hub_area_built(&self, rb: &RogueBlock, area: crate::domain::HubArea) -> bool {
+        self.hub_area_built_at(rb, area.raw() as usize)
+    }
+    pub fn hub_area_built_at(&self, rb: &RogueBlock, i: usize) -> bool {
         rb.ok && self.bit_get(&rb.built_f, i)
     }
-    pub fn hub_upgrade_on(&self, rb: &RogueBlock, i: usize) -> bool {
-        rb.ok && self.bit_get(&rb.upgrades_f, i)
+    pub fn hub_upgrade_on(&self, rb: &RogueBlock, up: crate::domain::Upgrade) -> bool {
+        rb.ok && self.bit_get(&rb.upgrades_f, up.raw() as usize)
     }
-    pub fn set_hub_upgrade(&mut self, bit: usize, on: bool) {
+    pub fn set_hub_upgrade(&mut self, up: crate::domain::Upgrade, on: bool) {
+        let bit = up.raw() as usize;
         let Some(rb) = self.rogue_block() else { return };
         if !rb.ok || bit >= rb.upgrades_f.n * 8 {
             return;
@@ -609,7 +622,8 @@ impl SaveFile {
         }
         self.edited = true;
     }
-    pub fn set_hub_area(&mut self, bit: usize, on: bool) {
+    pub fn set_hub_area(&mut self, area: crate::domain::HubArea, on: bool) {
+        let bit = area.raw() as usize;
         let Some(rb) = self.rogue_block() else { return };
         if !rb.ok || bit >= rb.built_f.n * 8 {
             return;
@@ -635,7 +649,14 @@ impl SaveFile {
     /// Setting a coordinate on an unbuilt area is inert -- it gets overwritten the
     /// moment the game builds that area -- so this setter deliberately does NOT
     /// touch the built flag. Build separately with `hub-area`.
-    pub fn hub_area_coord(&self, rb: &RogueBlock, i: usize) -> Option<(i8, i8)> {
+    pub fn hub_area_coord(
+        &self,
+        rb: &RogueBlock,
+        area: crate::domain::HubArea,
+    ) -> Option<(i8, i8)> {
+        self.hub_area_coord_at(rb, area.raw() as usize)
+    }
+    pub fn hub_area_coord_at(&self, rb: &RogueBlock, i: usize) -> Option<(i8, i8)> {
         if !rb.ok || i >= rb.coords_f.n {
             return None;
         }
@@ -659,7 +680,8 @@ impl SaveFile {
             self.merged[o + 3],
         ])
     }
-    pub fn set_hub_area_coord(&mut self, i: usize, x: i8, y: i8) {
+    pub fn set_hub_area_coord(&mut self, area: crate::domain::HubArea, x: i8, y: i8) {
+        let i = area.raw() as usize;
         let Some(rb) = self.rogue_block() else { return };
         if !rb.ok || i >= rb.coords_f.n {
             return;
@@ -683,17 +705,26 @@ impl SaveFile {
     ///  * an area with no built neighbour in any direction it can connect -> no
     ///    warp path exists, so the area is unreachable except by another edit.
     /// These are advisory: the game does not re-validate coords on load.
-    pub fn hub_coord_warnings(&self, rb: &RogueBlock, i: usize, x: i8, y: i8) -> Vec<String> {
+    pub fn hub_coord_warnings(
+        &self,
+        rb: &RogueBlock,
+        area: crate::domain::HubArea,
+        x: i8,
+        y: i8,
+    ) -> Vec<String> {
+        self.hub_coord_warnings_at(rb, area.raw() as usize, x, y)
+    }
+    pub fn hub_coord_warnings_at(&self, rb: &RogueBlock, i: usize, x: i8, y: i8) -> Vec<String> {
         let mut out = Vec::new();
         if !rb.ok || i >= rb.coords_f.n {
             return out;
         }
         // 1. tile collision with another BUILT area
         for j in 0..rb.coords_f.n {
-            if j == i || !self.hub_area_built(rb, j) {
+            if j == i || !self.hub_area_built_at(rb, j) {
                 continue;
             }
-            if self.hub_area_coord(rb, j) == Some((x, y)) {
+            if self.hub_area_coord_at(rb, j) == Some((x, y)) {
                 let other = HUB_AREAS.get(j).copied().unwrap_or("?");
                 out.push(format!(
                     "tile ({x},{y}) already holds BUILT area {j} {other}; one of the two will be unreachable"
@@ -705,14 +736,16 @@ impl SaveFile {
         //    4-connected direction. The game additionally requires the *direction*
         //    to be warpable for both areas, which this cannot know from the save.
         let neighbours: [(i8, i8); 4] = [(0, 1), (0, -1), (1, 0), (-1, 0)];
-        let mover_built = self.hub_area_built(rb, i);
+        let mover_built = self.hub_area_built_at(rb, i);
         let touches = neighbours.iter().any(|(dx, dy)| {
             // s8 arithmetic wraps like the game's s8 coords; keep it in i16 so the
             // wrap is explicit rather than a Rust overflow panic.
             let nx = (x as i16 + *dx as i16) as i8;
             let ny = (y as i16 + *dy as i16) as i8;
             (0..rb.coords_f.n).any(|j| {
-                j != i && self.hub_area_built(rb, j) && self.hub_area_coord(rb, j) == Some((nx, ny))
+                j != i
+                    && self.hub_area_built_at(rb, j)
+                    && self.hub_area_coord_at(rb, j) == Some((nx, ny))
             })
         });
         if !touches && mover_built {
@@ -724,9 +757,9 @@ impl SaveFile {
         //    tile: an area that was only reachable through here loses its last
         //    door. Only meaningful when the mover is built (an unbuilt area is not
         //    anybody's door).
-        if let (true, Some((ox, oy))) = (mover_built, self.hub_area_coord(rb, i)) {
+        if let (true, Some((ox, oy))) = (mover_built, self.hub_area_coord_at(rb, i)) {
             let supports = |k: usize| -> bool {
-                let (kx, ky) = match self.hub_area_coord(rb, k) {
+                let (kx, ky) = match self.hub_area_coord_at(rb, k) {
                     Some(c) => c,
                     None => return true, // no coordinate to reason about
                 };
@@ -742,8 +775,8 @@ impl SaveFile {
                         // i is at (x,y), handled above, and k is not its own support
                         j != i
                             && j != k
-                            && self.hub_area_built(rb, j)
-                            && self.hub_area_coord(rb, j) == Some((nx, ny))
+                            && self.hub_area_built_at(rb, j)
+                            && self.hub_area_coord_at(rb, j) == Some((nx, ny))
                     })
                 })
             };
@@ -751,10 +784,10 @@ impl SaveFile {
                 let nx = (ox as i16 + dx as i16) as i8;
                 let ny = (oy as i16 + dy as i16) as i8;
                 for j in 0..rb.coords_f.n {
-                    if j == i || !self.hub_area_built(rb, j) {
+                    if j == i || !self.hub_area_built_at(rb, j) {
                         continue;
                     }
-                    if self.hub_area_coord(rb, j) == Some((nx, ny)) && !supports(j) {
+                    if self.hub_area_coord_at(rb, j) == Some((nx, ny)) && !supports(j) {
                         let other = HUB_AREAS.get(j).copied().unwrap_or("?");
                         out.push(format!(
                             "area {j} {other} at ({nx},{ny}) touches this area's old tile and has no other built neighbour; moving here would strand it"
@@ -767,7 +800,11 @@ impl SaveFile {
     }
     /// `homeDecorations` entry: `u8 x, u8 y, u8 decorVariant, u8 active:1`.
     /// 160 outdoor slots (offset 0) then 32 indoor slots (offset 160).
-    pub fn hub_decoration(&self, rb: &RogueBlock, i: usize) -> Option<(u8, u8, u8, bool)> {
+    pub fn hub_decoration(
+        &self,
+        rb: &RogueBlock,
+        i: usize,
+    ) -> Option<(u8, u8, crate::domain::DecorVariant, bool)> {
         if !rb.ok || i >= rb.decor_f.n {
             return None;
         }
@@ -775,11 +812,18 @@ impl SaveFile {
         Some((
             self.merged[o],
             self.merged[o + 1],
-            self.merged[o + 2],
+            crate::domain::DecorVariant::from_raw(self.merged[o + 2]),
             self.merged[o + 3] & 1 != 0,
         ))
     }
-    pub fn set_hub_decoration(&mut self, i: usize, x: u8, y: u8, variant: u8, active: bool) {
+    pub fn set_hub_decoration(
+        &mut self,
+        i: usize,
+        x: u8,
+        y: u8,
+        variant: crate::domain::DecorVariant,
+        active: bool,
+    ) {
         let Some(rb) = self.rogue_block() else { return };
         if !rb.ok || i >= rb.decor_f.n {
             return;
@@ -787,7 +831,7 @@ impl SaveFile {
         let o = rb.decor_f.data + i * 4;
         self.merged[o] = x;
         self.merged[o + 1] = y;
-        self.merged[o + 2] = variant;
+        self.merged[o + 2] = variant.raw();
         // bit 0 = active; bits 1..7 are the declared `unused : 7` padding
         let keep = self.merged[o + 3] & !1;
         self.merged[o + 3] = keep | u8::from(active);
@@ -805,6 +849,34 @@ impl SaveFile {
     }
     /// `homeStyles[0]` house exterior, `[1]` house interior, `[2]` path
     /// (`rogue_hub.c` indexes them with `HOME_STYLE_HOUSE_EXTERIOR` etc.).
+    /// The three `homeStyles` bytes as three distinct domains. Slot order is
+    /// exterior, interior, path (`homeStyles[]` in `struct RogueHubMap`).
+    pub fn home_styles(
+        &self,
+        rb: &RogueBlock,
+    ) -> Option<(
+        crate::domain::ExteriorStyle,
+        crate::domain::InteriorStyle,
+        crate::domain::PathStyle,
+    )> {
+        if !rb.ok || rb.styles_f.n < 3 {
+            return None;
+        }
+        Some((
+            crate::domain::ExteriorStyle::from_raw(self.hub_style(rb, 0)?),
+            crate::domain::InteriorStyle::from_raw(self.hub_style(rb, 1)?),
+            crate::domain::PathStyle::from_raw(self.hub_style(rb, 2)?),
+        ))
+    }
+    pub fn set_exterior_style(&mut self, s: crate::domain::ExteriorStyle) {
+        self.set_hub_style(0, s.raw())
+    }
+    pub fn set_interior_style(&mut self, s: crate::domain::InteriorStyle) {
+        self.set_hub_style(1, s.raw())
+    }
+    pub fn set_path_style(&mut self, s: crate::domain::PathStyle) {
+        self.set_hub_style(2, s.raw())
+    }
     pub fn hub_style(&self, rb: &RogueBlock, i: usize) -> Option<u8> {
         if !rb.ok || i >= rb.styles_f.n {
             return None;
@@ -881,7 +953,29 @@ impl SaveFile {
     /// `RogueToD_GetSeason()` returns `seasonCounter / DAYS_PER_SEASON`).
     /// So this takes a season index 0..3 and parks the counter at that
     /// season's first day, exactly like `RogueToD_SetSeason()`.
-    pub fn set_hub_season(&mut self, season_idx: u8) {
+    /// `seasonCounter` as a day counter, with the season it falls in derivable
+    /// from it. The field stores days, so a bare season index handed to
+    /// `set_season_counter` used to be a silent unit error.
+    pub fn season_day(&self, rb: &RogueBlock) -> Option<crate::domain::SeasonDay> {
+        if !rb.ok {
+            return None;
+        }
+        Some(crate::domain::SeasonDay::from_raw(
+            self.merged[rb.time_off + 2],
+        ))
+    }
+    pub fn set_season_day(&mut self, day: crate::domain::SeasonDay) {
+        self.set_season_counter(day.raw())
+    }
+    pub fn set_hub_season(&mut self, season: crate::domain::Season) {
+        // Landing on a season means day 0 of it, which is the only way to write
+        // this field correctly.
+        self.set_season_day(crate::domain::SeasonDay::from_raw(
+            season.index() * crate::game_data::DAYS_PER_SEASON,
+        ))
+    }
+    #[allow(dead_code)]
+    pub fn set_hub_season_unused(&mut self, season_idx: u8) {
         self.set_season_counter(season_idx.min(SEASON_COUNT as u8 - 1) * DAYS_PER_SEASON);
     }
     pub fn set_season_counter(&mut self, days: u8) {
@@ -900,6 +994,29 @@ impl SaveFile {
         put16(&mut self.merged, rb.time_off - 2, w);
         self.edited = true;
     }
+    pub fn diff_toggle_bit(&self, rb: &RogueBlock, t: crate::domain::ConfigToggle) -> bool {
+        rb.ok && self.bit_get(&rb.diff_toggle_f, t.raw() as usize)
+    }
+    pub fn set_diff_toggle_bit(&mut self, t: crate::domain::ConfigToggle, on: bool) {
+        let bit = t.raw() as usize;
+        let byte = bit / 8;
+        let cur = self.diff_toggle_byte(byte);
+        let v = if on {
+            cur | (1 << (bit % 8))
+        } else {
+            cur & !(1 << (bit % 8))
+        };
+        self.set_diff_toggle(byte, v);
+    }
+    fn diff_toggle_byte(&self, i: usize) -> u8 {
+        let Some(rb) = self.rogue_block() else {
+            return 0;
+        };
+        if !rb.ok || i >= rb.diff_toggle_f.n {
+            return 0;
+        }
+        self.merged[rb.diff_toggle_f.data + i]
+    }
     pub fn set_diff_toggle(&mut self, i: usize, v: u8) {
         let Some(rb) = self.rogue_block() else { return };
         if !rb.ok || i >= rb.diff_toggle_f.n {
@@ -908,7 +1025,10 @@ impl SaveFile {
         self.merged[rb.diff_toggle_f.data + i] = v;
         self.edited = true;
     }
-    pub fn set_diff_range(&mut self, i: usize, v: u8) {
+    pub fn set_diff_range(&mut self, slot: crate::domain::ConfigRange, v: u8) {
+        self.set_diff_range_at(slot.raw() as usize, v)
+    }
+    pub fn set_diff_range_at(&mut self, i: usize, v: u8) {
         let Some(rb) = self.rogue_block() else { return };
         if !rb.ok || i >= rb.diff_range_f.n {
             return;
@@ -1142,8 +1262,8 @@ impl SaveFile {
     }
 
     /// How many slots the game would consider used, per pocket, for a given bag.
-    pub(crate) fn bag_run_summary(slots: &[(u16, u16)]) -> Vec<(u8, usize)> {
-        let mut out: Vec<(u8, usize)> = Vec::new();
+    pub(crate) fn bag_run_summary(slots: &[(u16, u16)]) -> Vec<(crate::domain::Pocket, usize)> {
+        let mut out: Vec<(crate::domain::Pocket, usize)> = Vec::new();
         for (id, _qty) in slots {
             // Exactly the game's terminator: `itemId == ITEM_NONE`. A slot with a
             // real id and quantity 0 is still counted as part of the pocket run
@@ -1152,8 +1272,8 @@ impl SaveFile {
                 break;
             }
             let p = item_pocket(*id);
-            if p == 0 {
-                out.push((0, 1)); // pocketless: already broken, flag it
+            if p == crate::domain::Pocket::NONE {
+                out.push((crate::domain::Pocket::NONE, 1)); // pocketless: already broken, flag it
                 continue;
             }
             if out.last().map(|(pp, _)| *pp) == Some(p) {
@@ -1180,7 +1300,7 @@ impl SaveFile {
             ));
         }
         for (id, _) in slots.iter().take_while(|(id, _)| *id != 0) {
-            if item_pocket(*id) == crate::item_pockets::POCKET_NONE {
+            if item_pocket(*id) == crate::domain::Pocket::NONE {
                 w.push(format!(
                     "id {id} ({}) has no pocket and must be removed — the game's pointer scan stops there and hides everything after it",
                     item_name(*id)
@@ -1229,7 +1349,9 @@ impl SaveFile {
                 break;
             }
             filled += 1;
-            if item_pocket(*id) == crate::item_pockets::POCKET_KEY_ITEMS {
+            if item_pocket(*id)
+                == crate::domain::Pocket::from_raw(crate::item_pockets::POCKET_KEY_ITEMS)
+            {
                 key += 1;
             }
         }
@@ -1244,7 +1366,7 @@ impl SaveFile {
             return Err("quantity must be >= 1".to_string());
         }
         let pocket = item_pocket(id);
-        if pocket == crate::item_pockets::POCKET_NONE {
+        if pocket == crate::domain::Pocket::NONE {
             return Err(format!(
                 "item {id} ({}) has no bag pocket — the game would refuse it (POCKET_NONE)",
                 item_name(id)
@@ -1280,12 +1402,13 @@ impl SaveFile {
         } else {
             (self.bag_capacity(), BAG_RESERVED_SLOTS)
         };
-        let budget = if pocket == crate::item_pockets::POCKET_KEY_ITEMS {
-            key_budget.saturating_sub(key)
-        } else {
-            cap.saturating_sub(BAG_RESERVED_SLOTS)
-                .saturating_sub(filled - key)
-        };
+        let budget =
+            if pocket == crate::domain::Pocket::from_raw(crate::item_pockets::POCKET_KEY_ITEMS) {
+                key_budget.saturating_sub(key)
+            } else {
+                cap.saturating_sub(BAG_RESERVED_SLOTS)
+                    .saturating_sub(filled - key)
+            };
         let mut inserted = 0usize;
         while left > 0 {
             if budget < inserted + 1 {

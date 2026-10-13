@@ -113,11 +113,21 @@ impl Mon {
     fn pid_nature(&self) -> u8 {
         (self.pid() % 25) as u8
     }
-    pub fn nature(&self) -> u8 {
+    /// The effective nature: `pid % 25` XOR the stored modifier. Because the two
+    /// are XOR'd the result can land past 24, so the return type carries
+    /// `Unexpected` rather than clamping (`set_nature` used to do `n % 25`, which
+    /// silently rewrote such a mon).
+    pub fn nature(&self) -> crate::domain::Nature {
+        crate::domain::Nature::from_raw(self.nature_raw())
+    }
+    pub fn nature_raw(&self) -> u8 {
         self.pid_nature() ^ self.hidden_nature_mod()
     }
-    pub fn set_nature(&mut self, n: u8) {
-        let modv = self.pid_nature() ^ (n % 25);
+    pub fn set_nature(&mut self, n: crate::domain::Nature) {
+        // Write the modifier that reproduces exactly this nature. No `% 25`: the
+        // 5-bit field can express values above 24 and an edited save may hold
+        // one; clamping would turn the game's byte into ours.
+        let modv = self.pid_nature() ^ (n.raw() & 0x1F);
         self.raw[18] = (self.raw[18] & 0x07) | ((modv & 0x1F) << 3);
     }
 
@@ -211,7 +221,16 @@ impl Mon {
         let w = le32(&self.t[3], 4);
         std::array::from_fn(|i| ((w >> (5 * i)) & 0x1F) as u8)
     }
-    pub fn set_iv(&mut self, i: usize, v: u8) {
+    pub fn iv(&self, i: crate::domain::StatIdx) -> u8 {
+        self.iv_at(i.index())
+    }
+    pub fn iv_at(&self, i: usize) -> u8 {
+        ((le32(&self.t[3], 4) >> (5 * i)) & 0x1F) as u8
+    }
+    pub fn set_iv(&mut self, i: crate::domain::StatIdx, v: u8) {
+        self.set_iv_at(i.index(), v)
+    }
+    pub fn set_iv_at(&mut self, i: usize, v: u8) {
         let w = le32(&self.t[3], 4);
         let w = (w & !(0x1F << (5 * i))) | (((v & 0x1F) as u32) << (5 * i));
         self.t[3][4..8].copy_from_slice(&w.to_le_bytes());
@@ -235,8 +254,14 @@ impl Mon {
     /// `gigantamaxFactor` -- reading that bit was the vanilla Gen-3 layout, where
     /// abilityNum really was 1 bit there. In this ROM the 1-bit reading can never
     /// express slot 2 (the hidden ability), which is how abilities displayed wrong.
+    pub fn ability_slot(&self) -> crate::domain::AbilitySlot {
+        crate::domain::AbilitySlot::from_raw(self.ability_num())
+    }
     pub fn ability_num(&self) -> u8 {
         ((le32(&self.t[3], 8) >> 29) & 3) as u8
+    }
+    pub fn set_ability_slot(&mut self, slot: crate::domain::AbilitySlot) {
+        self.set_ability_num(slot.raw())
     }
     pub fn set_ability_num(&mut self, v: u8) {
         let w = le32(&self.t[3], 8);
@@ -274,6 +299,12 @@ impl Mon {
     pub fn set_shiny(&mut self, b: bool) {
         let w = le32(&self.t[3], 8);
         self.t[3][8..12].copy_from_slice(&((w & !0x7) | (b as u32)).to_le_bytes());
+    }
+    pub fn gender(&self) -> crate::domain::GenderFlag {
+        crate::domain::GenderFlag::from_raw(self.gender_flag())
+    }
+    pub fn set_gender(&mut self, g: crate::domain::GenderFlag) {
+        self.set_gender_flag(g.raw())
     }
     pub fn gender_flag(&self) -> u8 {
         ((le32(&self.t[3], 8) >> 3) & 0x7) as u8
