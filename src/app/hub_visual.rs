@@ -495,7 +495,26 @@ impl super::Editor {
                     continue;
                 }
                 let r = tile_rect(origin, cell, 0, 0, x as i32, y as i32);
-                painter.rect_filled(r.shrink(1.0), 2.0, Color32::from_rgb(120, 170, 210));
+                // Placeholder, not game art: a flat blue square read as "a floating
+                // blue icon" with no clue which prop it is. Hue comes from the
+                // variant id, and the name's initials go on the tile itself, so the
+                // grid is legible before you hover.
+                let name = prop_name(variant_table, v);
+                let base = crate::icons::hue_for(v.raw() as u16);
+                painter.rect_filled(r.shrink(1.0), 2.0, base);
+                let initials: String = name
+                    .split(|c: char| !c.is_alphanumeric())
+                    .filter_map(|w| w.chars().next())
+                    .take(2)
+                    .flat_map(|c| c.to_uppercase())
+                    .collect();
+                painter.text(
+                    r.center(),
+                    egui::Align2::CENTER_CENTER,
+                    &initials,
+                    egui::FontId::proportional((cell * 0.45).min(11.0)),
+                    Color32::from_gray(15),
+                );
                 if sel.slot == Some(i) {
                     painter.rect_stroke(
                         r.shrink(0.5),

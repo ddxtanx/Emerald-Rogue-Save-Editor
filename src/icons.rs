@@ -198,7 +198,7 @@ fn decode_png(bytes: &[u8]) -> Option<(usize, usize, Vec<u8>)> {
 
 /// Deterministic hue per id, so a missing icon still groups visually with its
 /// own kind instead of being a grey box everywhere.
-fn hue_for(id: u16) -> Color32 {
+pub(crate) fn hue_for(id: u16) -> Color32 {
     let h = (id.wrapping_mul(47)) as f32 / 256.0 * 360.0;
     hsv_to_rgb(h, 0.45, 0.75)
 }
