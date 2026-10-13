@@ -1,0 +1,405 @@
+//! Pokemon structs (80B BoxPokemon / 104B party Pokemon): decode, encode,
+//! bitfield accessors, and stat math. Level derives from exp (Rogue uses a
+//! flat exp schedule), see EXP_PER_LEVEL.
+
+use crate::format::*;
+use crate::game_data::*;
+
+#[derive(Clone)]
+pub struct Mon {
+    pub raw: Vec<u8>, // 80 (box) or 104 (party)
+    // decrypted substruct slots in PHYSICAL (permuted) order
+    slots: [[u8; 12]; 4],
+    // logical view: t[j] = decrypted bytes of logical substruct j
+    pub t: Vec<[u8; 12]>,
+}
+
+impl Mon {
+    pub fn from_bytes(raw: &[u8]) -> Mon {
+        let pid = le32(raw, 0);
+        let otid = le32(raw, 4);
+        let key = pid ^ otid;
+        let kb = key.to_le_bytes();
+        let mut slots = [[0u8; 12]; 4];
+        for i in 0..4 {
+            for j in 0..12 {
+                slots[i][j] = raw[32 + i * 12 + j] ^ kb[j % 4];
+            }
+        }
+        let perm = SUBSTRUCT_ORDER[(pid % 24) as usize];
+        let t = vec![
+            slots[perm[0]],
+            slots[perm[1]],
+            slots[perm[2]],
+            slots[perm[3]],
+        ];
+        Mon {
+            raw: raw.to_vec(),
+            slots,
+            t,
+        }
+    }
+
+    pub fn pid(&self) -> u32 {
+        le32(&self.raw, 0)
+    }
+    pub fn otid(&self) -> u32 {
+        le32(&self.raw, 4)
+    }
+    pub fn set_otid(&mut self, v: u32) {
+        put32(&mut self.raw, 4, v);
+    }
+    pub fn nickname(&self) -> String {
+        gen3_decode(&self.raw[8..18])
+    }
+    pub fn set_nickname(&mut self, s: &str) {
+        let enc = gen3_encode(s, 10);
+        self.raw[8..18].copy_from_slice(&enc);
+    }
+    pub fn ot_name(&self) -> String {
+        gen3_decode(&self.raw[20..27])
+    }
+    pub fn markings(&self) -> u8 {
+        self.raw[27]
+    }
+    pub fn checksum_stored(&self) -> u16 {
+        le16(&self.raw, 28)
+    }
+
+    pub fn language(&self) -> u8 {
+        self.raw[18] & 0x07
+    }
+    pub fn hidden_nature_mod(&self) -> u8 {
+        (self.raw[18] >> 3) & 0x1F
+    }
+    pub fn is_bad_egg(&self) -> bool {
+        self.raw[19] & 1 != 0
+    }
+    pub fn has_species(&self) -> bool {
+        self.raw[19] & 2 != 0
+    }
+    pub fn is_egg_boxflag(&self) -> bool {
+        self.raw[19] & 4 != 0
+    }
+
+    fn pid_nature(&self) -> u8 {
+        (self.pid() % 25) as u8
+    }
+    pub fn nature(&self) -> u8 {
+        self.pid_nature() ^ self.hidden_nature_mod()
+    }
+    pub fn set_nature(&mut self, n: u8) {
+        let modv = self.pid_nature() ^ (n % 25);
+        self.raw[18] = (self.raw[18] & 0x07) | ((modv & 0x1F) << 3);
+    }
+
+    pub fn species(&self) -> u16 {
+        (le32(&self.t[0], 0) & 0x7FF) as u16
+    }
+    pub fn set_species(&mut self, sp: u16) {
+        let w = le32(&self.t[0], 0);
+        self.t[0][0..4].copy_from_slice(&(w & !0x7FF | (sp as u32 & 0x7FF)).to_le_bytes());
+    }
+    pub fn held_item(&self) -> u16 {
+        let w = le32(&self.t[0], 0);
+        ((w >> 11) & 0x3FF) as u16
+    }
+    pub fn set_held_item(&mut self, it: u16) {
+        let w = le32(&self.t[0], 0);
+        let it1 = (it as u32) & 0x3FF;
+        let it2 = ((it as u32) >> 10) & 1;
+        let w = (w & !(0x7FF << 11)) | (it1 << 11) | (it2 << 26);
+        self.t[0][0..4].copy_from_slice(&w.to_le_bytes());
+    }
+    pub fn exp(&self) -> u32 {
+        le32(&self.t[0], 4) & 0x1F_FFFF
+    }
+    pub fn set_exp(&mut self, v: u32) {
+        let w = le32(&self.t[0], 4);
+        self.t[0][4..8].copy_from_slice(&((w & !0x1F_FFFF) | (v & 0x1F_FFFF)).to_le_bytes());
+        // exp is authoritative for level, so a party mon's cached byte follows it.
+        self.sync_cached_level();
+    }
+    pub fn pp_bonuses(&self) -> u8 {
+        self.t[0][8]
+    }
+    pub fn set_pp_bonuses(&mut self, v: u8) {
+        self.t[0][8] = v & 3
+    }
+    pub fn friendship(&self) -> u8 {
+        self.t[0][9]
+    }
+    pub fn set_friendship(&mut self, v: u8) {
+        self.t[0][9] = v;
+    }
+    pub fn ball(&self) -> u8 {
+        (le16(&self.t[0], 10) & 0x1F) as u8
+    }
+    pub fn set_ball(&mut self, v: u8) {
+        let w = le16(&self.t[0], 10);
+        self.t[0][10..12].copy_from_slice(&((w & !0x1F) | (v as u16 & 0x1F)).to_le_bytes());
+    }
+
+    pub fn moves(&self) -> [u16; 4] {
+        [
+            le16(&self.t[1], 0),
+            le16(&self.t[1], 2),
+            le16(&self.t[1], 4),
+            le16(&self.t[1], 6),
+        ]
+    }
+    pub fn set_move(&mut self, slot: usize, id: u16) {
+        put16(&mut self.t[1], slot * 2, id);
+    }
+    pub fn pps(&self) -> [u8; 4] {
+        [self.t[1][8], self.t[1][9], self.t[1][10], self.t[1][11]]
+    }
+    pub fn set_pp(&mut self, slot: usize, v: u8) {
+        self.t[1][8 + slot] = v;
+    }
+
+    pub fn evs(&self) -> [u8; 6] {
+        [
+            self.t[2][0],
+            self.t[2][1],
+            self.t[2][2],
+            self.t[2][3],
+            self.t[2][4],
+            self.t[2][5],
+        ]
+    }
+    pub fn set_ev(&mut self, i: usize, v: u8) {
+        self.t[2][i] = v.min(255);
+    }
+
+    pub fn ivs(&self) -> [u8; 6] {
+        let w = le32(&self.t[3], 4);
+        std::array::from_fn(|i| ((w >> (5 * i)) & 0x1F) as u8)
+    }
+    pub fn set_iv(&mut self, i: usize, v: u8) {
+        let w = le32(&self.t[3], 4);
+        let w = (w & !(0x1F << (5 * i))) | (((v & 0x1F) as u32) << (5 * i));
+        self.t[3][4..8].copy_from_slice(&w.to_le_bytes());
+    }
+    pub fn set_all_ivs(&mut self, v: u8) {
+        let w = le32(&self.t[3], 4);
+        let keep = w & (0xC000_0000);
+        let ivs: u32 = (0x1F1F1F1Fu32) & if v > 31 { 0 } else { repeat5(v) };
+        self.t[3][4..8].copy_from_slice(&((w & 0xC000_0000) | ivs).to_le_bytes());
+        let _ = keep;
+    }
+    pub fn is_egg(&self) -> bool {
+        (le32(&self.t[3], 4) >> 30) & 1 == 1
+    }
+    pub fn set_is_egg(&mut self, b: bool) {
+        let w = le32(&self.t[3], 4);
+        self.t[3][4..8].copy_from_slice(&(w & !(1u32 << 30) | ((b as u32) << 30)).to_le_bytes());
+    }
+    /// abilityNum is a **2-bit** field: substruct3 +0x08, bits 29..30
+    /// (PokemonSubstruct3 in include/pokemon.h). Bit 31 of the u32 at +0x04 is
+    /// `gigantamaxFactor` -- reading that bit was the vanilla Gen-3 layout, where
+    /// abilityNum really was 1 bit there. In this ROM the 1-bit reading can never
+    /// express slot 2 (the hidden ability), which is how abilities displayed wrong.
+    pub fn ability_num(&self) -> u8 {
+        ((le32(&self.t[3], 8) >> 29) & 3) as u8
+    }
+    pub fn set_ability_num(&mut self, v: u8) {
+        let w = le32(&self.t[3], 8);
+        self.t[3][8..12]
+            .copy_from_slice(&((w & !(3u32 << 29)) | (((v & 3) as u32) << 29)).to_le_bytes());
+    }
+    pub fn gigantamax_factor(&self) -> bool {
+        (le32(&self.t[3], 4) >> 31) & 1 == 1
+    }
+    pub fn set_gigantamax_factor(&mut self, b: bool) {
+        let w = le32(&self.t[3], 4);
+        self.t[3][4..8].copy_from_slice(&(w & !(1u32 << 31) | ((b as u32) << 31)).to_le_bytes());
+    }
+
+    pub fn met_level(&self) -> u16 {
+        le16(&self.t[3], 2) & 0x7F
+    }
+    pub fn set_met_level(&mut self, v: u16) {
+        let w = le16(&self.t[3], 2);
+        self.t[3][2..4].copy_from_slice(&((w & !0x7F) | (v & 0x7F)).to_le_bytes());
+    }
+    pub fn met_location(&self) -> u8 {
+        self.t[3][1]
+    }
+    pub fn set_met_location(&mut self, v: u8) {
+        self.t[3][1] = v;
+    }
+
+    pub fn shiny_raw(&self) -> u8 {
+        (le32(&self.t[3], 8) & 0x7) as u8
+    }
+    pub fn is_shiny(&self) -> bool {
+        self.shiny_raw() != 0
+    }
+    pub fn set_shiny(&mut self, b: bool) {
+        let w = le32(&self.t[3], 8);
+        self.t[3][8..12].copy_from_slice(&((w & !0x7) | (b as u32)).to_le_bytes());
+    }
+    pub fn gender_flag(&self) -> u8 {
+        ((le32(&self.t[3], 8) >> 3) & 0x7) as u8
+    }
+    pub fn set_gender_flag(&mut self, v: u8) {
+        let w = le32(&self.t[3], 8);
+        self.t[3][8..12]
+            .copy_from_slice(&((w & !(0x7 << 3)) | (((v as u32) & 0x7) << 3)).to_le_bytes());
+    }
+
+    /// Level is *derived from exp*, never read from a byte for box mons.
+    ///
+    /// Rogue replaces the vanilla growth-rate tables with a single flat schedule:
+    /// `Rogue_ModifyExperienceTables()` (src/rogue_baked.c) is just `level * 300`,
+    /// ignoring growthRate entirely. `struct BoxPokemon` has no level field at all,
+    /// so the game always recomputes the level from exp
+    /// (`GetLevelFromBoxMonExp` / `GetLevelFromMonExp`, src/pokemon.c) — a loop over
+    /// that schedule clamped to MAX_LEVEL (100). `CalculateMonStats` then writes the
+    /// result back into the party struct's cached level byte. Exp is therefore the
+    /// authoritative field for *both* the 104-byte party and the 80-byte box layout,
+    /// and a party mon's cached byte is only a mirror that can go stale.
+    pub fn level(&self) -> Option<u8> {
+        Some(level_from_exp(self.exp()))
+    }
+    /// The raw cached byte in the 104-byte party struct (offset 84). Box mons have no
+    /// such byte. Exposed so a stale/mismatched mirror is visible rather than silent.
+    pub fn level_cached(&self) -> Option<u8> {
+        if self.raw.len() == MONSZ {
+            Some(self.raw[84])
+        } else {
+            None
+        }
+    }
+    /// Sets level by setting exp, which is what the game does when it creates a mon
+    /// at a given level (`exp = Rogue_ModifyExperienceTables(growthRate, level)`).
+    /// For a party mon the cached byte is kept in sync with the new exp.
+    pub fn set_level(&mut self, v: u8) {
+        let v = v.min(MAX_LEVEL);
+        self.set_exp((v as u32) * EXP_PER_LEVEL);
+        if self.raw.len() == MONSZ {
+            self.raw[84] = v;
+        }
+    }
+    /// Keep a party mon's cached level byte consistent with its exp. No-op for box mons.
+    pub fn sync_cached_level(&mut self) {
+        if self.raw.len() == MONSZ {
+            self.raw[84] = self.level().unwrap_or(0);
+        }
+    }
+    pub fn cached_stats(&self) -> Option<(u16, u16, [u16; 5])> {
+        if self.raw.len() != MONSZ {
+            return None;
+        }
+        let hp = le16(&self.raw, 86);
+        let maxhp = le16(&self.raw, 88);
+        let stats = [
+            le16(&self.raw, 90),
+            le16(&self.raw, 92),
+            le16(&self.raw, 94),
+            le16(&self.raw, 96),
+            le16(&self.raw, 98),
+        ];
+        Some((hp, maxhp, stats))
+    }
+    pub fn set_cached_hp(&mut self, v: u16) {
+        if self.raw.len() != MONSZ {
+            return;
+        }
+        put16(&mut self.raw, 86, v);
+        put16(&mut self.raw, 88, v);
+    }
+    pub fn set_cached_stat(&mut self, which: usize, v: u16) {
+        if self.raw.len() != MONSZ {
+            return;
+        }
+        let off = match which {
+            0 => 90,
+            1 => 92,
+            2 => 94,
+            3 => 96,
+            _ => 98,
+        };
+        put16(&mut self.raw, off, v);
+    }
+
+    /// checksum over decrypted physical slots (CalculateBoxMonChecksum)
+    pub fn checksum_calc(slots: &[[u8; 12]; 4]) -> u16 {
+        let mut s: u32 = 0;
+        for slot in slots {
+            for w in slot.chunks_exact(2) {
+                s = s.wrapping_add(le16(w, 0) as u32);
+            }
+        }
+        (s & 0xFFFF) as u16
+    }
+
+    pub fn checksum_ok(&self) -> bool {
+        Mon::checksum_calc(&self.slots) == self.checksum_stored()
+    }
+
+    /// write logical t[] -> physical slots, recompute checksum, re-encrypt
+    pub fn seal(&mut self) {
+        let perm = SUBSTRUCT_ORDER[(self.pid() % 24) as usize];
+        for j in 0..4 {
+            self.slots[perm[j]] = self.t[j];
+        }
+        let chk = Mon::checksum_calc(&self.slots);
+        put16(&mut self.raw, 28, chk);
+        let key = self.pid() ^ self.otid();
+        let kb = key.to_le_bytes();
+        for i in 0..4 {
+            for j in 0..12 {
+                self.raw[32 + i * 12 + j] = self.slots[i][j] ^ kb[j % 4];
+            }
+        }
+    }
+
+    pub fn display_name(&self) -> String {
+        let nick = self.nickname();
+        let sp = species_name(self.species());
+        if !nick.is_empty() && nick != sp {
+            format!("Lv{} {} ({})", self.level().unwrap_or(0), nick, sp)
+        } else {
+            format!("Lv{} {}", self.level().unwrap_or(0), sp)
+        }
+    }
+}
+
+pub(crate) fn repeat5(v: u8) -> u32 {
+    let mut r = 0u32;
+    for i in 0..6 {
+        r |= ((v & 0x1F) as u32) << (5 * i);
+    }
+    r
+}
+
+/// vanilla gNatureStatTable: nature index boosts stat (nat/5) and lowers
+/// stat (nat%5) in the stat order [Atk, Def, Spe, SpA, SpD] (our indices 1..=5).
+pub(crate) fn nature_split(nat: usize, stat: usize) -> u32 {
+    if stat == 0 {
+        return 100;
+    }
+    let up = 1 + nat / 5;
+    let down = 1 + nat % 5;
+    if stat == up {
+        110
+    } else if stat == down {
+        90
+    } else {
+        100
+    }
+}
+
+/// Game stat formula (src/pokemon.c CalStat), integer division at each step.
+/// `stat` is 0=HP..5=SpDef. Note index 3 is Speed and 4/5 are SpA/SpD in our
+/// ordering, matching how the cached stat block is laid out.
+pub(crate) fn calc_stat(base: u32, iv: u32, ev: u32, lvl: u32, nat: usize, stat: usize) -> u32 {
+    let ev4 = ev / 4;
+    if stat == 0 {
+        ((2 * base + iv + ev4) * lvl) / 100 + lvl + 10
+    } else {
+        ((((2 * base + iv + ev4) * lvl) / 100 + 5) * nature_split(nat, stat)) / 100
+    }
+}
