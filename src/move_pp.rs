@@ -383,3 +383,32 @@ pub const MOVE_PP: &[(u16, u8)] = &[
     (374, 1),
     (375, 1),
 ];
+
+/// Base max PP for a move id (0 for the empty slot / unknown id).
+pub fn base_pp(move_id: u16) -> u8 {
+    MOVE_PP
+        .iter()
+        .find(|(id, _)| *id == move_id)
+        .map(|(_, pp)| *pp)
+        .unwrap_or(0)
+}
+
+/// Max PP with `ups` PP Ups applied: the game adds a fifth of base per up,
+/// integer division, capped at 3 ups. `src/pokemon.c` gPPUpGetMask /
+/// `item_use.c` ("dataUnsigned <= 2" guard).
+pub fn max_pp(move_id: u16, ups: u8) -> u8 {
+    let base = base_pp(move_id) as u16;
+    let ups = ups.min(3) as u16;
+    (base + (base / 5) * ups).min(u8::MAX as u16) as u8
+}
+
+/// The PP-Up ladder for one move: (ups, max PP) for 0..=3 ups. Used by the PP
+/// picker so the user sees the legal values instead of a free-form number.
+pub fn pp_ladder(move_id: u16) -> [(u8, u8); 4] {
+    [
+        (0, max_pp(move_id, 0)),
+        (1, max_pp(move_id, 1)),
+        (2, max_pp(move_id, 2)),
+        (3, max_pp(move_id, 3)),
+    ]
+}

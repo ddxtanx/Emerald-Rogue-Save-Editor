@@ -5,6 +5,34 @@
 use crate::tables;
 use crate::tables_extra;
 
+/// Poké Balls, in the game's own id order: `FIRST_BALL` (ITEM_MASTER_BALL = 1)
+/// through `LAST_BALL` (ITEM_ROGUE_BALL = 13) in include/constants/items.h.
+/// A mon's `ball` field stores this item id, so the same ids double as the icon
+/// keys (assets/icons/items/<id>.png).
+pub(crate) const BALLS: &[(u16, &str)] = &[
+    (1, "Master Ball"),
+    (2, "Ultra Ball"),
+    (3, "Great Ball"),
+    (4, "Poké Ball"),
+    (5, "Safari Ball"),
+    (6, "Net Ball"),
+    (7, "Dive Ball"),
+    (8, "Nest Ball"),
+    (9, "Repeat Ball"),
+    (10, "Timer Ball"),
+    (11, "Luxury Ball"),
+    (12, "Premier Ball"),
+    (13, "Rogue Ball"),
+];
+
+pub(crate) fn ball_name(ball: u8) -> &'static str {
+    BALLS
+        .iter()
+        .find(|(id, _)| *id == ball as u16)
+        .map(|(_, n)| *n)
+        .unwrap_or("(no ball / invalid)")
+}
+
 /// Full species pick-list: base dex + Rogue form ids (megas, gigantamax, fake forms).
 pub(crate) fn all_species() -> &'static [(u16, &'static str)] {
     use std::sync::OnceLock;

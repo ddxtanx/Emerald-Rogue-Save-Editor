@@ -17,9 +17,11 @@ use crate::abilities::ABILITY_NAMES;
 use crate::species_meta::SPECIES_META;
 
 /// `MON_MALE` / `MON_FEMALE` / `MON_GENDERLESS` (include/constants/pokemon.h).
-pub const MON_MALE: u8 = 0x00;
-pub const MON_FEMALE: u8 = 0xFE;
-pub const MON_GENDERLESS: u8 = 0xFF;
+/// These are the same constants the generated species table was emitted with,
+/// so they are aliased rather than re-declared: one source of truth.
+pub use crate::species_meta::{
+    GENDER_FEMALE as MON_FEMALE, GENDER_GENDERLESS as MON_GENDERLESS, GENDER_MALE as MON_MALE,
+};
 
 pub const MAX_ABILITY_SLOT: u8 = 2;
 
@@ -36,6 +38,14 @@ impl Gender {
             Gender::Male => "Male",
             Gender::Female => "Female",
             Gender::Genderless => "Genderless",
+        }
+    }
+    /// Compact mark for roster rows: ♂ / ♀ / ∅ (U+2205 empty set — "no gender").
+    pub fn glyph(self) -> char {
+        match self {
+            Gender::Male => '♂',
+            Gender::Female => '♀',
+            Gender::Genderless => '\u{2205}',
         }
     }
 }
@@ -56,18 +66,37 @@ pub fn ability_name(id: u16) -> Option<&'static str> {
         .map(|(_, n)| *n)
 }
 
-/// The ability a species' slot `slot` resolves to, following the fallback chain
-/// in `GetAbilityBySpecies_ForRevised` (src/pokemon.c:481): an empty slot falls
-/// back to the hidden slot, then the lowest non-empty normal slot. A species
-/// with a signature ability declares only two slots (`{ MULTITYPE, NONE }`), so
-/// its third slot is empty by design and the game substitutes.
+/// The ability a species' slot `slot` resolves to, following
+/// `GetAbilityBySpecies_ForRevised` (src/pokemon.c:3183) exactly:
+///
+/// ```c
+/// if (abilityNum < NUM_ABILITY_SLOTS) gLastUsedAbility = abilities[abilityNum];
+/// if (abilityNum >= NUM_NORMAL_ABILITY_SLOTS)          // only for slot 2
+///     for (i = 2; i < 3 && gLastUsedAbility == ABILITY_NONE; i++)
+///         gLastUsedAbility = abilities[i];
+/// for (i = 0; i < 3 && gLastUsedAbility == ABILITY_NONE; i++)
+///     gLastUsedAbility = abilities[i];
+/// ```
+///
+/// Order matters: an empty *normal* slot falls back through slots 0,1,2, while
+/// an empty *hidden* slot is rescued by the hidden slot first. So for
+/// `abilities = [NONE, X, Y]` slot 0 resolves to X, not to the hidden Y.
+///
+/// Two overrides in the game are deliberately not modelled here: a traded mon
+/// (`IsOtherTrainer(otId)`) can have its whole ability list replaced by a custom
+/// gift mon, and revision mode can override a species' abilities from
+/// `gRoguePokemonProfiles_Revised`. Both are noted in docs/FORMAT.md.
 pub fn ability_for(sp: u16, slot: u8) -> Option<u16> {
     let ab = species_meta(sp)?.1;
-    let direct = ab[(slot % 3) as usize];
-    if direct != 0 {
-        return Some(direct);
+    let slot = slot as usize;
+    let mut a = ab.get(slot).copied().unwrap_or(0);
+    if slot >= 2 && a == 0 {
+        a = ab[2];
     }
-    [ab[2], ab[0], ab[1]].into_iter().find(|&a| a != 0)
+    if a == 0 {
+        a = ab.into_iter().find(|&x| x != 0).unwrap_or(0);
+    }
+    (a != 0).then_some(a)
 }
 
 /// Human-readable ability for a slot: name when known, otherwise an explicit
@@ -172,7 +201,9 @@ mod tests {
             Some("Infiltrator")
         );
         // Beldum (374) declares Clear Body in slot 0 and Light Metal in slot 2,
-        // with slot 1 empty -- the game substitutes, it does not read 0.
+        // with slot 1 empty. The game's fallback walks slots 0,1,2 for an empty
+        // *normal* slot -- so slot 1 reads as Clear Body, not the hidden Light
+        // Metal. (For an empty *hidden* slot the hidden slot is tried first.)
         assert_eq!(
             ability_name(ability_for(374, 0).unwrap()),
             Some("Clear Body")
@@ -181,7 +212,11 @@ mod tests {
             ability_name(ability_for(374, 2).unwrap()),
             Some("Light Metal")
         );
-        assert_ne!(ability_for(374, 1).unwrap(), 0);
+        assert_eq!(
+            ability_name(ability_for(374, 1).unwrap()),
+            Some("Clear Body"),
+            "an empty normal slot must fall through slots 0,1,2 in order"
+        );
         // Magearna (801) declares one signature ability, so every slot resolves
         // to it.
         assert_eq!(ability_for(801, 0), ability_for(801, 2));

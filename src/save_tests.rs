@@ -861,3 +861,41 @@ mod tests {
         assert_eq!(item_pocket(0xFFFF), 0);
     }
 }
+
+#[test]
+fn gender_flag_only_ever_holds_the_values_the_game_writes() {
+    let path = std::env::var("ER_TEST_SAVE").unwrap_or_else(|_| "/workspace/hermes/er2.sav".into());
+    let sf = SaveFile::open(&path).expect("load save");
+    // GetGenderForSpecies treats genderFlag as a boolean (0 -> male, anything
+    // else -> female), so a correct read of the 3-bit field can never return a
+    // value above 1. Anything larger means the bit offsets are wrong and we are
+    // reading neighbouring ribbon/shiny bits.
+    let mut seen: Vec<u8> = Vec::new();
+    let mut check = |m: &Mon| {
+        if !seen.contains(&m.gender_flag()) {
+            seen.push(m.gender_flag());
+        }
+    };
+    for m in sf.party() {
+        if m.species() != 0 {
+            check(&m);
+        }
+    }
+    for bx in 0..crate::format::ACTIVE_BOXES {
+        for i in 0..crate::format::BOX_SLOTS {
+            let m = sf.box_mon(bx, i);
+            if m.species() != 0 {
+                check(&m);
+            }
+        }
+    }
+    seen.sort();
+    assert!(
+        seen.iter().all(|v| *v <= 1),
+        "gender_flag values read from the save: {seen:?} (expected only 0/1)"
+    );
+    assert!(
+        seen.contains(&0) && seen.contains(&1),
+        "expected both male and female flags in this save, saw {seen:?}"
+    );
+}

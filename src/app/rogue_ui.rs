@@ -2,6 +2,7 @@
 //! safari roster, unique mons.
 
 use super::*;
+use crate::searchable_combo::Opts;
 use crate::tables::NATURES;
 use crate::tables_extra;
 
@@ -36,9 +37,15 @@ impl Editor {
         let mut weather = rb.weather;
         ui.horizontal(|ui| {
             ui.label(format!(
-                "save stamp {} ({})",
+                "save stamp {} ({}) · block format {} · {}",
                 rb.version,
-                rogue_version_name(rb.version)
+                rogue_version_name(rb.version),
+                rb.format,
+                if rb.has_num_species {
+                    "header carries lastKnownNumSpecies"
+                } else {
+                    "pre-2.1.0 header (no lastKnownNumSpecies)"
+                }
             ));
             ui.label(format!("hub time {:02}:{:02}", tod / 60, tod % 60));
             if ui
@@ -101,16 +108,21 @@ impl Editor {
                     })
                     .collect()
             };
-            let mut filt = self.quest_filter.clone();
+            // filter text persists across frames in egui's per-Id data store
+            let filt_id = egui::Id::new("quest_filter");
+            let mut filt = ui
+                .ctx()
+                .data_mut(|d| d.get_temp::<String>(filt_id))
+                .unwrap_or_default();
             ui.horizontal(|ui| {
                 ui.label("filter:");
                 ui.text_edit_singleline(&mut filt);
-                self.quest_filter = filt.clone();
                 ui.label(format!(
                     "{} quest slots (names from quests.json, exporter order)",
                     n
                 ));
             });
+            ui.ctx().data_mut(|d| d.insert_temp(filt_id, filt.clone()));
             let f = filt.to_lowercase();
             let mut edits: Vec<(usize, u16, u8)> = Vec::new();
             egui::ScrollArea::vertical()
@@ -241,12 +253,6 @@ impl Editor {
                     .map(|k| sf.merged[rb.built_f.data + k])
                     .collect()
             };
-            let up_snap: Vec<u8> = {
-                let sf = self.file.as_ref().unwrap();
-                (0..rb.upgrades_f.n)
-                    .map(|k| sf.merged[rb.upgrades_f.data + k])
-                    .collect()
-            };
             let coord_snap: Vec<(i8, i8)> = {
                 let sf = self.file.as_ref().unwrap();
                 (0..rb.coords_f.n)
@@ -257,6 +263,12 @@ impl Editor {
                 let sf = self.file.as_ref().unwrap();
                 (0..HUB_AREAS.len())
                     .map(|k| sf.hub_area_built(&rb, k))
+                    .collect()
+            };
+            let coord_raw_snap: Vec<Option<[u8; 4]>> = {
+                let sf = self.file.as_ref().unwrap();
+                (0..rb.coords_f.n)
+                    .map(|k| sf.hub_area_coord_raw(&rb, k))
                     .collect()
             };
             let mut area_edits: Vec<(usize, bool)> = Vec::new();
@@ -305,10 +317,18 @@ impl Editor {
                             coord_edits.push((i, x as i8, y as i8));
                         }
                         let (ox, oy) = coord_snap.get(i).copied().unwrap_or((0, 0));
+                        // The raw bytes are shown so the two padding bytes of the
+                        // game's padded `Coords8` are visible, not assumed zero.
+                        let raw = match coord_raw_snap.get(i).copied().flatten() {
+                            Some([rx, ry, p1, p2]) => {
+                                format!(" raw {rx:02X} {ry:02X} {p1:02X} {p2:02X}")
+                            }
+                            None => " raw ?".to_string(),
+                        };
                         let adj = if built_snap.get(i).copied().unwrap_or(false) {
-                            format!("({ox},{oy})")
+                            format!("({ox},{oy}){raw}")
                         } else {
-                            format!("({ox},{oy}) unbuilt")
+                            format!("({ox},{oy}) unbuilt{raw}")
                         };
                         ui.label(egui::RichText::new(adj).monospace().small());
                         if i % 4 == 3 {
@@ -334,8 +354,7 @@ impl Editor {
                 .spacing([16.0, 2.0])
                 .show(ui, |ui| {
                     for i in 0..HUB_UPGRADES.len() {
-                        let byte = up_snap.get(i / 8).copied().unwrap_or(0);
-                        let mut on = byte >> (i % 8) & 1 != 0;
+                        let mut on = self.file.as_ref().unwrap().hub_upgrade_on(&rb, i);
                         if ui.checkbox(&mut on, HUB_UPGRADES[i]).changed() {
                             up_edits.push((i, on));
                         }
@@ -688,14 +707,11 @@ impl Editor {
                     ui.horizontal(|ui| {
                         ui.monospace(format!("{i:3}"));
                         let mut sp = s.species();
-                        Self::filtered_combo(
-                            ui,
-                            &format!("saf{i}sp"),
-                            &mut self.species_filter,
-                            all_species(),
-                            sp,
-                            &mut |v| sp = v,
-                        );
+                        if let Some(v) =
+                            self.combo(ui, &format!("saf{i}sp"), all_species(), sp, &Opts::pokemon())
+                        {
+                            sp = v;
+                        }
                         if sp != s.species() {
                             s.set_species(sp);
                             edits.push((i, s.clone()));
@@ -705,10 +721,18 @@ impl Editor {
                             s.set_nickname(&nick);
                             edits.push((i, s.clone()));
                         }
+                        // IVs in the same party order the struct packs them
+                        // (hp, atk, def, spe, spa, spd) — labelled, because six
+                        // bare "IV" fields are impossible to read.
+                        const IV_NAMES: [&str; 6] = ["hp", "atk", "def", "spe", "spa", "spd"];
                         for k in 0..6 {
                             let mut v = s.iv(k) as i32;
                             if ui
-                                .add(egui::DragValue::new(&mut v).clamp_range(0..=31).prefix("IV"))
+                                .add(
+                                    egui::DragValue::new(&mut v)
+                                        .clamp_range(0..=31)
+                                        .prefix(format!("{} ", IV_NAMES[k])),
+                                )
                                 .changed()
                             {
                                 s.set_iv(k, v as u8);
@@ -734,6 +758,57 @@ impl Editor {
                         let mut sh = s.shiny();
                         if ui.checkbox(&mut sh, "shiny").changed() {
                             s.set_shiny(sh);
+                            edits.push((i, s.clone()));
+                        }
+                        // Ball / ability slot / gender flag: the game copies all
+                        // three into the wild mon it generates, so they are worth
+                        // showing here even though the mon does not exist yet.
+                        let mut ball = s.pokeball();
+                        egui::ComboBox::from_id_source(format!("saf{i}ball"))
+                            .selected_text(format!(
+                                "{} — {}",
+                                ball,
+                                crate::game_data::ball_name(ball)
+                            ))
+                            .show_ui(ui, |ui| {
+                                for (id, name) in crate::game_data::BALLS {
+                                    if ui
+                                        .selectable_label(
+                                            ball as u16 == *id,
+                                            format!("{id} — {name}"),
+                                        )
+                                        .clicked()
+                                    {
+                                        ball = *id as u8;
+                                        s.set_pokeball(ball);
+                                        edits.push((i, s.clone()));
+                                        ui.close_menu();
+                                    }
+                                }
+                            });
+                        let mut ab = s.ability_num() as i32;
+                        if ui
+                            .add(
+                                egui::DragValue::new(&mut ab)
+                                    .clamp_range(0..=crate::lookup::MAX_ABILITY_SLOT as i32)
+                                    .prefix("ability "),
+                            )
+                            .on_hover_text("slot index into this species' ability list")
+                            .changed()
+                        {
+                            s.set_ability_num(ab as u8);
+                            edits.push((i, s.clone()));
+                        }
+                        let mut gf = s.gender_flag() as i32;
+                        if ui
+                            .add(egui::DragValue::new(&mut gf).clamp_range(0..=7).prefix("gender "))
+                            .on_hover_text(
+                                "raw 3-bit genderFlag; the game only consults it for \
+                                 variable-ratio species",
+                            )
+                            .changed()
+                        {
+                            s.set_gender_flag(gf as u8);
                             edits.push((i, s.clone()));
                         }
                         let mut pr = s.priority as i32;
@@ -764,14 +839,11 @@ impl Editor {
                     ui.horizontal(|ui| {
                         ui.monospace(format!("slot {i}  id {cid}"));
                         let mut s = sp;
-                        Self::filtered_combo(
-                            ui,
-                            &format!("uniq{i}sp"),
-                            &mut self.species_filter,
-                            all_species(),
-                            s,
-                            &mut |v| s = v,
-                        );
+                        if let Some(v) =
+                            self.combo(ui, &format!("uniq{i}sp"), all_species(), s, &Opts::pokemon())
+                        {
+                            s = v;
+                        }
                         if s != sp {
                             sp = s;
                             self.file.as_mut().unwrap().set_unique_mon(i, cid, sp, cd);
@@ -821,7 +893,7 @@ impl Editor {
                         self.sel = Some(Sel::StashDaycare(i));
                     }
                 }
-                let mut money = rb.stash.money;
+                let mut money = self.file.as_ref().unwrap().stash_money();
                 if ui
                     .add(egui::DragValue::new(&mut money).clamp_range(0..=9_999_999))
                     .changed()
@@ -845,14 +917,11 @@ impl Editor {
                             }
                             ui.monospace(format!("{i:3}"));
                             let mut mid = id;
-                            Self::filtered_combo(
-                                ui,
-                                &format!("sbag{i}"),
-                                &mut self.item_filter,
-                                all_items(),
-                                mid,
-                                &mut |v| mid = v,
-                            );
+                            if let Some(v) =
+                                self.combo(ui, &format!("sbag{i}"), all_items(), mid, &Opts::item())
+                            {
+                                mid = v;
+                            }
                             let mut qq = q;
                             if ui
                                 .add(egui::DragValue::new(&mut qq).clamp_range(0..=999))

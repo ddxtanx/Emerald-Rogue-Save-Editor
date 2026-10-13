@@ -7,6 +7,9 @@ edition = "2021"
 eframe = { version = "0.27", default-features = false, features = ["glow", "default_fonts", "x11", "wayland"] }
 egui = "0.27"
 rfd = "0.14"
+# PNG decoding for the icon assets (assets/icons/*.png). Kept instead of the
+# whole `image` crate: PNG is the only format the sprite tooling emits.
+png = "0.17"
 
 [profile.release]
 opt-level = 2

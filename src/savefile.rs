@@ -460,6 +460,8 @@ impl SaveFile {
         self.merged[off..off + MONSZ].copy_from_slice(&m.raw);
         self.edited = true;
     }
+    /// Money inside the stashed hub state (`sRunRestoreBlock`): what the player
+    /// carries while an adventure is in progress, separate from SB1 money.
     pub fn stash_money(&self) -> u32 {
         self.rogue_block()
             .filter(|rb| rb.stash.ok)
@@ -642,6 +644,9 @@ impl SaveFile {
     }
     /// Raw coordinate bytes (x, y, pad0, pad1) so the GUI/CLI can show what is
     /// actually on disk, including a non-zero pad from a foreign editor.
+    /// The four stored bytes for area `i` (x, y, then the two padding bytes the
+    /// game's padded `Coords8` leaves behind). Shown in the UI so the padding is
+    /// visible rather than assumed to be zero.
     pub fn hub_area_coord_raw(&self, rb: &RogueBlock, i: usize) -> Option<[u8; 4]> {
         if !rb.ok || i >= rb.coords_f.n {
             return None;
@@ -944,13 +949,77 @@ impl SaveFile {
     // ---- edits are applied to merged, then flushed to sectors + saved
     pub fn set_party_mon(&mut self, i: usize, m: &Mon) {
         let off = SB1_BASE + PARTY_OFF + i * MONSZ;
-        self.merged[off..off + MONSZ].copy_from_slice(&m.raw);
+        // An 80 B BoxPokemon copied into the party gets a zeroed stat tail; the
+        // game recomputes it on load.
+        let n = m.raw.len().min(MONSZ);
+        self.merged[off..off + n].copy_from_slice(&m.raw[..n]);
+        for b in self.merged[off + n..off + MONSZ].iter_mut() {
+            *b = 0;
+        }
         self.edited = true;
     }
     pub fn set_box_mon(&mut self, bx: usize, slot: usize, m: &Mon) {
         let off = self.storage_base() + 4 + (bx * BOX_SLOTS + slot) * BOXSZ;
-        self.merged[off..off + BOXSZ].copy_from_slice(&m.raw);
+        // A 104 B party mon truncates to the leading 80 B == struct BoxPokemon.
+        let n = m.raw.len().min(BOXSZ);
+        self.merged[off..off + n].copy_from_slice(&m.raw[..n]);
+        for b in self.merged[off + n..off + BOXSZ].iter_mut() {
+            *b = 0;
+        }
         self.edited = true;
+    }
+    pub fn clear_box_slot(&mut self, bx: usize, slot: usize) {
+        let off = self.storage_base() + 4 + (bx * BOX_SLOTS + slot) * BOXSZ;
+        for b in self.merged[off..off + BOXSZ].iter_mut() {
+            *b = 0;
+        }
+        self.edited = true;
+    }
+
+    pub fn set_party_count(&mut self, n: usize) {
+        self.merged[SB1_BASE + PARTY_COUNT_OFF] = n.min(6) as u8;
+        self.edited = true;
+    }
+
+    /// Append a mon to the party. `None` when the party is already 6 strong.
+    /// Returns the slot written and the OTID used, so the caller can title the
+    /// editor and report what happened.
+    pub fn add_party_mon(&mut self, m: &Mon) -> Option<(usize, u32)> {
+        let n = self.party_count().min(6);
+        if n >= 6 {
+            return None;
+        }
+        let otid = m.otid();
+        self.set_party_mon(n, m);
+        self.set_party_count(n + 1);
+        Some((n, otid))
+    }
+
+    /// Remove a party slot, closing the gap so `partyCount` and the slot array
+    /// stay consistent (a hole in the middle is not a state the game produces).
+    /// Returns the new party count.
+    pub fn delete_party_mon(&mut self, i: usize) -> usize {
+        let n = self.party_count().min(6);
+        if i >= n || n == 0 {
+            return n;
+        }
+        let base = SB1_BASE + PARTY_OFF;
+        // Snapshot first: slots overlap as we shift them down.
+        let mut tail: Vec<u8> = Vec::with_capacity((n - i - 1) * MONSZ);
+        for k in i + 1..n {
+            tail.extend_from_slice(&self.merged[base + k * MONSZ..base + (k + 1) * MONSZ]);
+        }
+        for (k, chunk) in tail.chunks(MONSZ).enumerate() {
+            let dst = base + (i + k) * MONSZ;
+            self.merged[dst..dst + MONSZ].copy_from_slice(chunk);
+        }
+        let last = base + (n - 1) * MONSZ;
+        for b in self.merged[last..last + MONSZ].iter_mut() {
+            *b = 0;
+        }
+        self.set_party_count(n - 1);
+        self.edited = true;
+        n - 1
     }
     pub fn set_money(&mut self, v: u32) {
         let k = self.enc_key();
@@ -1063,6 +1132,13 @@ impl SaveFile {
     /// primary key; sort mode only permutes WITHIN a run.
     pub fn bag_sort_mode(&self) -> u8 {
         self.merged[SB1_BASE + BAG_SORT_MODE_OFF]
+    }
+    /// The game writes this from the bag-sort menu (item_menu.c:3247). Values
+    /// outside 0..=3 make `SortItemPlaceBefore` fall through to its default, so
+    /// the UI clamps to the four modes the game defines.
+    pub fn set_bag_sort_mode(&mut self, v: u8) {
+        self.merged[SB1_BASE + BAG_SORT_MODE_OFF] =
+            v.min(crate::format::BAG_SORT_MODES.len() as u8 - 1);
     }
 
     /// How many slots the game would consider used, per pocket, for a given bag.

@@ -47,7 +47,10 @@ pub(crate) const STOR_BASE: usize = 5 * DATASZ; // storage = merged chunks 5..13
                                                 // away by the next in-game bag sort). Key Items are special: they live in the
                                                 // LAST 50 slots of the physical array (`BAG_ITEM_RESERVED_SLOTS`), which is
                                                 // why a sorted bag ends with its key-item run.
+/// u8 `bagSortMode` (vanilla SB1+0x494; +24 in this build). `ITEM_SORT_MODE_*`
+/// in include/constants/rogue.h: 0 type, 1 name, 2 value, 3 amount.
 pub(crate) const BAG_SORT_MODE_OFF: usize = 0x4AC;
+pub(crate) const BAG_SORT_MODES: [&str; 4] = ["type", "name", "value", "amount"];
 pub(crate) const BAG_CAP_UPGRADES_OFF: usize = 0x4AD;
 pub(crate) const BAG_RESERVED_SLOTS: usize = 50;
 pub(crate) const BAG_SLOTS_PER_UPGRADE: usize = 10;

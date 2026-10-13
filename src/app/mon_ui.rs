@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::basestats::base_stats;
+use crate::searchable_combo::Opts;
 use crate::tables::{MOVES, NATURES};
 
 impl Editor {
@@ -15,12 +16,20 @@ impl Editor {
         ui.heading(m.display_name());
         let ck = m.checksum_ok();
         ui.label(format!(
-            "PID {:08X}  OTID {:08X}  checksum {} ({})  {}",
+            "PID {:08X}  OTID {:08X}  checksum {} ({})",
             m.pid(),
             m.otid(),
             m.checksum_stored(),
             if ck { "OK" } else { "CORRUPT" },
-            if m.is_bad_egg() { "⚠ BAD EGG" } else { "" }
+        ));
+        // Flag byte (0x13 in the party struct): bad-egg / has-species / is-egg.
+        // They are shown rather than edited because the game only ever sets them
+        // as a side effect of hatching or receiving a mon.
+        ui.label(format!(
+            "flags: {}has-species={} is-egg={}",
+            if m.is_bad_egg() { "BAD EGG, " } else { "" },
+            m.has_species(),
+            m.is_egg_boxflag(),
         ));
         ui.separator();
 
@@ -29,29 +38,23 @@ impl Editor {
             .spacing([12.0, 6.0])
             .show(ui, |ui| {
                 ui.label("Species");
-                Self::filtered_combo(
-                    ui,
-                    "species",
-                    &mut self.species_filter,
-                    all_species(),
-                    m.species(),
-                    &mut |id| {
-                        m.set_species(id);
-                        changed = true;
-                    },
-                );
+                if let Some(id) =
+                    self.combo(ui, "species", all_species(), m.species(), &Opts::pokemon())
+                {
+                    m.set_species(id);
+                    changed = true;
+                }
                 ui.label("Held item");
-                Self::filtered_combo(
+                if let Some(id) = self.combo(
                     ui,
                     "item",
-                    &mut self.item_filter,
                     all_items(),
                     m.held_item(),
-                    &mut |id| {
-                        m.set_held_item(id);
-                        changed = true;
-                    },
-                );
+                    &Opts::item().with_none("(none)"),
+                ) {
+                    m.set_held_item(id);
+                    changed = true;
+                }
                 ui.end_row();
 
                 ui.label("Nickname");
@@ -64,13 +67,32 @@ impl Editor {
                 ui.label(m.ot_name());
                 ui.label("Ball");
                 let mut ball = m.ball();
-                if ui
-                    .add(egui::DragValue::new(&mut ball).clamp_range(0..=31))
-                    .changed()
-                {
-                    m.set_ball(ball);
-                    changed = true;
-                }
+                ui.horizontal(|ui| {
+                    egui::ComboBox::from_id_source("ball")
+                        .selected_text(format!("{ball} — {}", crate::game_data::ball_name(ball)))
+                        .show_ui(ui, |ui| {
+                            for (id, name) in crate::game_data::BALLS {
+                                if ui
+                                    .selectable_label(ball as u16 == *id, format!("{id} — {name}"))
+                                    .clicked()
+                                {
+                                    ball = *id as u8;
+                                    m.set_ball(ball);
+                                    changed = true;
+                                    ui.close_menu();
+                                }
+                            }
+                        });
+                    // Raw value stays editable: Emerald Rogue uses ball ids the
+                    // stock list does not cover.
+                    if ui
+                        .add(egui::DragValue::new(&mut ball).clamp_range(0..=31))
+                        .changed()
+                    {
+                        m.set_ball(ball);
+                        changed = true;
+                    }
+                });
                 ui.end_row();
 
                 // Level is derived from exp for every mon (box structs have no level
@@ -114,17 +136,6 @@ impl Editor {
                     m.set_friendship(fr);
                     changed = true;
                 }
-                ui.label("PP Ups");
-                let mut ppb = m.pp_bonuses();
-                if ui
-                    .add(egui::DragValue::new(&mut ppb).clamp_range(0..=3))
-                    .changed()
-                {
-                    m.set_pp_bonuses(ppb);
-                    changed = true;
-                }
-                ui.end_row();
-
                 ui.label("Nature");
                 egui::ComboBox::from_id_source("nature")
                     .selected_text(NATURES[m.nature() as usize])
@@ -175,8 +186,14 @@ impl Editor {
                                 ));
                             }
                             for (val, g) in [
-                                (0u8, crate::lookup::Gender::Male),
-                                (1u8, crate::lookup::Gender::Female),
+                                (
+                                    crate::lookup::flag_for_gender(crate::lookup::Gender::Male),
+                                    crate::lookup::Gender::Male,
+                                ),
+                                (
+                                    crate::lookup::flag_for_gender(crate::lookup::Gender::Female),
+                                    crate::lookup::Gender::Female,
+                                ),
                             ] {
                                 if ui
                                     .selectable_label(shown == g, format!("{} ({})", g.label(), val))
@@ -264,31 +281,64 @@ impl Editor {
 
         ui.add_space(6.0);
         ui.strong("Moves");
+        ui.label(
+            "PP ups are per-slot (0..=3). The game's cap is base + base/5 * ups, so \"max\" \
+             fills PP to that cap; the PP field itself stays free-form.",
+        );
         egui::Grid::new("moves")
-            .num_columns(4)
+            .num_columns(5)
             .spacing([10.0, 4.0])
             .show(ui, |ui| {
                 for s in 0..4 {
                     let id = m.moves()[s];
-                    Self::filtered_combo(
-                        ui,
-                        &format!("move{s}"),
-                        &mut self.species_filter,
-                        MOVES,
-                        id,
-                        &mut |mid| {
-                            m.set_move(s, mid);
-                            changed = true;
-                        },
-                    );
-                    let mut pp = m.pps()[s];
-                    ui.add(
-                        egui::DragValue::new(&mut pp)
-                            .clamp_range(0..=255)
-                            .suffix(" pp"),
-                    );
-                    if pp != m.pps()[s] {
+                    if let Some(mid) =
+                        self.combo(ui, &format!("move{s}"), MOVES, id, &Opts::named())
+                    {
+                        m.set_move(s, mid);
+                        changed = true;
+                    }
+                    let base = crate::move_pp::base_pp(id);
+                    let ladder = crate::move_pp::pp_ladder(id);
+                    let tips: Vec<String> = ladder
+                        .iter()
+                        .map(|(u, p)| format!("{u} ups -> {p}"))
+                        .collect();
+                    let pp_now = m.pps()[s];
+                    let mut pp = pp_now;
+                    if ui
+                        .add(
+                            egui::DragValue::new(&mut pp)
+                                .clamp_range(0..=255)
+                                .prefix(format!("PP {pp_now}/"))
+                                .suffix(format!("{base}")),
+                        )
+                        .changed()
+                    {
                         m.set_pp(s, pp);
+                        changed = true;
+                    }
+                    // Per-slot PP Ups. The whole-byte setter used to mask with
+                    // `& 3`, which wiped the other three slots' ups.
+                    let mut ups = m.pp_bonus(s) as usize;
+                    if ui
+                        .add(
+                            egui::DragValue::new(&mut ups)
+                                .clamp_range(0..=3)
+                                .prefix("ups "),
+                        )
+                        .on_hover_text(tips.join("\n"))
+                        .changed()
+                    {
+                        m.set_pp_bonus(s, ups as u8);
+                        changed = true;
+                    }
+                    if ui
+                        .button("max PP")
+                        .on_hover_text("set current PP to the cap for the current ups")
+                        .clicked()
+                    {
+                        let cap = ladder[(m.pp_bonus(s) as usize).min(3)].1;
+                        m.set_pp(s, cap);
                         changed = true;
                     }
                 }
@@ -297,13 +347,52 @@ impl Editor {
 
         ui.add_space(6.0);
         ui.horizontal(|ui| {
-            ui.label(format!(
-                "Met lvl {}  loc {}  egg={}",
-                m.met_level(),
-                m.met_location(),
-                m.is_egg()
-            ));
-            if ui.checkbox(&mut { m.is_egg() }, "is egg").clicked() {}
+            // Met level / met location are both stored (substruct 3): met level
+            // is 7 bits alongside other flags, met location is a byte id.
+            let mut ml = m.met_level() as i32;
+            if ui
+                .add(
+                    egui::DragValue::new(&mut ml)
+                        .clamp_range(0..=127)
+                        .prefix("met lvl "),
+                )
+                .changed()
+            {
+                m.set_met_level(ml as u16);
+                changed = true;
+            }
+            let mut loc = m.met_location() as i32;
+            if ui
+                .add(
+                    egui::DragValue::new(&mut loc)
+                        .clamp_range(0..=255)
+                        .prefix("loc "),
+                )
+                .on_hover_text("met-location id; the game only prints it in the summary")
+                .changed()
+            {
+                m.set_met_location(loc as u8);
+                changed = true;
+            }
+            // The bit exists in the struct (substruct 3 bit 31) even though a
+            // GBA-gen game has no Gigantamax forms; shown so a mon imported from
+            // elsewhere does not look silently different.
+            let mut gmax = m.gigantamax_factor();
+            if ui
+                .checkbox(&mut gmax, "gmax flag")
+                .on_hover_text("substruct-3 bit 31; unused by this ROM, kept for imports")
+                .changed()
+            {
+                m.set_gigantamax_factor(gmax);
+                changed = true;
+            }
+            // Egg is a real flag (hatch steps live in the egg data block); the
+            // old checkbox wrote to a temporary and did nothing.
+            let mut egg = m.is_egg();
+            if ui.checkbox(&mut egg, "is egg").changed() {
+                m.set_is_egg(egg);
+                changed = true;
+            }
         });
 
         if let Some((hp, max, st)) = m.cached_stats() {

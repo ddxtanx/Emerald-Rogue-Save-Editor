@@ -49,6 +49,40 @@ impl Mon {
     pub fn set_otid(&mut self, v: u32) {
         put32(&mut self.raw, 4, v);
     }
+    pub fn set_pid(&mut self, v: u32) {
+        put32(&mut self.raw, 0, v);
+    }
+    pub fn set_ot_name(&mut self, s: &str) {
+        let enc = gen3_encode(s, 7);
+        self.raw[20..27].copy_from_slice(&enc);
+    }
+    /// Build a fresh, self-consistent mon for an empty slot: species, level
+    /// (through the Rogue flat exp schedule, since level is derived from exp),
+    /// a random PID, the save's OTID/OT name, a Poké Ball, ability slot 0, and a
+    /// nickname matching the species. Cached stats stay zero, which is what the
+    /// game itself writes: party stats are recomputed by `CalculateMonStats` on
+    /// load and box mons derive everything from exp.
+    ///
+    /// The struct is party-sized (104 B). `set_box_mon` truncates to the leading
+    /// 80 B, which is exactly `struct BoxPokemon`.
+    pub fn blank(otid: u32, ot_name: &str, species: u16, level: u8) -> Mon {
+        let mut m = Mon::from_bytes(&vec![0u8; 104]);
+        m.set_pid(random_pid());
+        m.set_otid(otid);
+        m.set_species(species);
+        m.set_level(level.max(1));
+        m.set_met_level(level.max(1) as u16);
+        m.set_ball(4); // ITEM_POKE_BALL
+        m.set_friendship(70);
+        m.set_ability_num(0);
+        m.set_gender_flag(0);
+        m.set_nickname(crate::game_data::species_name(species));
+        if !ot_name.is_empty() {
+            m.set_ot_name(ot_name);
+        }
+        m.seal();
+        m
+    }
     pub fn nickname(&self) -> String {
         gen3_decode(&self.raw[8..18])
     }
@@ -59,16 +93,10 @@ impl Mon {
     pub fn ot_name(&self) -> String {
         gen3_decode(&self.raw[20..27])
     }
-    pub fn markings(&self) -> u8 {
-        self.raw[27]
-    }
     pub fn checksum_stored(&self) -> u16 {
         le16(&self.raw, 28)
     }
 
-    pub fn language(&self) -> u8 {
-        self.raw[18] & 0x07
-    }
     pub fn hidden_nature_mod(&self) -> u8 {
         (self.raw[18] >> 3) & 0x1F
     }
@@ -120,11 +148,18 @@ impl Mon {
         // exp is authoritative for level, so a party mon's cached byte follows it.
         self.sync_cached_level();
     }
-    pub fn pp_bonuses(&self) -> u8 {
-        self.t[0][8]
+    /// The `PP Bonuses` byte at t[0]+8 holds one 2-bit field per move slot
+    /// (`u8 ppUps:2` x4). Only the per-slot accessors below are exposed: a
+    /// whole-byte setter is how the other three slots used to get wiped.
+    /// PP Ups applied to one move slot: 0..=3. The game caps it at 3
+    /// (pokemon.c `gPPUpGetMask`, item_use.c refuses a 4th).
+    pub fn pp_bonus(&self, slot: usize) -> u8 {
+        (self.t[0][8] >> (slot * 2)) & 3
     }
-    pub fn set_pp_bonuses(&mut self, v: u8) {
-        self.t[0][8] = v & 3
+    pub fn set_pp_bonus(&mut self, slot: usize, ups: u8) {
+        let ups = ups.min(3) as u8;
+        let b = self.t[0][8];
+        self.t[0][8] = (b & !(3 << (slot * 2))) | (ups << (slot * 2));
     }
     pub fn friendship(&self) -> u8 {
         self.t[0][9]
@@ -401,5 +436,26 @@ pub(crate) fn calc_stat(base: u32, iv: u32, ev: u32, lvl: u32, nat: usize, stat:
         ((2 * base + iv + ev4) * lvl) / 100 + lvl + 10
     } else {
         ((((2 * base + iv + ev4) * lvl) / 100 + 5) * nature_split(nat, stat)) / 100
+    }
+}
+
+/// A PID for a mon we are creating. It sets the substruct permutation
+/// (`pid % 24`), the encryption key (`pid ^ otid`), and the nature, so it must
+/// be non-zero and varied; two mons with the same PID/OTID pair would encrypt
+/// identically. Seeded from the clock plus a stack address, which is plenty for
+/// "give the new mon a different identity".
+fn random_pid() -> u32 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.subsec_nanos() as u64 + d.as_secs() << 12)
+        .unwrap_or(0x1234_abcd);
+    let salt = &nanos as *const u64 as usize as u64;
+    let mixed = nanos.wrapping_mul(0x9E37_79B9_7F4A_7C15).wrapping_add(salt) >> 11;
+    let pid = (mixed as u32) ^ ((mixed >> 32) as u32);
+    if pid == 0 {
+        0x2c2b_1b18 // Gen 3 has a reserved PID of 0; any non-zero value works
+    } else {
+        pid
     }
 }

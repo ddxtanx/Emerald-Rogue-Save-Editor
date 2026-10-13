@@ -1,6 +1,7 @@
 //! Items tab: bag/PC/stash editing, sort, add row.
 
 use super::*;
+use crate::searchable_combo::Opts;
 
 impl Editor {
     pub(crate) fn items_ui(&mut self, ui: &mut egui::Ui) {
@@ -12,13 +13,14 @@ impl Editor {
         // re-sort after loading — so quantity edits go through
         // set_bag_slot_qty (re-compacts, keeps runs intact) and new ids only
         // ever arrive via add_bag_item, which inserts in sorted position.
-        let (bag_items, pc_items, cap, mut cap_up, warnings) = match &self.file {
+        let (bag_items, pc_items, cap, mut cap_up, warnings, sort_mode) = match &self.file {
             Some(sf) => (
                 sf.bag_items(),
                 sf.pc_items(),
                 sf.bag_capacity(),
                 sf.bag_capacity_upgrades(),
                 sf.bag_warnings(false),
+                sf.bag_sort_mode(),
             ),
             None => return,
         };
@@ -26,9 +28,31 @@ impl Editor {
         ui.checkbox(&mut self.hide_empty_items, "hide empty slots");
         let mut edits: Vec<(bool, usize, u16, u16)> = Vec::new();
 
+        // The saved sort mode decides how the GAME orders items inside a pocket
+        // run; the editor's own sort button uses "type" order. Editable, because
+        // the game's own sort menu writes this byte (item_menu.c:3247).
+        let mut sort_changed = false;
+        let mut sort_mode = sort_mode as usize;
         let (cap_bumped, do_sort) = ui
             .horizontal(|ui| {
                 ui.label(format!("bag {used}/{cap} slots"));
+                egui::ComboBox::from_id_source("bag_sort_mode")
+                    .selected_text(format!(
+                        "sort mode: {}",
+                        crate::format::BAG_SORT_MODES
+                            .get(sort_mode)
+                            .copied()
+                            .unwrap_or("unknown")
+                    ))
+                    .show_ui(ui, |ui| {
+                        for (i, name) in crate::format::BAG_SORT_MODES.iter().enumerate() {
+                            if ui.selectable_label(sort_mode == i, *name).clicked() {
+                                sort_mode = i;
+                                sort_changed = true;
+                                ui.close_menu();
+                            }
+                        }
+                    });
                 let r = ui.add(
                     egui::DragValue::new(&mut cap_up)
                         .clamp_range(0..=37)
@@ -44,6 +68,16 @@ impl Editor {
                 (r.changed(), sort)
             })
             .inner;
+        if sort_changed {
+            if let Some(sf) = self.file.as_mut() {
+                sf.set_bag_sort_mode(sort_mode as u8);
+                self.status = format!(
+                    "bag sort mode set to {} (unsaved — press Save to write)",
+                    crate::format::BAG_SORT_MODES[sort_mode]
+                );
+            }
+            self.dirty = true;
+        }
         for w in warnings {
             ui.colored_label(
                 egui::Color32::from_rgb(210, 130, 40),
@@ -51,24 +85,28 @@ impl Editor {
             );
         }
 
-        // Add row: searchable item picker + quantity + stash target toggle.
+        // Add / remove row: one searchable item picker, one quantity, and the
+        // same stash toggle for both directions.
         let mut do_add = false;
+        let mut do_remove = false;
         ui.horizontal(|ui| {
             ui.label("add to bag:");
-            Self::filtered_combo(
+            if let Some(id) = self.combo(
                 ui,
                 "bag_add_item",
-                &mut self.item_filter,
                 all_items(),
                 self.bag_add_id,
-                &mut |id| self.bag_add_id = id,
-            );
+                &Opts::item(),
+            ) {
+                self.bag_add_id = id;
+            }
             ui.add(
                 egui::DragValue::new(&mut self.bag_add_qty)
                     .clamp_range(1..=999)
                     .prefix("x"),
             );
             ui.checkbox(&mut self.bag_add_stash, "stashed (hub) bag");
+            do_remove = ui.button("Remove").clicked();
             if ui
                 .button(format!(
                     "Add {} x{}",
@@ -80,6 +118,21 @@ impl Editor {
                 do_add = true;
             }
         });
+
+        if do_remove {
+            let id = self.bag_add_id;
+            let qty = self.bag_add_qty;
+            let stash = self.bag_add_stash;
+            if let Some(sf) = self.file.as_mut() {
+                match sf.remove_bag_item(id, qty, stash) {
+                    Ok(msg) => {
+                        self.status = format!("{msg} (unsaved — press Save to write)");
+                        self.dirty = true;
+                    }
+                    Err(e) => self.status = format!("remove failed: {e}"),
+                }
+            }
+        }
 
         for (bag, label) in [(true, "Bag"), (false, "PC (x256 box)")] {
             ui.strong(label);
