@@ -44,12 +44,19 @@ Pokémon- and sector-level checksum so the game accepts the result.
 - **In-adventure vs. hub state split**: SaveBlock1 holds whichever state is currently loaded; the other one
   is stashed inside the Rogue block (`sRunRestoreBlock`). The editor shows and edits **both** — stashed hub
   party, bag, daycare, money, and play time — so you can fix the state that the game is not currently showing.
+- **Roster editing**: add a blank/level-100 mon to the party or a box, delete the selected mon, and move mons
+  between party and boxes (delete keeps a one-slot undo)
+- **Searchable pickers** for species, items, and moves: type to filter, arrows to move, Enter to pick.
+  They stay open when you click the search field, auto-focus on open, and list every entry by default
+- **Sprite art**: species and item icons in the roster, picker rows and item lists, from public
+  repositories (see *Icon art* below). Missing art falls back to a letter badge, so the editor is fully
+  usable without it
 - Lossless round-trip: a no-op resave is byte-identical to the input (rotation, footers, trailer untouched)
 
 **Known layout, not yet editable**
 
-- Safari-zone mon roster and dynamic unique-mon spawns (decoded counts shown; structs mapped)
-- Mon mastery flags, home decorations, adventure-replay seeds (decoded; rarely useful to hand-edit)
+- Raw in-run structs (`gRogueRun`, adventure path): decoded for display, deliberately not editable mid-run
+- Mon mastery flags, adventure-replay seeds (decoded; rarely useful to hand-edit)
 
 ## Install / build
 
@@ -61,6 +68,19 @@ cd Emerald-Rogue-Save-Editor
 cargo build --release
 ./target/release/er-save-editor            # GUI
 ```
+
+### Icon art (optional)
+
+Sprites are **not** committed to this repository. Fetch them into `assets/` once — the editor looks for
+`assets/icons/pokemon/<species-id>.png` and `assets/icons/items/<item-id>.png`, relative to the current
+directory or to the executable:
+
+```sh
+python3 tools/get_icons.py         # ~2200 PNGs, idempotent, resumable
+```
+
+Without them the editor still works: every icon slot falls back to a coloured letter badge, and the
+mon editor header shows how many icons it found on disk.
 
 On a headless box the GUI still runs under Xvfb + llvmpipe:
 
@@ -179,6 +199,8 @@ SAV_OUT=save-out-of-adventure.sav SAV_IN=save-in-adventure.sav python3 tools/dif
 - [x] Rogue custom item names (ids 827–1072, incl. Legends Z-A mega stones)
 - [x] Species table completion (megas, gigantamax, Rogue form IDs, gen 9)
 - [x] Safari-zone roster / dynamic unique-mon spawn editing
+- [x] Searchable species/item/move pickers with sprite art from public repositories
+- [x] Party/box roster editing: add, delete, move between party and storage
 - [ ] Edit the raw in-run structs (`gRogueRun`, adventure path) — risky mid-run, likely read-only display
 - [x] Save-version awareness: report which Rogue version wrote a save, and refuse to
       edit when the stream layout doesn't match the editor's map (the game migrates
@@ -193,7 +215,9 @@ The tables in `src/tables.rs` and `src/basestats.rs` are generated from headers 
 [Pokabbie/pokeemerald-rogue](https://github.com/Pokabbie/pokeemerald-rogue) (`expansion` branch), which is itself based
 on [pret/pokeemerald](https://github.com/pret/pokeemerald) and
 [rh-hideout/pokeemerald-expansion](https://github.com/rh-hideout/pokeemerald-rogue). Underlying Pokémon names, species,
-moves and items are trademarks of Nintendo/Game Freak/Creatures Inc. This tool is an unofficial interoperability
+moves and items are trademarks of Nintendo/Game Freak/Creatures Inc. Sprite art is *not* redistributed here:
+`tools/get_icons.py` downloads it from public mirrors (PokeAPI's `sprites` repository and the same asset sets
+pokemmo/Showdown publish) into your own `assets/` directory at your request. This tool is an unofficial interoperability
 utility, unaffiliated with and not endorsed by Nintendo or the Emerald Rogue authors. It only edits your own save file.
 
 ## Disclaimer

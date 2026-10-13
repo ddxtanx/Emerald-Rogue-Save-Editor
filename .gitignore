@@ -26,3 +26,6 @@ venv/
 
 # ---- vendored game source (large, upstream repo; see docs/FORMAT.md) ----
 /rogue-src/
+
+# ---- icon art: fetched by tools/get_icons.py, not redistributed by this repo ----
+/assets/
