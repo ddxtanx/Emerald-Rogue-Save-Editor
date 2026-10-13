@@ -76,8 +76,19 @@ Sprites are **not** committed to this repository. Fetch them into `assets/` once
 directory or to the executable:
 
 ```sh
-python3 tools/get_icons.py         # ~2200 PNGs, idempotent, resumable
+python3 tools/get_icons.py                  # pokemon sprites, ~2200 PNGs, idempotent, resumable
+python3 tools/get_icons_from_source.py      # item sprites, straight from the game's own source
 ```
+
+`get_icons_from_source.py` shallow-clones the Emerald Rogue source (sparse: only `graphics/items`, `src/data`
+and `include`) into `.cache/er-source/`, then follows the game's own wiring — item constant → icon table row
+(or Rogue item row) → `INCBIN` line → the PNG and `.pal` that line names — and writes `<item id>.png` for every
+id that has art. That is the art the ROM displays: extracting the same icons out of the ROM by hand reproduces
+**857 of 862** ids byte-for-byte at GBA palette precision, the other five differing by one least-significant
+palette bit, with no icon differing in shape or transparency. It replaces the item icons already in `assets/`;
+ids this version of the game has no art for are left out, and the editor draws a letter-and-ball badge for those.
+
+Pin a release with `--ref EX-v2.1`, or point it at an existing checkout with `--source /path/to/pokeemerald-rogue`.
 
 Without them the editor still works: every icon slot falls back to a coloured letter badge, and the
 mon editor header shows how many icons it found on disk.
@@ -192,6 +203,7 @@ SAV_OUT=save-out-of-adventure.sav SAV_IN=save-in-adventure.sav python3 tools/dif
 - `gen_species_names.py` — species id → name for the whole Rogue species space (Gen 1–9, Mega, Gigantamax,
   regional/alt forms, and Rogue's own fake forms — ~1400 ids, not the ~386 of vanilla Emerald)
 - `gen_basestats.py`, `gen_rogue_items.py` — base-stat and Rogue-item tables
+- `get_icons_from_source.py` — clones the game source and rebuilds every item icon from its own PNG and palette, id by id
 - `diff_states.py`, `diff2.py` — locate every valid Pokémon struct in two saves and diff them by region; this is how
   the in-adventure vs overworld split was found
 - `er_iv_edit.py`, `er_moveswap.py`, `er_sav_inspect.py` — early standalone Python prototypes
@@ -221,8 +233,10 @@ The tables in `src/tables.rs` and `src/basestats.rs` are generated from headers 
 on [pret/pokeemerald](https://github.com/pret/pokeemerald) and
 [rh-hideout/pokeemerald-expansion](https://github.com/rh-hideout/pokeemerald-rogue). Underlying Pokémon names, species,
 moves and items are trademarks of Nintendo/Game Freak/Creatures Inc. Sprite art is *not* redistributed here:
-`tools/get_icons.py` downloads it from public mirrors (PokeAPI's `sprites` repository and the same asset sets
-pokemmo/Showdown publish) into your own `assets/` directory at your request. This tool is an unofficial interoperability
+`tools/get_icons.py` downloads pokemon sprites from public mirrors (PokeAPI's `sprites` repository and the same
+asset sets pokemmo/Showdown publish), and `tools/get_icons_from_source.py` clones the Emerald Rogue source and
+rebuilds item icons from the PNGs and palettes in that repository — both into your own `assets/` directory, at
+your request, so the art stays under its own source's terms and never enters this repository. This tool is an unofficial interoperability
 utility, unaffiliated with and not endorsed by Nintendo or the Emerald Rogue authors. It only edits your own save file.
 
 ## Disclaimer

@@ -525,6 +525,9 @@ def download(out_path, url, force, statuses, stats):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--only", choices=["species", "items"])
+    ap.add_argument("--with-items", action="store_true",
+                    help="also fetch item sprites from PokeAPI; by default item icons are left to "
+                         "get_icons_from_source.py, which builds them from the game's own art")
     ap.add_argument("--workers", type=int, default=8)
     ap.add_argument("--force", action="store_true", help="re-download even if valid PNG exists")
     ap.add_argument("--offline", action="store_true")
@@ -533,6 +536,13 @@ def main():
     args = ap.parse_args()
 
     log("== er-save-editor icon pipeline ==")
+    if not args.with_items and args.only != "items":
+        # Item icons come from the game's own PNG+palette files (exact in-game art,
+        # including the custom item block PokeAPI has no slug for). Downloading
+        # PokeAPI item art over them loses that fidelity and leaves custom ids blank.
+        args.only = "species"
+        log("item sprites skipped: use tools/get_icons_from_source.py, "
+            "or pass --with-items for the PokeAPI set")
     sp_ids, sp_names, it_ids, it_names, extras = parse_editor_tables()
     log(f"editor tables: {len(sp_ids)} species ids (max {max(sp_ids)}), "
         f"{len(it_ids)} item ids (max {max(it_ids)}), "
