@@ -2588,8 +2588,33 @@ pub const ITEMS: &[(u16, &str)] = &[
     (826, "Stellar Tera Shard"),
     (827, "Rogue Item First"),
 ];
-pub const NATURES: &[&str] = &[
-    "Hardy", "Lonely", "Brave", "Adamant", "Naughty", "Bold", "Docile", "Relaxed", "Impish", "Lax",
-    "Timid", "Hasty", "Serious", "Jolly", "Naive", "Modest", "Mild", "Quiet", "Bashful", "Rash",
-    "Calm", "Gentle", "Sassy", "Careful", "Quirky",
+/// The 25 natures as `(id, name)` pairs — the id is the value the game stores
+/// (`pid % 25`, and `enum Nature` in include/constants/pokemon.h). The ids are the `enum Nature` values the game stores
+/// in `pid % 25` — index 0 is Hardy, so a "no nature" mon reads as Hardy, not blank.
+pub const NATURE_IDS: &[(u16, &str)] = &[
+    (0, "Hardy"),
+    (1, "Lonely"),
+    (2, "Brave"),
+    (3, "Adamant"),
+    (4, "Naughty"),
+    (5, "Bold"),
+    (6, "Docile"),
+    (7, "Relaxed"),
+    (8, "Impish"),
+    (9, "Lax"),
+    (10, "Timid"),
+    (11, "Hasty"),
+    (12, "Serious"),
+    (13, "Jolly"),
+    (14, "Naive"),
+    (15, "Modest"),
+    (16, "Mild"),
+    (17, "Quiet"),
+    (18, "Bashful"),
+    (19, "Rash"),
+    (20, "Calm"),
+    (21, "Gentle"),
+    (22, "Sassy"),
+    (23, "Careful"),
+    (24, "Quirky"),
 ];

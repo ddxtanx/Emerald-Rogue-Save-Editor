@@ -19,6 +19,7 @@
 
 mod abilities;
 mod app;
+mod area_popup;
 mod basestats;
 mod deco_variants;
 mod format;

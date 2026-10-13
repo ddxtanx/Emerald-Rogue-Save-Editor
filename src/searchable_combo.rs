@@ -87,6 +87,12 @@ impl Opts {
         self.none_label = Some(label);
         self
     }
+    /// Drop the numeric id from rows and from the trigger label. For domains where
+    /// the id carries no information (the 25 natures), showing it is noise.
+    pub fn no_id(mut self) -> Self {
+        self.show_id = false;
+        self
+    }
     pub fn compact(mut self) -> Self {
         self.min_width = 200.0;
         self.max_height = 260.0;

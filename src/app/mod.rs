@@ -19,6 +19,7 @@ use crate::savefile::*;
 use crate::searchable_combo::{self, Opts};
 
 // per-tab UIs, each an `impl Editor` block in its own file
+mod hub_visual;
 mod items_ui;
 mod mon_ui;
 mod rogue_ui;
@@ -230,6 +231,67 @@ impl Editor {
         }
     }
 
+    /// The order the roster panel draws mons: party, then non-empty fusion slots,
+    /// then each box's non-empty slots. The popup's ◀ ▶ walk THIS list, so "next"
+    /// always lands on a mon the user can see, in the order they see it.
+    fn roster_order(&self) -> Vec<Sel> {
+        let Some(sf) = self.file.as_ref() else {
+            return Vec::new();
+        };
+        let mut out: Vec<Sel> = (0..sf.party_count()).map(Sel::Party).collect();
+        out.extend(
+            (0..FUSION_COUNT)
+                .filter(|f| sf.fusion_mon(*f).species() != 0)
+                .map(Sel::Fusion),
+        );
+        for bx in 0..ACTIVE_BOXES {
+            for s in 0..BOX_SLOTS {
+                if sf.box_mon(bx, s).species() != 0 {
+                    out.push(Sel::Box(bx, s));
+                }
+            }
+        }
+        out
+    }
+
+    /// Move the selection `delta` places along `roster_order`, clamped at the ends
+    /// (no wrap: walking off the end and reappearing at the top reads as a glitch
+    /// when the rows are right there). Returns false when there is nowhere to go,
+    /// which is how the popup's buttons grey themselves out at the ends of a list.
+    fn step_selection(&mut self, delta: isize) -> bool {
+        let Some(cur) = self.sel.clone() else {
+            return false;
+        };
+        let order = self.roster_order();
+        // Selections that are not in the roster (stashed party, daycare) have no
+        // neighbours to walk, so the popup stays put rather than jumping context.
+        let Some(pos) = order.iter().position(|s| *s == cur) else {
+            return false;
+        };
+        let next = if delta < 0 {
+            pos.saturating_sub(delta.unsigned_abs())
+        } else {
+            pos + delta as usize
+        };
+        if next < order.len() && next != pos {
+            self.sel = Some(order[next].clone());
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Popup title: which mon, in which slot. Legal because the `Window` pins its
+    /// id with `.id(..)` — egui keys a window's area on its title otherwise, so a
+    /// changing title would reset the window's position every frame.
+    fn window_title(&self) -> String {
+        let slot = self.sel_label();
+        match self.selected_mon() {
+            Some(m) if m.species() != 0 => format!("{} — {}", m.display_name(), slot),
+            _ => slot,
+        }
+    }
+
     /// Where a mon can be moved to: the other side of party <-> box.
     fn first_empty_box_slot(&self, bx: usize) -> Option<usize> {
         let sf = self.file.as_ref()?;
@@ -296,6 +358,10 @@ impl Editor {
     /// never has a gap in the middle (the game reads `partyCount` + 6 slots).
     fn delete_selected(&mut self) {
         let Some(sel) = self.sel.clone() else { return };
+        // Remember where this sat in roster order BEFORE the mutation, so the
+        // selection can land on its neighbour afterwards (see the end).
+        let before = self.roster_order();
+        let pos = before.iter().position(|s| *s == sel).unwrap_or(0);
         let Some(sf) = self.file.as_mut() else { return };
         match sel {
             Sel::Party(i) => {
@@ -320,7 +386,13 @@ impl Editor {
                 );
             }
         }
-        self.mon_popup = false;
+        // A delete should not throw the user out of the editor window: land the
+        // selection on whatever now occupies the same place in roster order (the
+        // next mon in that box, or the previous one if the end was removed) and
+        // leave the popup open. It closes only when nothing is left to show.
+        let after = self.roster_order();
+        self.sel = after.get(pos.min(after.len().saturating_sub(1))).cloned();
+        self.mon_popup = self.sel.is_some();
     }
 
     /// Party <-> box transfer. Moving to the PC closes up the party slot;
@@ -580,7 +652,7 @@ impl Editor {
         if !self.mon_popup || self.file.is_none() || self.selected_mon().is_none() {
             return;
         }
-        let title = self.sel_label();
+        let title = self.window_title();
         let mut open = self.mon_popup;
         let resp = egui::Window::new(title)
             .id(egui::Id::new("mon_editor_window"))
@@ -594,9 +666,42 @@ impl Editor {
                 egui::ScrollArea::vertical()
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
+                        // Walk the roster from inside the popup. The PKHeX workflow
+                        // is "open once, step through mons", not "close, find the
+                        // next row, reopen" — and the walk follows the exact order
+                        // the left panel draws, so what is next is what is on screen.
+                        let order = self.roster_order();
+                        let idx = self
+                            .sel
+                            .as_ref()
+                            .and_then(|s| order.iter().position(|o| o == s));
+                        let has_prev = matches!(idx, Some(i) if i > 0);
+                        let has_next = matches!(idx, Some(i) if i + 1 < order.len());
                         let can_move =
                             matches!(self.sel, Some(Sel::Party(..)) | Some(Sel::Box(..)));
                         ui.horizontal(|ui| {
+                            if ui
+                                .add_enabled(has_prev, |ui: &mut egui::Ui| ui.button("◀ prev"))
+                                .on_hover_text("previous mon, in roster order")
+                                .clicked()
+                            {
+                                self.step_selection(-1);
+                            }
+                            if ui
+                                .add_enabled(has_next, |ui: &mut egui::Ui| ui.button("next ▶"))
+                                .on_hover_text("next mon, in roster order")
+                                .clicked()
+                            {
+                                self.step_selection(1);
+                            }
+                            if let Some(i) = idx {
+                                ui.label(
+                                    egui::RichText::new(format!("{}/{}", i + 1, order.len()))
+                                        .small()
+                                        .weak(),
+                                );
+                            }
+                            ui.separator();
                             if can_move && ui.button("move party <-> box").clicked() {
                                 self.move_between_party_and_box();
                             }
@@ -618,6 +723,13 @@ impl Editor {
                                 }
                             }
                         });
+                        // Editor warnings ("no base stats in the table for this
+                        // species", "not enough room in that box") used to appear
+                        // only in the left panel — far from the field that raised
+                        // them, and invisible if that panel was scrolled away.
+                        if let Some(note) = self.mon_note.clone() {
+                            ui.colored_label(egui::Color32::GOLD, note);
+                        }
                         ui.separator();
                         self.mon_editor_ui(ui);
                     });
@@ -724,3 +836,105 @@ impl eframe::App for Editor {
 
 // The stat formula lives in crate::mon (mirroring CalStat); mon_ui sees it
 // through `use super::*` -> the glob re-export of crate::mon::* below.
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// These tests walk the real roster of a real save: the popup's ◀ ▶ buttons
+    /// promise that "next" is the next mon the user can see, and that promise is
+    /// only worth what the ordering code actually produces.
+    fn editor_with_save() -> Option<Editor> {
+        let p =
+            std::env::var("ER_TEST_SAVE").unwrap_or_else(|_| "/workspace/hermes/er2.sav".into());
+        if !std::path::Path::new(&p).exists() {
+            eprintln!("roster walk tests: no save at {p}, skipping");
+            return None;
+        }
+        let mut app = Editor::default();
+        app.open_path(p);
+        if app.file.is_none() {
+            return None;
+        }
+        Some(app)
+    }
+
+    fn species_of(sf: &SaveFile, s: &Sel) -> u16 {
+        match s {
+            Sel::Party(i) => sf.party().get(*i).map(|m| m.species()).unwrap_or(0),
+            Sel::Box(b, x) => sf.box_mon(*b, *x).species(),
+            Sel::Fusion(f) => sf.fusion_mon(*f).species(),
+            _ => 0,
+        }
+    }
+
+    #[test]
+    fn roster_order_is_party_then_fusions_then_boxes_with_no_empty_slots() {
+        let Some(app) = editor_with_save() else {
+            return;
+        };
+        let sf = app.file.as_ref().unwrap();
+        let order = app.roster_order();
+        assert!(!order.is_empty(), "this save has mons to walk");
+
+        // Party rows come first and there are exactly `party_count` of them.
+        let party_rows = order
+            .iter()
+            .take_while(|s| matches!(s, Sel::Party(_)))
+            .count();
+        assert_eq!(party_rows, sf.party_count());
+        assert!(
+            !order[party_rows..]
+                .iter()
+                .any(|s| matches!(s, Sel::Party(_))),
+            "party rows must not reappear after the boxes start"
+        );
+
+        // Boxes ascend in (box, slot) order, matching the left panel's draw order.
+        let boxes: Vec<(usize, usize)> = order
+            .iter()
+            .filter_map(|s| match s {
+                Sel::Box(b, x) => Some((*b, *x)),
+                _ => None,
+            })
+            .collect();
+        let mut sorted = boxes.clone();
+        sorted.sort_unstable();
+        assert_eq!(boxes, sorted, "box slots come out in (box, slot) order");
+
+        // Nothing empty is listed: an empty row in the walk is a dead click.
+        for s in &order {
+            assert_ne!(species_of(sf, s), 0, "roster entry {s:?} is an empty slot");
+        }
+    }
+
+    #[test]
+    fn the_walk_steps_to_the_next_visible_mon_and_clamps_at_the_ends() {
+        let Some(mut app) = editor_with_save() else {
+            return;
+        };
+        let order = app.roster_order();
+
+        app.sel = Some(order[0].clone());
+        assert!(app.step_selection(1), "there is a next mon to step to");
+        assert_eq!(app.sel, Some(order[1].clone()), "and it is the next row");
+
+        app.sel = Some(order[0].clone());
+        assert!(
+            !app.step_selection(-1),
+            "walking off the top is clamped, not wrapped"
+        );
+        assert_eq!(app.sel, Some(order[0].clone()));
+
+        let last = order[order.len() - 1].clone();
+        app.sel = Some(last.clone());
+        assert!(!app.step_selection(1), "walking off the bottom is clamped");
+        assert_eq!(app.sel, Some(last));
+
+        // Mons outside the left-panel roster (stashed hub state, daycare) have no
+        // neighbours in it: the popup stays where it is instead of jumping context.
+        app.sel = Some(Sel::StashParty(0));
+        assert!(!app.step_selection(1));
+        assert_eq!(app.sel, Some(Sel::StashParty(0)));
+    }
+}

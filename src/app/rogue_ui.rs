@@ -3,7 +3,6 @@
 
 use super::*;
 use crate::searchable_combo::Opts;
-use crate::tables::NATURES;
 use crate::tables_extra;
 
 impl Editor {
@@ -247,6 +246,10 @@ impl Editor {
         });
 
         ui.collapsing("Hub map (areas, upgrades, coordinates)", |ui| {
+            // The map first: click/drag buildings on their tiles. The numeric grid
+            // below stays for exact coordinates and for the raw pad bytes.
+            self.hub_map_visual(ui, &rb);
+            ui.add_space(8.0);
             let area_snap: Vec<u8> = {
                 let sf = self.file.as_ref().unwrap();
                 (0..rb.built_f.n)
@@ -380,6 +383,9 @@ impl Editor {
         });
 
         ui.collapsing("House (decorations, styles, follow-mons, weather)", |ui| {
+            // Placement by tile grid; the slot table below it stays for exact edits.
+            self.house_visual(ui, &rb);
+            ui.add_space(8.0);
             let style_snap: Vec<u8> = {
                 let sf = self.file.as_ref().unwrap();
                 (0..rb.styles_f.n)
@@ -741,16 +747,16 @@ impl Editor {
                         }
                         let mut nat = s.nature() as usize;
                         let mut nat_changed = false;
-                        egui::ComboBox::from_id_source(format!("saf{i}nat"))
-                            .selected_text(NATURES.get(nat).copied().unwrap_or("?"))
-                            .show_ui(ui, |ui| {
-                                for (k, n) in NATURES.iter().enumerate() {
-                                    if ui.selectable_label(nat == k, *n).clicked() {
-                                        nat = k;
-                                        nat_changed = true;
-                                    }
-                                }
-                            });
+                        if let Some(n) = self.combo(
+                            ui,
+                            &format!("saf{i}nat"),
+                            crate::tables::NATURE_IDS,
+                            nat as u16,
+                            &Opts::named().no_id().compact(),
+                        ) {
+                            nat = n as usize;
+                            nat_changed = true;
+                        }
                         if nat_changed {
                             s.set_nature(nat as u8);
                             edits.push((i, s.clone()));
@@ -764,28 +770,17 @@ impl Editor {
                         // three into the wild mon it generates, so they are worth
                         // showing here even though the mon does not exist yet.
                         let mut ball = s.pokeball();
-                        egui::ComboBox::from_id_source(format!("saf{i}ball"))
-                            .selected_text(format!(
-                                "{} — {}",
-                                ball,
-                                crate::game_data::ball_name(ball)
-                            ))
-                            .show_ui(ui, |ui| {
-                                for (id, name) in crate::game_data::BALLS {
-                                    if ui
-                                        .selectable_label(
-                                            ball as u16 == *id,
-                                            format!("{id} — {name}"),
-                                        )
-                                        .clicked()
-                                    {
-                                        ball = *id as u8;
-                                        s.set_pokeball(ball);
-                                        edits.push((i, s.clone()));
-                                        ui.close_menu();
-                                    }
-                                }
-                            });
+                        if let Some(id) = self.combo(
+                            ui,
+                            &format!("saf{i}ball"),
+                            crate::game_data::BALLS,
+                            ball as u16,
+                            &Opts::named().compact().with_none("(no ball)"),
+                        ) {
+                            ball = id as u8;
+                            s.set_pokeball(ball);
+                            edits.push((i, s.clone()));
+                        }
                         let mut ab = s.ability_num() as i32;
                         if ui
                             .add(

@@ -6,7 +6,7 @@ use crate::game_data::*;
 use crate::item_pockets;
 use crate::mon::*;
 use crate::savefile::*;
-use crate::tables::NATURES;
+use crate::tables::NATURE_IDS;
 
 mod tests {
     use super::*;
@@ -64,7 +64,7 @@ mod tests {
     #[test]
     fn nature_table_index3_is_adamant() {
         // A real trap when back-solving: index 3 is Adamant (boosts Atk), not Calm.
-        assert_eq!(NATURES[3], "Adamant");
+        assert_eq!(NATURE_IDS[3], (3, "Adamant"));
         assert_eq!(nature_split(3, 1), 110); // Atk boosted
         assert_eq!(nature_split(3, 4), 90); // SpA lowered
         assert_eq!(nature_split(3, 0), 100); // HP never changes

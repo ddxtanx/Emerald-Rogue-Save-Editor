@@ -3,7 +3,7 @@
 use super::*;
 use crate::basestats::base_stats;
 use crate::searchable_combo::Opts;
-use crate::tables::{MOVES, NATURES};
+use crate::tables::MOVES;
 
 impl Editor {
     pub(crate) fn mon_editor_ui(&mut self, ui: &mut egui::Ui) {
@@ -68,25 +68,29 @@ impl Editor {
                 ui.label("Ball");
                 let mut ball = m.ball();
                 ui.horizontal(|ui| {
-                    egui::ComboBox::from_id_source("ball")
-                        .selected_text(format!("{ball} — {}", crate::game_data::ball_name(ball)))
-                        .show_ui(ui, |ui| {
-                            for (id, name) in crate::game_data::BALLS {
-                                if ui
-                                    .selectable_label(ball as u16 == *id, format!("{id} — {name}"))
-                                    .clicked()
-                                {
-                                    ball = *id as u8;
-                                    m.set_ball(ball);
-                                    changed = true;
-                                    ui.close_menu();
-                                }
-                            }
-                        });
+                    // Name, not id, and searchable — the request was that the ball
+                    // menu say which ball the mon was caught in, using the same
+                    // picker class as every other list. Ball ids live in
+                    // include/constants/items.h (a ball IS an item to the game).
+                    if let Some(id) = self.combo(
+                        ui,
+                        "ball",
+                        crate::game_data::BALLS,
+                        ball as u16,
+                        &Opts::named().compact().with_none("(no ball)"),
+                    ) {
+                        ball = id as u8;
+                        m.set_ball(ball);
+                        changed = true;
+                    }
                     // Raw value stays editable: Emerald Rogue uses ball ids the
                     // stock list does not cover.
                     if ui
                         .add(egui::DragValue::new(&mut ball).clamp_range(0..=31))
+                        .on_hover_text(format!(
+                            "raw ball id (the game's own field). Known name for {ball}: {}",
+                            crate::game_data::ball_name(ball)
+                        ))
                         .changed()
                     {
                         m.set_ball(ball);
@@ -137,21 +141,18 @@ impl Editor {
                     changed = true;
                 }
                 ui.label("Nature");
-                egui::ComboBox::from_id_source("nature")
-                    .selected_text(NATURES[m.nature() as usize])
-                    .show_ui(ui, |ui| {
-                        egui::ScrollArea::vertical()
-                            .max_height(260.0)
-                            .show(ui, |ui| {
-                                for (i, n) in NATURES.iter().enumerate() {
-                                    if ui.selectable_label(m.nature() as usize == i, *n).clicked() {
-                                        m.set_nature(i as u8);
-                                        changed = true;
-                                        ui.close_menu();
-                                    }
-                                }
-                            });
-                    });
+                // 25 values, no useful ids: same picker as everything else, with
+                // the numbers hidden (nature 7 means nothing; "Relaxed" does).
+                if let Some(n) = self.combo(
+                    ui,
+                    "nature",
+                    crate::tables::NATURE_IDS,
+                    m.nature() as u16,
+                    &Opts::named().no_id().compact(),
+                ) {
+                    m.set_nature(n as u8);
+                    changed = true;
+                }
                 ui.label("Shiny");
                 let mut sh = m.is_shiny();
                 if ui.checkbox(&mut sh, "").changed() {
@@ -341,6 +342,67 @@ impl Editor {
                         m.set_pp(s, cap);
                         changed = true;
                     }
+                    // The PP picker: the PP-Up steps the game knows, each shown with
+                    // the PP it unlocks, plus a free-form entry (the request asked
+                    // for both). This is an `Area` popup rather than a ComboBox, so
+                    // its text field can actually be clicked — the bug that made
+                    // ComboBox popups vanish the moment you touched their field.
+                    let trig = ui
+                        .small_button("PP…")
+                        .on_hover_text("PP ladder (0-3 PP Ups) and custom PP entry");
+                    let opening = trig.clicked();
+                    let custom_id = egui::Id::new(format!("pp_custom{s}"));
+                    let mut custom = ui
+                        .ctx()
+                        .data(|d| d.get_temp::<String>(custom_id))
+                        .unwrap_or_default();
+                    let picked = crate::area_popup::anchored(
+                        ui,
+                        &format!("pp_pop{s}"),
+                        &trig,
+                        opening,
+                        |ui| {
+                            let mut out: Option<(Option<u8>, u8)> = None;
+                            ui.strong(format!("PP — base {base}"));
+                            for (ups, val) in ladder.iter() {
+                                let lbl = format!(
+                                    "{} PP up{} → {val}",
+                                    ups,
+                                    if *ups == 1 { "" } else { "s" }
+                                );
+                                let cur = m.pp_bonus(s) == *ups && m.pps()[s] == *val;
+                                if ui.selectable_label(cur, lbl).clicked() {
+                                    out = Some((Some(*ups), *val));
+                                }
+                            }
+                            ui.separator();
+                            let te = egui::TextEdit::singleline(&mut custom)
+                                .desired_width(90.0)
+                                .hint_text("custom PP");
+                            // Focus on the opening frame only, so typing works at
+                            // once without stealing the caret back every frame.
+                            let resp = ui.add(te);
+                            if opening {
+                                resp.request_focus();
+                            }
+                            let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
+                            if (resp.lost_focus() && enter) || ui.button("set").clicked() {
+                                if let Ok(v) = custom.trim().parse::<u8>() {
+                                    out = Some((None, v));
+                                }
+                            }
+                            out
+                        },
+                    );
+                    if let Some(Some((ups, pp))) = picked {
+                        if let Some(u) = ups {
+                            m.set_pp_bonus(s, u as u8);
+                        }
+                        m.set_pp(s, pp);
+                        changed = true;
+                        custom = String::new();
+                    }
+                    ui.ctx().data_mut(|d| d.insert_temp(custom_id, custom));
                 }
                 ui.end_row();
             });
