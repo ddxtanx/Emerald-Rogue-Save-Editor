@@ -322,3 +322,69 @@ fn rows_resolve_sprite_textures_and_badges() {
         "the art-less id must be recorded as absent (badge fallback)"
     );
 }
+
+/// A picker narrower than the row it floats over leaves that row sticking out on
+/// both sides, which reads as the pokemon next to the search bar being cut off.
+/// The popup has to span the line its trigger sits on.
+/// The sprite in a picker's own button used to be painted left of the button,
+/// which read as "this pokemon is cut off" for every picker at a panel edge.
+#[test]
+fn trigger_icon_stays_inside_the_button() {
+    let rect = Rect::from_min_size(Pos2::new(0.0, 0.0), Vec2::new(160.0, 24.0));
+    let icon = trigger_icon_rect(rect, ICON_SIZE + 8.0);
+    assert!(
+        rect.contains(icon.min) && rect.contains(icon.max),
+        "icon {icon:?} escapes the trigger {rect:?} - a sprite drawn outside the button is sliced by whatever edge the button sits against"
+    );
+}
+
+#[test]
+fn popup_spans_the_line_its_trigger_sits_on() {
+    let ctx = egui::Context::default();
+    let store = IconStore::default();
+    let table = tiny_table();
+    // A compact picker: its own min_width is small, so only the line-width rule
+    // can make it wide enough to cover the row behind it.
+    let opts = Opts::named().compact();
+    let run = |events: Vec<Event>| {
+        let input = RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(1200.0, 900.0))),
+            focused: true,
+            events,
+            ..Default::default()
+        };
+        let _ = ctx.run(input, |ctx| {
+            egui::Area::new(Id::new("root"))
+                .fixed_pos(Pos2::new(100.0, 100.0))
+                .show(ctx, |ui| {
+                    // A 400-px line, like the roster panel's header row.
+                    ui.set_max_width(400.0);
+                    let _ = show(ui, "wide_line", &table, 0, &opts, &store);
+                });
+        });
+    };
+    run(vec![]);
+    run(move_to(Pos2::new(150.0, 110.0)));
+    run(press(Pos2::new(150.0, 110.0)));
+    run(release(Pos2::new(150.0, 110.0)));
+    run(vec![]); // rows are laid out on the frame after the popup opens
+    eprintln!(
+        "DBG open={} frame={:?}",
+        ctx.memory(|m| m.any_popup_open()),
+        ctx.data(|d| d.get_temp::<Rect>(Id::new("scombo_frame_rect:wide_line")))
+    );
+
+    let frame: Option<Rect> =
+        ctx.data(|d| d.get_temp::<Rect>(Id::new("scombo_frame_rect:wide_line")));
+    let frame = frame.expect("the popup must publish its frame rect");
+    assert!(
+        frame.width() >= 380.0,
+        "the popup must cover the 400-px line under its trigger; it is {:.1} wide \
+         at {frame:?} — a narrow popup leaves the row poking out on both sides",
+        frame.width()
+    );
+    assert!(
+        frame.min.x <= 105.0,
+        "the popup must start at the line's left edge, not inset from it: {frame:?}"
+    );
+}

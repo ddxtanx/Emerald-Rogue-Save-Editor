@@ -385,11 +385,17 @@ impl super::Editor {
 
         ui.label(
             egui::RichText::new(
-                "props are stored in two ranges: outdoor (garden) then indoor (rooms). Click a tile to place the chosen prop there; click a placed prop to select it.",
+                "props are stored in two ranges: outdoor (garden) then indoor (rooms). \
+                 Click a placed prop to select it. Clicking empty ground only marks the \
+                 target tile - nothing is written until you press \"place prop here\".",
             )
             .small()
             .weak(),
         );
+        let views: [(&'static str, std::ops::Range<usize>, f32, i32); 2] = [
+            ("Outdoor", 0usize..outside_end, 16.0_f32, 24),
+            ("Indoor", outside_end..slots, 16.0_f32, 24),
+        ];
         ui.horizontal(|ui| {
             ui.label("prop to place");
             if let Some(v) = self.combo(
@@ -400,6 +406,34 @@ impl super::Editor {
                 &crate::searchable_combo::Opts::named().no_id().compact(),
             ) {
                 sel.variant = DecorVariant::from_raw(v as u8);
+            }
+            // Placement is deliberately two-step: pick the prop, mark the tile, then
+            // commit. A single click that wrote a prop put furniture down every time
+            // the user was only trying to find out where a slot was.
+            let armed = sel.pending_tile.map(|(px, py, _)| (px, py));
+            let place = ui.add_enabled(armed.is_some(), egui::Button::new("place prop here"));
+            ui.ctx()
+                .data_mut(|d| d.insert_temp(egui::Id::new("house_place_button"), place.rect));
+            if place.clicked() {
+                let Some((px, py, which)) = sel.pending_tile else {
+                    unreachable!("the button is disabled with no armed tile")
+                };
+                let (label, range, _, _) = &views[which as usize];
+                match range.clone().find(|i| !snap[*i].3) {
+                    Some(i) => {
+                        mut_edits.push((i, px as u8, py as u8, sel.variant, true));
+                        sel.slot = Some(i);
+                        sel.pending_tile = None;
+                        self.status = format!(
+                            "placed {} at ({px},{py}) in {label} slot {i} (unsaved)",
+                            prop_name(variant_table, sel.variant)
+                        );
+                    }
+                    None => {
+                        self.status =
+                            format!("no free {label} decoration slot (all {} used)", range.len());
+                    }
+                }
             }
             if ui.button("clear selected slot").clicked() {
                 if let Some(i) = sel.slot {
@@ -414,10 +448,7 @@ impl super::Editor {
             }
         });
 
-        for (label, range, cell, span) in [
-            ("Outdoor", 0usize..outside_end, 16.0f32, 24i32),
-            ("Indoor", outside_end..slots, 16.0f32, 24i32),
-        ] {
+        for (which, (label, range, cell, span)) in views.into_iter().enumerate() {
             if range.is_empty() {
                 continue;
             }
@@ -500,20 +531,24 @@ impl super::Editor {
                     .clone()
                     .find(|i| snap[*i].3 && (snap[*i].0 as i32, snap[*i].1 as i32) == p);
                 match hit {
-                    Some(i) => sel.slot = Some(i),
-                    None => {
-                        // First free slot in this range takes the placement; the game
-                        // itself stores one prop per slot and scans the range.
-                        if let Some(i) = range.clone().find(|i| !snap[*i].3) {
-                            mut_edits.push((i, p.0 as u8, p.1 as u8, sel.variant, true));
-                            sel.slot = Some(i);
-                        } else {
-                            self.status = format!(
-                                "no free {label} decoration slot (all {} used)",
-                                range.len()
-                            );
-                        }
+                    Some(i) => {
+                        sel.slot = Some(i);
+                        sel.pending_tile = None;
                     }
+                    // Marking a target is not an edit: no slot is touched and `dirty`
+                    // stays false until the place button commits it.
+                    None => sel.pending_tile = Some((p.0, p.1, which as u8)),
+                }
+            }
+            // Show the armed tile so the two-step flow has visible state.
+            if let Some((px, py, w)) = sel.pending_tile {
+                if w as usize == which {
+                    let r = tile_rect(origin, cell, 0, 0, px, py);
+                    painter.rect_stroke(
+                        r.shrink(1.0),
+                        2.0,
+                        egui::Stroke::new(1.4_f32, Color32::from_rgb(120, 220, 140)),
+                    );
                 }
             }
         }
@@ -531,10 +566,21 @@ impl super::Editor {
     }
 }
 
+/// Display name for a stored variant id, for status messages.
+fn prop_name(table: &[(u16, &'static str)], v: crate::domain::DecorVariant) -> &'static str {
+    table
+        .iter()
+        .find(|(id, _)| *id as u8 == v.raw())
+        .map(|(_, n)| *n)
+        .unwrap_or("(unknown prop)")
+}
+
 #[derive(Clone, Copy, Default)]
 struct DecorSel {
     slot: Option<usize>,
     variant: DecorVariant,
+    /// Tile the user has marked for the next placement (x, y, view).
+    pending_tile: Option<(i32, i32, u8)>,
 }
 
 /// `(id, name)` table for the searchable prop picker. `decorVariant` indexes
@@ -845,46 +891,69 @@ mod functional {
     }
 
     #[test]
-    fn clicking_an_empty_house_tile_places_a_prop_in_a_free_slot() {
+    fn a_marked_tile_writes_nothing_until_the_place_button_is_pressed() {
         let Some(path) = save_path() else { return };
         let disk_before = std::fs::read(&path).unwrap();
         let mut p = Panel::open(&path);
         p.house(vec![]);
         let rect = p.rect("house_grid_rect_Outdoor");
+        let btn = p.rect("house_place_button");
 
-        let placed_before = {
-            let sf = p.app.file.as_ref().unwrap();
+        let at = |app: &super::super::Editor, tx: i32, ty: i32| {
+            let sf = app.file.as_ref().unwrap();
             let rb = sf.rogue_block().unwrap();
-            (0..rb.decor_f.n)
-                .filter(|i| sf.hub_decoration(&rb, *i).map(|d| d.3).unwrap_or(false))
-                .count()
+            (0..rb.decor_f.n).any(|i| {
+                sf.hub_decoration(&rb, i)
+                    .map(|(x, y, _, act)| act && (x as i32, y as i32) == (tx, ty))
+                    .unwrap_or(false)
+            })
         };
+        let before = count(&p.app);
 
-        // A tile with nothing on it.
         let (tx, ty) = (3, 7);
         let cell = 16.0f32;
-        let pos = rect.min + Vec2::new((tx as f32 + 0.5) * cell, (ty as f32 + 0.5) * cell);
-        p.click("house", pos);
+        let tile = rect.min + Vec2::new((tx as f32 + 0.5) * cell, (ty as f32 + 0.5) * cell);
+        p.click("house", tile);
 
-        let sf = p.app.file.as_ref().unwrap();
-        let rb = sf.rogue_block().unwrap();
-        let placed = (0..rb.decor_f.n).find(|i| {
-            sf.hub_decoration(&rb, *i)
-                .map(|(x, y, _, act)| act && (x as i32, y as i32) == (tx, ty))
-                .unwrap_or(false)
-        });
-        assert!(
-            placed.is_some(),
-            "clicking an empty tile must place the chosen prop there"
-        );
-        let after = (0..rb.decor_f.n)
-            .filter(|i| sf.hub_decoration(&rb, *i).map(|d| d.3).unwrap_or(false))
-            .count();
-        assert_eq!(after, placed_before + 1, "exactly one prop was placed");
+        // Step one marks the tile. It must not touch the save, not even in memory.
+        assert!(!at(&p.app, tx, ty), "a bare click must not place a prop");
+        assert_eq!(count(&p.app), before, "no prop added by a bare click");
+        assert!(!p.app.dirty, "marking a target tile is not an edit");
+
+        // Step two commits it.
+        p.click("house", btn.center());
+        assert!(at(&p.app, tx, ty), "the place button writes the prop");
+        assert_eq!(count(&p.app), before + 1, "exactly one prop was placed");
+        assert!(p.app.dirty, "a real edit marks the save dirty");
+
         assert_eq!(
             disk_before,
             std::fs::read(&path).unwrap(),
             "the editor must not write the save unprompted"
         );
+    }
+
+    #[test]
+    fn the_place_button_is_disabled_until_a_tile_is_marked() {
+        let Some(path) = save_path() else { return };
+        let mut p = Panel::open(&path);
+        p.house(vec![]);
+        let btn = p.rect("house_place_button");
+        // A disabled button swallows clicks: nothing may change.
+        let before = count(&p.app);
+        p.click("house", btn.center());
+        assert_eq!(
+            before,
+            count(&p.app),
+            "with no tile marked, the place button must change nothing"
+        );
+    }
+
+    fn count(app: &super::super::Editor) -> usize {
+        let sf = app.file.as_ref().unwrap();
+        let rb = sf.rogue_block().unwrap();
+        (0..rb.decor_f.n)
+            .filter(|i| sf.hub_decoration(&rb, *i).map(|d| d.3).unwrap_or(false))
+            .count()
     }
 }

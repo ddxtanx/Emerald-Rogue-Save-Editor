@@ -140,6 +140,10 @@ pub fn show(
         ICON_SIZE + ui.spacing().item_spacing.x
     };
 
+    // Width the line had when the trigger was allocated; the popup uses it so it
+    // covers the row behind it instead of floating narrowly over a wider one.
+    let anchor_width = ui.available_width();
+
     // ---- trigger button -----------------------------------------------------
     let cur_name = lookup(table, current, opts);
     let text = if opts.show_id && current != 0 {
@@ -163,10 +167,7 @@ pub fn show(
         if ui.is_rect_visible(resp.rect) {
             let rect = resp.rect;
             if icon_pad > 0.0 {
-                let icon_rect = Rect::from_min_size(
-                    rect.left_center() - egui::vec2(icon_pad * 0.5 + 4.0, ICON_SIZE * 0.5),
-                    Vec2::splat(ICON_SIZE),
-                );
+                let icon_rect = trigger_icon_rect(rect, icon_pad);
                 icons::paint_icon(
                     ui,
                     icons_store,
@@ -207,6 +208,15 @@ pub fn show(
     let open = ui.memory(|m| m.is_popup_open(popup_id));
 
     if open {
+        // The popup must cover the whole line the button sits on, not just the
+        // button: a picker as narrow as its label floats over a much wider roster
+        // row, and the row sticking out on both sides of it reads as the pokemon
+        // being cut off. `anchor_width` is what the button had to work with.
+        let popup_width = (opts
+            .min_width
+            .max(anchor_width)
+            .max(btn_response.rect.width()))
+        .min(ctx.screen_rect().width() - 16.0);
         // Place below the button, flipping above when it would clip the screen.
         let below = btn_response.rect.bottom() + opts.max_height < ctx.screen_rect().bottom();
         let pos = if below {
@@ -220,11 +230,15 @@ pub fn show(
             Align2::LEFT_BOTTOM
         };
 
+        // The frame geometry is published under a key derived from the call-site
+        // name (not the egui id path, which a test cannot reconstruct) so the
+        // width/anchor contract below is checkable without a screen.
+        let rect_key = Id::new(format!("scombo_frame_rect:{id_src}"));
         let frame_rect = AreaPopup {
             popup_id,
             pos,
             pivot,
-            min_width: opts.min_width.max(btn_response.rect.width()),
+            min_width: popup_width,
             max_height: opts.max_height,
         }
         .draw(&ctx, |ui| {
@@ -239,6 +253,7 @@ pub fn show(
                 &mut picked,
             )
         });
+        ctx.data_mut(|d| d.insert_temp(rect_key, frame_rect));
 
         // ---- dismissal ------------------------------------------------------
         // A press outside our popup frame closes it. A press inside the frame —
@@ -279,6 +294,18 @@ pub fn show(
 }
 
 const ICON_SIZE: f32 = 24.0;
+
+/// Where a trigger button draws its icon. The button reserves `icon_pad` on its
+/// left, and the icon has to sit **inside** that reservation: drawing it at
+/// `left_center() - icon_pad/2` placed it left of the button itself, so a picker
+/// sitting at a panel's left edge had its pokemon sprite sliced off by that edge.
+fn trigger_icon_rect(rect: Rect, icon_pad: f32) -> Rect {
+    let side = ICON_SIZE.min(rect.height()).min(icon_pad);
+    Rect::from_min_size(
+        rect.left_top() + egui::vec2(4.0, (rect.height() - side) * 0.5),
+        Vec2::splat(side),
+    )
+}
 
 /// The popup itself: an `egui::Area` on the foreground layer, returning its
 /// frame rect so the caller can decide about dismissal.
