@@ -449,3 +449,34 @@ fn a_positional_namespace_labels_zero_instead_of_calling_it_empty() {
     // A positional namespace still resolves non-zero ids normally.
     assert_eq!(lookup(&table, 2, &Opts::named().positional()), "slot empty");
 }
+
+/// The popup footer compares the rows on screen against the rows that could be
+/// shown. Running the app under Xvfb showed it printing "29 of 28 options" for
+/// the ball picker: that namespace offers a `none` row the table does not
+/// contain, so the denominator has to be the list's own shape, not `table.len()`.
+#[test]
+fn the_footer_denominator_counts_rows_the_list_can_actually_show() {
+    let balls: Vec<(u16, &'static str)> = (1..=28).map(|i| (i, "ball")).collect();
+    assert_eq!(
+        listed_total(&balls, &Opts::named().with_none("none")),
+        29,
+        "28 balls plus the synthetic none row the picker offers"
+    );
+    assert_eq!(
+        listed_total(&balls, &Opts::named()),
+        28,
+        "no none label means no none row"
+    );
+    let secs: Vec<(u16, &'static str)> =
+        vec![(0, "Pokemon Hub"), (1, "Route 101"), (2, "Lavaridge Town")];
+    assert_eq!(
+        listed_total(&secs, &Opts::named().positional()),
+        3,
+        "a positional namespace lists its 0 row and adds nothing"
+    );
+    assert_eq!(
+        listed_total(&secs, &Opts::named()),
+        2,
+        "the default convention hides a stored 0 row and offers no replacement"
+    );
+}

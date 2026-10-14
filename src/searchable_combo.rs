@@ -564,10 +564,21 @@ fn body(
     if matches.is_empty() {
         ui.weak(format!("nothing matches '{}'", st.filter.trim()));
     } else {
-        footer_line(ui, matches.len(), table.len());
+        footer_line(ui, matches.len(), listed_total(table, opts));
     }
 
     ctx.data_mut(|d| d.insert_temp(popup_id, st));
+}
+
+/// How many options the list could show at all, which is what "N of M options"
+/// compares against. It is not `table.len()`: a 0-means-empty namespace offers a
+/// synthetic "none" row that the table does not contain, and hides a 0 row that
+/// the table does contain. Counting the table alone printed "29 of 28 options"
+/// in the ball picker, because that picker offers `none` plus 28 balls.
+fn listed_total(table: &[(u16, &str)], opts: &Opts) -> usize {
+    let hidden_zero = usize::from(opts.zero_is_none && table.iter().any(|(id, _)| *id == 0));
+    let none_row = usize::from(opts.none_label.is_some());
+    table.len() - hidden_zero + none_row
 }
 
 fn footer_line(ui: &mut Ui, shown: usize, total: usize) {
