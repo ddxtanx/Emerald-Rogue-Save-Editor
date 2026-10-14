@@ -513,6 +513,68 @@ mod tests {
         eprintln!("ball ids in this save: {}", named.join(", "));
     }
 
+    /// `include/constants/species.h` defines ids up to NUM_SPECIES-1 = 1573, and the
+    /// Rogue form block (906+) is where the editor's name table used to run out: 140
+    /// ids rendered as the `??????` lookup fallback and 70 more named a different
+    /// Pokemon than the id (990 printed "Maractus" for Galarian Darmanitan).
+    #[test]
+    fn every_species_id_the_game_defines_has_a_name() {
+        let unnamed: Vec<u16> = (1..1574u16)
+            .filter(|id| crate::game_data::species_name(*id) == "??????")
+            .collect();
+        assert!(unnamed.is_empty(), "species ids with no name: {unnamed:?}");
+    }
+
+    /// The corrected names, pinned on the ids that were wrong in a user's save.
+    #[test]
+    fn rogue_form_ids_name_the_right_species() {
+        // (id, base name it must start with, form word it must carry)
+        for (id, base, form) in [
+            (990u16, "Darmanitan", "Galarian"),
+            (954, "Kyogre", "Primal"),
+            (1005, "Sliggoo", "Hisuian"),
+            (1023, "Pichu", "Spiky"),
+            (959, "Sandshrew", "Alolan"),
+            (972, "Exeggutor", "Alolan"),
+            (1163, "Xerneas", ""),
+            (1434, "Pecharunt", ""),
+            (1573, "Glimmora", "Mega"),
+        ] {
+            let n = crate::game_data::species_name(id);
+            assert!(
+                n.starts_with(base),
+                "species {id} named {n:?}, expected base {base:?}"
+            );
+            if !form.is_empty() {
+                assert!(
+                    n.contains(form),
+                    "species {id} named {n:?}, missing form {form:?}"
+                );
+            }
+        }
+    }
+
+    /// The supplemental table must stay disjoint from the base dex and hold each id
+    /// once, or a later lookup silently shadows an earlier entry.
+    #[test]
+    fn species_extra_stays_disjoint_sorted_and_duplicate_free() {
+        let ex = crate::tables_extra::SPECIES_EXTRA;
+        let base: std::collections::HashSet<u16> =
+            crate::tables::SPECIES.iter().map(|(id, _)| *id).collect();
+        let mut prev = 0u16;
+        for (id, name) in ex {
+            assert!(*id > 905, "form table holds base-dex id {id}");
+            assert!(*id > prev, "form table not sorted at {id}");
+            assert!(!base.contains(id), "id {id} in both tables");
+            assert!(
+                !name.is_empty() && *name != "??????",
+                "id {id} has a junk name"
+            );
+            prev = *id;
+        }
+        assert_eq!(ex.last().map(|(id, _)| *id), Some(1573));
+    }
+
     /// The Safari Zone row now names the ability its slot resolves to and the gender
     /// its flag means. In a real save every stored value must therefore name
     /// something real -- a row that falls back to "no ability in this slot" means the
@@ -538,6 +600,11 @@ mod tests {
                 continue;
             }
             rows += 1;
+            assert_ne!(
+                crate::game_data::species_name(sp),
+                "??????",
+                "safari row {i} holds species {sp}, which the name table cannot name"
+            );
             let slot = s.ability_slot().raw();
             let label = crate::lookup::ability_slot_options(sp, slot)
                 .into_iter()

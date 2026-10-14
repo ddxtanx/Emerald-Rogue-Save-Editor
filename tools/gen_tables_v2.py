@@ -32,6 +32,11 @@ for line in spec_h.splitlines():
 
 memo = {}
 def resolve(name, stack=()):
+    """Evaluate a #define chain to an integer: any mix of integers, identifiers and
+    + - * / ( ) is allowed. The old version only understood `NAME +- N`, so 141
+    species macros (Scatterbug/Mothim cloaks, Shadow Lugia, the whole tail of the
+    form block) silently resolved to nothing, and SPECIES_EGG / NUM_SPECIES resolved
+    to nothing too -- which is how ids 1434..1573 ended up with no name at all."""
     if name in memo:
         return memo[name]
     if name in stack or name not in defs:
@@ -41,19 +46,29 @@ def resolve(name, stack=()):
     if re.fullmatch(r"\d+", expr):
         v = int(expr)
     else:
-        m = re.fullmatch(r"(\w+)\s*([+-])\s*(\d+)", expr)
-        if m:
-            base = resolve(m.group(1), stack + (name,))
-            if base is not None:
-                v = base + int(m.group(3)) if m.group(2) == "+" else base - int(m.group(3))
-        elif re.fullmatch(r"\w+", expr):
-            v = resolve(expr, stack + (name,))
+        e = expr
+        ok = True
+        for tok in sorted(set(re.findall(r"[A-Za-z_][A-Za-z_0-9]*", e)), key=len, reverse=True):
+            rv = resolve(tok, stack + (name,))
+            if rv is None:
+                ok = False
+                break
+            e = re.sub(r"\b%s\b" % tok, str(rv), e)
+        if ok and re.fullmatch(r"[\d\s+\-*/()%]+", e or ""):
+            try:
+                v = int(eval(e, {"__builtins__": {}}, {}))
+            except Exception:
+                v = None
     memo[name] = v
     return v
 
 ids = {n: resolve(n) for n in defs}
 ids = {k: v for k, v in ids.items() if v is not None}
-num_species = resolve("SPECIES_EGG") or max(v for k, v in ids.items() if k.startswith("SPECIES_"))
+num_species = (
+    resolve("NUM_SPECIES")
+    or resolve("SPECIES_EGG")
+    or max(v for k, v in ids.items() if k.startswith("SPECIES_")) + 1
+)
 
 # ---------- base names from species_info (incl. *_MISC_INFO indirection) ----------
 base_name = {}
