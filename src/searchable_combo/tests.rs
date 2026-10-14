@@ -314,11 +314,11 @@ fn rows_resolve_sprite_textures_and_badges() {
     // an Area in the same frame it is requested), so idle one frame first.
     h.frame(vec![]);
     assert!(
-        h.store.loaded_count() >= 1,
+        h.store.tally(IconKind::Pokemon).resolved >= 1,
         "a row with art on disk must resolve a texture"
     );
     assert!(
-        h.store.missing_count() >= 1,
+        h.store.tally(IconKind::Pokemon).missing >= 1,
         "the art-less id must be recorded as absent (badge fallback)"
     );
 }

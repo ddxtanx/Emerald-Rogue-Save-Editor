@@ -30,6 +30,29 @@ impl IconKind {
             IconKind::Item => Some("items"),
         }
     }
+
+    /// Arity of the tally array. `None` keeps a slot so the index of a kind is
+    /// simply its discriminant.
+    const COUNT: usize = 3;
+    /// Position in the tally array (declaration order).
+    fn index(self) -> usize {
+        match self {
+            IconKind::None => 0,
+            IconKind::Pokemon => 1,
+            IconKind::Item => 2,
+        }
+    }
+}
+
+/// What the store knows about one namespace so far. Reported per namespace
+/// because the two are fetched by different scripts and go missing
+/// independently: one pooled number hid "you have no item art at all".
+#[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
+pub struct IconTally {
+    /// ids that resolved to a PNG and were uploaded as a texture
+    pub resolved: usize,
+    /// ids we asked for and found no art for (drawn as a letter badge)
+    pub missing: usize,
 }
 
 pub struct IconStore {
@@ -38,8 +61,12 @@ pub struct IconStore {
     /// id-key -> texture. A `None` entry means "looked, no art" so we do not
     /// re-stat a missing file every frame.
     cache: RefCell<HashMap<String, Option<TextureHandle>>>,
-    found: Cell<usize>,
-    absent: Cell<usize>,
+    /// One tally per namespace, indexed by `IconKind::index`.
+    tallies: RefCell<[IconTally; IconKind::COUNT]>,
+    /// Cached answer to "does `items/` hold any PNG on disk": -1 unknown,
+    /// 0 no, 1 yes. Probed once so the hint does not re-read a 900-entry
+    /// directory every frame.
+    items_probe: Cell<i8>,
 }
 
 impl Default for IconStore {
@@ -53,8 +80,19 @@ impl IconStore {
         IconStore {
             root: find_asset_root(),
             cache: RefCell::new(HashMap::new()),
-            found: Cell::new(0),
-            absent: Cell::new(0),
+            tallies: RefCell::new([IconTally::default(); IconKind::COUNT]),
+            items_probe: Cell::new(-1),
+        }
+    }
+
+    /// A store pointed at an explicit root (or no root at all). Test-only: it
+    /// lets the counters and the status line be pinned without the real,
+    /// gitignored `assets/` tree being present.
+    #[cfg(test)]
+    fn at_root(root: Option<PathBuf>) -> Self {
+        IconStore {
+            root,
+            ..IconStore::new()
         }
     }
 
@@ -62,16 +100,70 @@ impl IconStore {
         self.root.as_deref()
     }
 
-    /// One-line description for the status bar, honest about missing art.
+    /// One-line description for the status bar, honest about missing art, and
+    /// per namespace so "items are all badges" can never read as intentional.
     pub fn status(&self) -> String {
         match self.root() {
             None => "icons: no assets/icons dir — run `python3 tools/get_icons.py`".into(),
-            Some(r) => format!(
-                "icons: {} shown, {} with no art (from {})",
-                self.loaded_count(),
-                self.missing_count(),
-                r.display()
-            ),
+            Some(r) => {
+                let p = self.tally(IconKind::Pokemon);
+                let i = self.tally(IconKind::Item);
+                format!(
+                    "icons: pokemon {} shown / {} missing, items {} shown / {} missing \
+                     (root {})",
+                    p.resolved,
+                    p.missing,
+                    i.resolved,
+                    i.missing,
+                    r.display()
+                )
+            }
+        }
+    }
+
+    /// Counters for one namespace: how many ids resolved, how many had no art.
+    pub fn tally(&self, kind: IconKind) -> IconTally {
+        self.tallies.borrow()[kind.index()]
+    }
+
+    /// True when the assets root exists but the item namespace has no art at
+    /// all, so every item row is a generated letter badge. The on-disk probe
+    /// makes this right on the very first frame, before any item id has been
+    /// requested by a picker.
+    pub fn items_art_absent(&self) -> bool {
+        // No root at all: the status line already names the command to run.
+        if self.root.is_none() || self.tally(IconKind::Item).resolved > 0 {
+            return false;
+        }
+        if self.items_probe.get() < 0 {
+            let on_disk = self
+                .root
+                .as_ref()
+                .and_then(|r| {
+                    r.join(IconKind::Item.dir().unwrap_or("items"))
+                        .read_dir()
+                        .ok()
+                })
+                .map(|mut entries| {
+                    entries.any(|e| {
+                        e.ok()
+                            .and_then(|e| e.path().extension().map(|x| x == "png"))
+                            .unwrap_or(false)
+                    })
+                })
+                .unwrap_or(false);
+            self.items_probe.set(on_disk as i8);
+        }
+        self.items_probe.get() == 0
+    }
+
+    fn bump(&self, kind: IconKind, resolved: bool) {
+        let mut tallies = self.tallies.borrow_mut();
+        let slot = &mut tallies[kind.index()];
+        if resolved {
+            slot.resolved += 1;
+        } else {
+            slot.missing += 1;
         }
     }
 
@@ -98,19 +190,11 @@ impl IconStore {
             Some(ctx.load_texture(&key, img, TextureOptions::LINEAR))
         });
         match &tex {
-            Some(_) => self.found.set(self.found.get() + 1),
-            None => self.absent.set(self.absent.get() + 1),
+            Some(_) => self.bump(kind, true),
+            None => self.bump(kind, false),
         }
         self.cache.borrow_mut().insert(key, tex.clone());
         tex
-    }
-
-    /// How many ids we have art for so far (used by the status line).
-    pub fn loaded_count(&self) -> usize {
-        self.found.get()
-    }
-    pub fn missing_count(&self) -> usize {
-        self.absent.get()
     }
 }
 
@@ -327,8 +411,96 @@ mod tests {
         );
         // Rogue homebrew ids have no public art: fallback badge, and counted once.
         assert!(store.get(&ctx, IconKind::Pokemon, 1522).is_none());
-        assert_eq!(store.absent.get(), 1);
-        assert!(store.found.get() >= 2);
+        assert_eq!(store.tally(IconKind::Pokemon).missing, 1);
+        assert_eq!(store.tally(IconKind::Pokemon).resolved, 1);
+        assert_eq!(store.tally(IconKind::Item).resolved, 1);
+    }
+
+    /// A root that exists but has no art fetched: the counters must be per
+    /// namespace and the status line must name both. One pooled number used to
+    /// print "0 with no art" while every item row was a letter badge, which is
+    /// exactly what read as a deliberate design choice.
+    #[test]
+    fn per_namespace_counters_and_status_name_pokemon_and_items_separately() {
+        let root = temp_root("empty");
+        // An empty root: the assets dir was found, but nothing was fetched.
+        let store = IconStore::at_root(Some(root.clone()));
+        let ctx = egui::Context::default();
+        assert!(store.get(&ctx, IconKind::Pokemon, 25).is_none());
+        assert!(store.get(&ctx, IconKind::Item, 2).is_none());
+        assert!(store.get(&ctx, IconKind::Item, 7).is_none());
+        assert!(
+            store.get(&ctx, IconKind::Item, 2).is_none(),
+            "a cached miss must stay a miss"
+        );
+        assert_eq!(
+            store.tally(IconKind::Pokemon),
+            IconTally {
+                resolved: 0,
+                missing: 1
+            }
+        );
+        assert_eq!(
+            store.tally(IconKind::Item),
+            IconTally {
+                resolved: 0,
+                missing: 2
+            },
+            "the repeat lookup must not be counted twice"
+        );
+        assert_eq!(store.tally(IconKind::None), IconTally::default());
+
+        let line = store.status();
+        assert!(line.starts_with("icons: pokemon "), "{line}");
+        assert!(line.contains("pokemon 0 shown / 1 missing"), "{line}");
+        assert!(line.contains("items 0 shown / 2 missing"), "{line}");
+        assert!(
+            line.contains(&format!("(root {})", root.display())),
+            "{line}"
+        );
+        // The state the Items tab has to explain out loud instead of leaving as
+        // a badge that looks intentional.
+        assert!(store.items_art_absent(), "an empty root has no item art");
+
+        // The same store with item art on disk must NOT claim it is missing.
+        let stocked_root = temp_root("stocked");
+        std::fs::create_dir_all(stocked_root.join("items")).unwrap();
+        std::fs::write(
+            stocked_root.join("items/68.png"),
+            b"not a png, only the name counts",
+        )
+        .unwrap();
+        let stocked = IconStore::at_root(Some(stocked_root.clone()));
+        assert!(
+            !stocked.items_art_absent(),
+            "item art installed: no hint, even before an id resolved"
+        );
+        assert!(stocked.status().contains("items 0 shown / 0 missing"));
+
+        // No root at all: the line keeps naming the fetcher, and the in-list
+        // hint stays off because the status line already says what to run.
+        let bare = IconStore::at_root(None);
+        let line = bare.status();
+        assert!(line.contains("no assets/icons dir"), "{line}");
+        assert!(line.contains("python3 tools/get_icons.py"), "{line}");
+        assert!(!bare.items_art_absent());
+
+        std::fs::remove_dir_all(&root).unwrap();
+        std::fs::remove_dir_all(&stocked_root).unwrap();
+    }
+
+    /// Unique scratch root under the temp dir (tests run in parallel threads).
+    fn temp_root(tag: &str) -> PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let dir = std::env::temp_dir().join(format!(
+            "er-save-editor-icons-{tag}-{}-{nanos}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).expect("temp root");
+        dir
     }
 
     /// Every file the fetcher put on disk must actually decode. This is the check

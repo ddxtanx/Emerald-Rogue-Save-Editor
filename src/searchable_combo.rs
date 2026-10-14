@@ -511,7 +511,7 @@ fn body(
             // (`fake_primary_click`, response.rs:137) — egui activates whatever
             // button is focusable when Enter arrives. Rows must answer only to
             // the pointer, or every Enter would pick a row out from under the
-            // highlight the ↑↓ walk just built. `clicked_by` is egui's own
+            // highlight the up/down walk just built. `clicked_by` is egui's own
             // pointer-only variant (response.rs:143-151).
             if resp.clicked_by(PointerButton::Primary)
                 || resp.double_clicked_by(PointerButton::Primary)
@@ -537,7 +537,7 @@ fn body(
 
 fn footer_line(ui: &mut Ui, shown: usize, total: usize) {
     ui.small(format!(
-        "{shown} of {} options · type to filter, ↑↓ + Enter",
+        "{shown} of {} options · type to filter, up/down + Enter",
         total
     ));
 }

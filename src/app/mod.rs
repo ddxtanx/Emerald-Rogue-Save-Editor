@@ -42,6 +42,13 @@ enum Sel {
     StashDaycare(usize), // daycare stashed for the hub state
 }
 
+/// What species the "add mon" pickers show before the user touches them.
+/// Deliberately the first row of the species picker table (dex #1 Bulbasaur),
+/// so the row the picker opens on is the mon that lands in the slot when Add is
+/// pressed. `all_species()` sorts by id, so this is `tables::SPECIES[0]`, the
+/// same entry the picker lists first.
+const DEFAULT_ADD_SPECIES: u16 = crate::tables::SPECIES[0].0;
+
 pub(crate) struct Editor {
     file: Option<SaveFile>,
     path: Option<String>,
@@ -81,8 +88,8 @@ impl Default for Editor {
             bag_add_id: 1,
             bag_add_qty: 1,
             bag_add_stash: false,
-            add_party_species: 4, // Poké Ball holders expect a real species; 4 = Squirtle-line id
-            add_box_species: [4; ACTIVE_BOXES],
+            add_party_species: DEFAULT_ADD_SPECIES,
+            add_box_species: [DEFAULT_ADD_SPECIES; ACTIVE_BOXES],
             mon_popup: false,
             icons: IconStore::new(),
             mon_note: None,
@@ -148,7 +155,7 @@ impl Editor {
 
     // ---- searchable picklists ---------------------------------------------
     // The single entry point for every dropdown in the editor. All of them get
-    // the same behaviour: search field keeps the popup open, auto-focus, ↑↓ +
+    // the same behaviour: search field keeps the popup open, auto-focus, up/down +
     // Enter, and icons where the id namespace has art.
     fn combo(
         &self,
@@ -232,7 +239,7 @@ impl Editor {
     }
 
     /// The order the roster panel draws mons: party, then non-empty fusion slots,
-    /// then each box's non-empty slots. The popup's ◀ ▶ walk THIS list, so "next"
+    /// then each box's non-empty slots. The popup's prev/next walk THIS list, so "next"
     /// always lands on a mon the user can see, in the order they see it.
     fn roster_order(&self) -> Vec<Sel> {
         let Some(sf) = self.file.as_ref() else {
@@ -604,21 +611,24 @@ impl Editor {
                 icons::draw_icon(ui, icons, &ctx, IconKind::Pokemon, sp, &name, 22.0);
                 let label = format!("{slot_no:>2}. {name} L{lvl} {g}{shiny}");
                 let r = ui.selectable_label(selected, label);
-                let edit = ui.small_button("✎").on_hover_text("edit in popup");
+                // Plain ASCII labels: egui 0.27's bundled fonts are subsetted and
+                // have no pencil / cross / arrow glyphs, so the old icons drew as
+                // empty tofu boxes. The tooltips carry the full meaning.
+                let edit = ui.small_button("edit").on_hover_text("edit in popup");
                 let mv = match &sel {
                     Sel::Party(_) => Some(
-                        ui.small_button("→PC")
+                        ui.small_button("to PC")
                             .on_hover_text("move this mon to the first empty box slot"),
                     ),
                     Sel::Box(..) => Some(
-                        ui.small_button("→PT")
+                        ui.small_button("to PT")
                             .on_hover_text("move this mon into the party"),
                     ),
                     _ => None,
                 };
                 let del = match &sel {
                     Sel::Party(..) | Sel::Box(..) | Sel::Fusion(..) => Some(
-                        ui.small_button("✕")
+                        ui.small_button("del")
                             .on_hover_text("delete this mon (clears the slot)"),
                     ),
                     _ => None,
@@ -681,14 +691,14 @@ impl Editor {
                             matches!(self.sel, Some(Sel::Party(..)) | Some(Sel::Box(..)));
                         ui.horizontal(|ui| {
                             if ui
-                                .add_enabled(has_prev, |ui: &mut egui::Ui| ui.button("◀ prev"))
+                                .add_enabled(has_prev, |ui: &mut egui::Ui| ui.button("< prev"))
                                 .on_hover_text("previous mon, in roster order")
                                 .clicked()
                             {
                                 self.step_selection(-1);
                             }
                             if ui
-                                .add_enabled(has_next, |ui: &mut egui::Ui| ui.button("next ▶"))
+                                .add_enabled(has_next, |ui: &mut egui::Ui| ui.button("next >"))
                                 .on_hover_text("next mon, in roster order")
                                 .clicked()
                             {
@@ -841,7 +851,7 @@ impl eframe::App for Editor {
 mod tests {
     use super::*;
 
-    /// These tests walk the real roster of a real save: the popup's ◀ ▶ buttons
+    /// These tests walk the real roster of a real save: the popup's prev/next buttons
     /// promise that "next" is the next mon the user can see, and that promise is
     /// only worth what the ordering code actually produces.
     fn editor_with_save() -> Option<Editor> {
@@ -866,6 +876,35 @@ mod tests {
             Sel::Fusion(f) => sf.fusion_mon(*f).species(),
             _ => 0,
         }
+    }
+
+    /// The add-mon pickers must open on the species that lands in the slot when
+    /// Add is pressed. The default used to be id 4 -- Charmander, not the
+    /// "Squirtle-line id" its comment claimed -- so the picker showed
+    /// "4 - Charmander" while users expected the first row of the list.
+    #[test]
+    fn the_default_add_species_is_the_first_row_of_the_species_picker() {
+        let table = all_species();
+        assert_eq!(
+            table[0],
+            crate::tables::SPECIES[0],
+            "the picker's first row is the first species-table entry"
+        );
+        assert_eq!(
+            table[0].1, "Bulbasaur",
+            "dex #1 is the row the picker opens on"
+        );
+        assert_eq!(DEFAULT_ADD_SPECIES, table[0].0);
+
+        let ed = Editor::default();
+        assert_eq!(ed.add_party_species, DEFAULT_ADD_SPECIES);
+        assert_eq!(table[0].0, ed.add_party_species);
+        assert!(
+            ed.add_box_species
+                .iter()
+                .all(|s| *s == ed.add_party_species),
+            "the party and box add defaults must agree with each other"
+        );
     }
 
     /// The Rogue tab is the largest surface of typed-domain widgets (season row,

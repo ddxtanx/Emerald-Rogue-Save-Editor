@@ -76,11 +76,14 @@ Sprites are **not** committed to this repository. Fetch them into `assets/` once
 directory or to the executable:
 
 ```sh
-python3 tools/get_icons.py                  # pokemon sprites, ~2200 PNGs, idempotent, resumable
-python3 tools/get_icons_from_source.py      # item sprites, straight from the game's own source
+python3 tools/get_icons.py                  # both namespaces, ~2200 pokemon + ~880 item PNGs,
+                                            # idempotent and resumable (`--only species|items`)
+python3 tools/get_icons_from_source.py      # item sprites only, straight from the game's own source
 ```
 
-`get_icons_from_source.py` shallow-clones the Emerald Rogue source (sparse: only `graphics/items`, `src/data`
+`get_icons.py` fills `pokemon/` **and** `items/` from public sets, but the public item sets have no art
+for Rogue's custom items, so a plain run leaves roughly 178 item ids without a file. `get_icons_from_source.py`
+is the one that actually closes that gap. It shallow-clones the Emerald Rogue source (sparse: only `graphics/items`, `src/data`
 and `include`) into `.cache/er-source/`, then follows the game's own wiring — item constant → icon table row
 (or Rogue item row) → `INCBIN` line → the PNG and `.pal` that line names — and writes `<item id>.png` for every
 id that has art. That is the art the ROM displays: extracting the same icons out of the ROM by hand reproduces
@@ -90,8 +93,11 @@ ids this version of the game has no art for are left out, and the editor draws a
 
 Pin a release with `--ref EX-v2.1`, or point it at an existing checkout with `--source /path/to/pokeemerald-rogue`.
 
-Without them the editor still works: every icon slot falls back to a coloured letter badge, and the
-mon editor header shows how many icons it found on disk.
+Without them the editor still works: every icon slot falls back to a coloured letter badge. The status bar
+reports the two namespaces separately -- `icons: pokemon N shown / M missing, items N shown / M missing
+(root ...)` -- because they are fetched by different scripts and can be missing independently. When
+`assets/icons/items/` holds no art at all the Items tab also says so in place, next to the item list header,
+so a row of badges is never mistaken for the intended design.
 
 On a headless box the GUI still runs under Xvfb + llvmpipe:
 

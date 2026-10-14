@@ -408,7 +408,7 @@ impl Editor {
                             ui.strong(format!("PP — base {base}"));
                             for (ups, val) in ladder.iter() {
                                 let lbl = format!(
-                                    "{} PP up{} → {val}",
+                                    "{} PP up{} -> {val}",
                                     ups,
                                     if *ups == 1 { "" } else { "s" }
                                 );

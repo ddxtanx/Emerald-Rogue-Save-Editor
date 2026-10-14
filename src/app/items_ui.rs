@@ -3,6 +3,13 @@
 use super::*;
 use crate::searchable_combo::Opts;
 
+/// Shown in the Items tab when the assets root exists but holds no item art:
+/// names both fetchers, because only the second one writes `assets/icons/items/`.
+/// Plain ASCII on purpose -- egui 0.27's bundled fonts are subsetted.
+const ITEM_ART_MISSING_HINT: &str = "item art is not installed, so items draw a letter badge \
+    instead of the game icon: run `python3 tools/get_icons.py`, or `python3 \
+    tools/get_icons_from_source.py` (that one writes assets/icons/items/)";
+
 impl Editor {
     pub(crate) fn items_ui(&mut self, ui: &mut egui::Ui) {
         // Read everything out of the save first, then drop the borrow, so the
@@ -83,6 +90,14 @@ impl Editor {
                 egui::Color32::from_rgb(210, 130, 40),
                 format!("warning: {w}"),
             );
+        }
+
+        // Item art is fetched separately from pokemon art, and when it is absent
+        // every item row falls back to a coloured letter badge. That reads like a
+        // design choice ("icons are just abbreviated names") unless the tab says
+        // otherwise, so say it in plain ASCII next to the item list header.
+        if self.icons.items_art_absent() {
+            ui.colored_label(egui::Color32::from_rgb(210, 130, 40), ITEM_ART_MISSING_HINT);
         }
 
         // Add / remove row: one searchable item picker, one quantity, and the
@@ -210,5 +225,30 @@ impl Editor {
             }
             self.dirty = true;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The hint is the only thing that tells the user the letter badges are a
+    /// missing download rather than the intended look, so it has to be drawn by
+    /// the bundled subset fonts (ASCII only -- egui 0.27 turns arrows, crosses and
+    /// fancy dashes into empty boxes) and it has to name the scripts that fix it.
+    #[test]
+    fn the_missing_item_art_hint_is_ascii_and_names_both_fetchers() {
+        assert!(
+            ITEM_ART_MISSING_HINT.is_ascii(),
+            "the hint must survive egui 0.27's subsetted fonts; got {ITEM_ART_MISSING_HINT:?}"
+        );
+        assert!(ITEM_ART_MISSING_HINT.contains("item art is not installed"));
+        assert!(ITEM_ART_MISSING_HINT.contains("letter badge"));
+        assert!(ITEM_ART_MISSING_HINT.contains("python3 tools/get_icons.py"));
+        assert!(
+            ITEM_ART_MISSING_HINT.contains("tools/get_icons_from_source.py"),
+            "the source pipeline is the one that writes the item art"
+        );
+        assert!(ITEM_ART_MISSING_HINT.contains("assets/icons/items/"));
     }
 }

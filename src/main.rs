@@ -37,6 +37,8 @@ mod tables;
 mod tables_extra;
 
 #[cfg(test)]
+mod glyph_guard;
+#[cfg(test)]
 mod save_tests;
 
 use app::Editor;
