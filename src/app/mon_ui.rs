@@ -493,12 +493,25 @@ impl Editor {
                 ui.label("Ability");
                 let slot = rec.ability_slot();
                 let abil_opts = crate::lookup::ability_slot_options(sp, slot.raw());
+                // Slot 0 is a real value (the first normal ability), so this
+                // namespace must not be treated as "0 = empty" - that is what made
+                // every slot-0 mon render as "-". The slot number is the stored
+                // value, not the thing being named, so it lives on hover.
                 if let Some(a) = self.combo(
                     ui,
                     "ability",
                     &abil_opts,
                     slot.raw() as u16,
-                    &Opts::named().compact().with_hint("filter abilities"),
+                    &Opts::named()
+                        .compact()
+                        .with_hint("filter abilities")
+                        .positional()
+                        .no_id()
+                        .hover(format!(
+                            "stored abilityNum {} = slot {} of this species' ability list",
+                            slot.raw(),
+                            slot.raw()
+                        )),
                 ) {
                     let a = crate::domain::AbilitySlot::from_raw(a as u8);
                     if a != slot {
@@ -640,129 +653,179 @@ impl Editor {
         ui.add_space(6.0);
         ui.strong("Moves");
         ui.label(
-            "PP ups are per-slot (0..=3). The game's cap is base + base/5 * ups, so \"max\" \
-             fills PP to that cap; the PP field itself stays free-form.",
+            "Two slots per row. PP shows current/cap; the cap is the game's own arithmetic \
+             - base + base*20*ups/100 (src/pokemon.c:3412), at most 3 PP Ups, and both PP \
+             items are refused on a move whose max PP is under 5 (src/pokemon.c:3638, :3914).",
         );
-        egui::Grid::new("moves")
-            .num_columns(5)
-            .spacing([10.0, 4.0])
-            .show(ui, |ui| {
-                for s in 0..4 {
-                    let id = m.moves()[s];
-                    if let Some(mid) =
-                        self.combo(ui, &format!("move{s}"), MOVES, id, &Opts::named())
-                    {
-                        m.set_move(s, mid);
-                        changed = true;
-                    }
-                    let base = crate::move_pp::base_pp(id);
-                    let ladder = crate::move_pp::pp_ladder(id);
-                    let tips: Vec<String> = ladder
-                        .iter()
-                        .map(|(u, p)| format!("{u} ups -> {p}"))
-                        .collect();
-                    let pp_now = m.pps()[s];
-                    let mut pp = pp_now;
-                    if ui
-                        .add(
-                            egui::DragValue::new(&mut pp)
-                                .clamp_range(0..=255)
-                                .prefix(format!("PP {pp_now}/"))
-                                .suffix(format!("{base}")),
-                        )
-                        .changed()
-                    {
-                        m.set_pp(s, pp);
-                        changed = true;
-                    }
-                    // Per-slot PP Ups. The whole-byte setter used to mask with
-                    // `& 3`, which wiped the other three slots' ups.
-                    let mut ups = m.pp_bonus(s) as usize;
-                    if ui
-                        .add(
-                            egui::DragValue::new(&mut ups)
-                                .clamp_range(0..=3)
-                                .prefix("ups "),
-                        )
-                        .on_hover_text(tips.join("\n"))
-                        .changed()
-                    {
-                        m.set_pp_bonus(s, ups as u8);
-                        changed = true;
-                    }
-                    if ui
-                        .button("max PP")
-                        .on_hover_text("set current PP to the cap for the current ups")
-                        .clicked()
-                    {
-                        let cap = ladder[(m.pp_bonus(s) as usize).min(3)].1;
-                        m.set_pp(s, cap);
-                        changed = true;
-                    }
-                    // The PP picker: the PP-Up steps the game knows, each shown with
-                    // the PP it unlocks, plus a free-form entry (the request asked
-                    // for both). This is an `Area` popup rather than a ComboBox, so
-                    // its text field can actually be clicked - the bug that made
-                    // ComboBox popups vanish the moment you touched their field.
-                    let trig = ui
-                        .small_button("PP…")
-                        .on_hover_text("PP ladder (0-3 PP Ups) and custom PP entry");
-                    let opening = trig.clicked();
-                    let custom_id = egui::Id::new(format!("pp_custom{s}"));
-                    let mut custom = ui
-                        .ctx()
-                        .data(|d| d.get_temp::<String>(custom_id))
-                        .unwrap_or_default();
-                    let picked = crate::area_popup::anchored(
-                        ui,
-                        &format!("pp_pop{s}"),
-                        &trig,
-                        opening,
-                        |ui| {
-                            let mut out: Option<(Option<u8>, u8)> = None;
-                            ui.strong(format!("PP - base {base}"));
-                            for (ups, val) in ladder.iter() {
-                                let lbl = format!(
-                                    "{} PP up{} -> {val}",
-                                    ups,
-                                    if *ups == 1 { "" } else { "s" }
-                                );
-                                let cur = m.pp_bonus(s) == *ups && m.pps()[s] == *val;
-                                if ui.selectable_label(cur, lbl).clicked() {
-                                    out = Some((Some(*ups), *val));
-                                }
-                            }
-                            ui.separator();
-                            let te = egui::TextEdit::singleline(&mut custom)
-                                .desired_width(90.0)
-                                .hint_text("custom PP");
-                            // Focus on the opening frame only, so typing works at
-                            // once without stealing the caret back every frame.
-                            let resp = ui.add(te);
-                            if opening {
-                                resp.request_focus();
-                            }
-                            let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
-                            if (resp.lost_focus() && enter) || ui.button("set").clicked() {
-                                if let Ok(v) = custom.trim().parse::<u8>() {
-                                    out = Some((None, v));
-                                }
-                            }
-                            out
-                        },
-                    );
-                    if let Some(Some((ups, pp))) = picked {
-                        if let Some(u) = ups {
-                            m.set_pp_bonus(s, u as u8);
+        // Four slots laid out 2x2: as four stacked rows the moves alone took a third of
+        // the mon panel and pushed everything below them past the fold.
+        for half in 0..2 {
+            if half == 1 {
+                ui.add_space(4.0);
+            }
+            egui::Grid::new(format!("moves{half}"))
+                .num_columns(5)
+                .spacing([8.0, 4.0])
+                .show(ui, |ui| {
+                    for s in half * 2..half * 2 + 2 {
+                        let id = m.moves()[s];
+                        if let Some(mid) = self.combo(
+                            ui,
+                            &format!("move{s}"),
+                            MOVES,
+                            id,
+                            &Opts::named().compact().with_hint("filter moves"),
+                        ) {
+                            m.set_move(s, mid);
+                            changed = true;
                         }
-                        m.set_pp(s, pp);
-                        changed = true;
-                        custom = String::new();
+                        let base = crate::move_pp::base_pp(id);
+                        let ladder = crate::move_pp::pp_ladder(id);
+                        let tips: Vec<String> = ladder
+                            .iter()
+                            .map(|(u, p)| format!("{u} ups -> {p}"))
+                            .collect();
+                        let pp_now = m.pps()[s];
+                        let ups_now = m.pp_bonus(s);
+                        let cap_now = crate::move_pp::max_pp(id, ups_now);
+                        let mut pp = pp_now;
+                        if ui
+                            .add(
+                                egui::DragValue::new(&mut pp)
+                                    .clamp_range(0..=255)
+                                    .prefix("PP ")
+                                    .suffix(format!("/{cap_now}")),
+                            )
+                            .on_hover_text(format!(
+                                "current / cap. base {base}, {} PP up{}: the game computes \
+                                 {base} + {base}*20*{ups_now}/100 = {cap_now}",
+                                ups_now,
+                                if ups_now == 1 { "" } else { "s" }
+                            ))
+                            .changed()
+                        {
+                            m.set_pp(s, pp);
+                            changed = true;
+                        }
+                        // Per-slot PP Ups. The whole-byte setter used to mask with
+                        // `& 3`, which wiped the other three slots' ups.
+                        let mut ups = ups_now as usize;
+                        if ui
+                            .add(
+                                egui::DragValue::new(&mut ups)
+                                    .clamp_range(0..=3)
+                                    .prefix("ups "),
+                            )
+                            .on_hover_text(tips.join("\n"))
+                            .changed()
+                        {
+                            // The game adds the cap delta to CURRENT PP when an item
+                            // raises the field (src/pokemon.c:3643-3645 for the PP Up,
+                            // :3920-3922 for PP Max), so an edit follows it instead of
+                            // leaving the mon sitting at 0/24. Lowering ups clamps to the
+                            // smaller cap.
+                            let next = ups as u8;
+                            m.set_pp(
+                                s,
+                                crate::move_pp::bump_current_pp(pp_now, id, ups_now, next),
+                            );
+                            m.set_pp_bonus(s, next);
+                            changed = true;
+                        }
+                        if ui
+                            .button("max PP")
+                            .on_hover_text("fill current PP up to the cap for the current ups")
+                            .clicked()
+                        {
+                            m.set_pp(s, crate::move_pp::max_pp(id, m.pp_bonus(s)));
+                            changed = true;
+                        }
+                        // The PP picker: the PP-Up steps the game knows, each shown with
+                        // the PP it unlocks, plus a free-form entry (the request asked
+                        // for both). This is an `Area` popup rather than a ComboBox, so
+                        // its text field can actually be clicked - the bug that made
+                        // ComboBox popups vanish the moment you touched their field.
+                        let trig = ui
+                            .small_button("PP…")
+                            .on_hover_text("PP ladder (0-3 PP Ups) and custom PP entry");
+                        let opening = trig.clicked();
+                        let custom_id = egui::Id::new(format!("pp_custom{s}"));
+                        let mut custom = ui
+                            .ctx()
+                            .data(|d| d.get_temp::<String>(custom_id))
+                            .unwrap_or_default();
+                        let picked = crate::area_popup::anchored(
+                            ui,
+                            &format!("pp_pop{s}"),
+                            &trig,
+                            opening,
+                            |ui| {
+                                let mut out: Option<(Option<u8>, u8)> = None;
+                                ui.strong(format!("PP - base {base}"));
+                                if base == 0 && id != 0 {
+                                    // An id the game tree has no move entry for. Saying so
+                                    // beats showing a ladder of zeroes, which reads as
+                                    // "this move has no PP" rather than "I don't know".
+                                    ui.label("no PP entry for this move id in the game tree");
+                                } else if !crate::move_pp::vitamins_apply(id) {
+                                    // src/pokemon.c:3638 (`temp1 > 4`) and :3914
+                                    // (`temp2 >= 5`): both items are refused under 5 PP, so
+                                    // offering PP Ups here would promise a change the game
+                                    // will not make (this is how Sketch / Sheer Cold sit).
+                                    ui.label("max PP under 5: the game refuses PP Up and PP Max");
+                                } else {
+                                    for (ups, val) in ladder.iter() {
+                                        let lbl = format!(
+                                            "{} PP up{} (cap {val})",
+                                            ups,
+                                            if *ups == 1 { "" } else { "s" }
+                                        );
+                                        let cur = m.pp_bonus(s) == *ups;
+                                        if ui.selectable_label(cur, lbl).clicked() {
+                                            // Same rule as the spinner: change the field, and
+                                            // let the cap delta move current PP (the item's own
+                                            // effect, src/pokemon.c:3643-3645).
+                                            out = Some((
+                                                Some(*ups),
+                                                crate::move_pp::bump_current_pp(
+                                                    pp_now, id, ups_now, *ups,
+                                                ),
+                                            ));
+                                        }
+                                    }
+                                }
+                                ui.separator();
+                                let te = egui::TextEdit::singleline(&mut custom)
+                                    .desired_width(90.0)
+                                    .hint_text("custom PP");
+                                // Focus on the opening frame only, so typing works at
+                                // once without stealing the caret back every frame.
+                                let resp = ui.add(te);
+                                if opening {
+                                    resp.request_focus();
+                                }
+                                let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
+                                if (resp.lost_focus() && enter) || ui.button("set").clicked() {
+                                    if let Ok(v) = custom.trim().parse::<u8>() {
+                                        out = Some((None, v));
+                                    }
+                                }
+                                out
+                            },
+                        );
+                        if let Some(Some((ups, pp))) = picked {
+                            if let Some(u) = ups {
+                                m.set_pp_bonus(s, u as u8);
+                            }
+                            m.set_pp(s, pp);
+                            changed = true;
+                            custom = String::new();
+                        }
+                        ui.ctx().data_mut(|d| d.insert_temp(custom_id, custom));
                     }
-                    ui.ctx().data_mut(|d| d.insert_temp(custom_id, custom));
-                }
-                ui.end_row();
-            });
+                    ui.end_row();
+                });
+        }
 
         ui.add_space(6.0);
         ui.horizontal(|ui| {
@@ -780,17 +843,29 @@ impl Editor {
                 m.set_met_level(ml as u16);
                 changed = true;
             }
-            let mut loc = m.met_location() as i32;
-            if ui
-                .add(
-                    egui::DragValue::new(&mut loc)
-                        .clamp_range(0..=255)
-                        .prefix("loc "),
-                )
-                .on_hover_text("met-location id; the game only prints it in the summary")
-                .changed()
-            {
-                m.set_met_location(loc as u8);
+            // Met location is a region-map SECTION id, not a map id: the game
+            // writes `GetCurrentRegionMapSectionId()` into this byte
+            // (src/pokemon.c:946-947) and compares it with the section the player
+            // is standing in (:3508). `MAPSEC_*` names are the game's own names,
+            // so the name is the id's description and the number goes to hover.
+            // Section 0 (Pokemon Hub) is a place, so this namespace is `positional`.
+            let loc = m.met_location();
+            if let Some(v) = self.combo(
+                ui,
+                "metloc",
+                crate::map_secs::MAPSECS,
+                loc as u16,
+                &Opts::named()
+                    .compact()
+                    .with_hint("filter locations")
+                    .positional()
+                    .no_id()
+                    .hover(format!(
+                        "stored met-location byte {loc} ({loc:#04x}); the game writes the \
+                         region-map section it had at catch/hatch time"
+                    )),
+            ) {
+                m.set_met_location(v as u8);
                 changed = true;
             }
             // The bit exists in the struct (substruct 3 bit 31) even though a

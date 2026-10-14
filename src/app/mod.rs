@@ -1214,7 +1214,9 @@ mod tests {
             events,
             ..Default::default()
         };
-        ctx.run(input, |ctx| {
+        // `Context::run` returns a FullOutput; these frames only exist to drive
+        // input, and the assertions ask egui about memory, not about shapes.
+        let _ = ctx.run(input, |ctx| {
             egui::Area::new(egui::Id::new("root"))
                 .fixed_pos(egui::Pos2::new(100.0, 100.0))
                 .show(ctx, |ui| draw(app, ui));
@@ -1379,7 +1381,9 @@ mod tests {
                 events: vec![egui::Event::PointerMoved(egui::Pos2::new(5.0, 5.0))],
                 ..Default::default()
             };
-            ctx.run(input, |ctx| {
+            // The frame drives the scroll widget; the assertion below reads the
+            // area's own output, not this frame's shapes.
+            let _ = ctx.run(input, |ctx| {
                 egui::CentralPanel::default().show(ctx, |ui| {
                     let mut area = Editor::wide_scroll_area()
                         .max_width(500.0)
@@ -1667,6 +1671,179 @@ mod tests {
                 painted.contains(want),
                 "the box record must keep the {want:?} section:\n{painted}"
             );
+        }
+    }
+
+    /// Two ids that carry no meaning as numbers: the met-location byte is a
+    /// region-map SECTION (`MAPSEC_*`), and the ability field is a slot index that
+    /// starts at 0. The editor used to paint `loc 16`, and painted "-" for the
+    /// ability of every mon sitting in slot 0 (which is most of them) because the
+    /// picker treated id 0 as "empty". Both must now read as words, taken from the
+    /// save's own values rather than a fixture.
+    #[test]
+    fn the_mon_editor_names_the_met_location_and_the_ability_slot() {
+        let Some(mut app) = editor_with_save() else {
+            return;
+        };
+        let pick = {
+            let sf = app.file.as_ref().unwrap();
+            (0..ACTIVE_BOXES)
+                .flat_map(|b| (0..BOX_SLOTS).map(move |s| (b, s)))
+                .map(|(b, s)| (b, s, sf.box_mon(b, s)))
+                .find(|(_, _, m)| m.species() != 0 && m.met_location() != 0)
+                .expect("this save has box mons with a met location")
+        };
+        let (bx, slot, mon) = pick;
+        let loc = mon.met_location();
+        let want_loc = crate::map_secs::MAPSECS
+            .iter()
+            .find(|(v, _)| *v == loc as u16)
+            .map(|(_, n)| *n)
+            .unwrap_or_else(|| panic!("section {loc} (#0x{loc:02X}) is not in MAPSECS"));
+        let ability = crate::lookup::ability_slot_label(mon.species(), mon.ability_slot().raw());
+
+        app.sel = Some(Sel::Box(bx, slot));
+        app.tab = Tab::Mon;
+        let ctx = egui::Context::default();
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(1800.0, 4000.0),
+            )),
+            focused: true,
+            ..Default::default()
+        };
+        let mut painted = String::new();
+        for _ in 0..3 {
+            let out = ctx.run(input.clone(), |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    app.mon_editor_ui(ui);
+                });
+            });
+            painted = mon_ui::painted_text(&out);
+        }
+        assert!(
+            painted.contains(want_loc),
+            "box mon {bx}/{slot} stores met location {loc}, whose section name \
+             {want_loc:?} must be painted:\n{painted}"
+        );
+        assert!(
+            painted.contains(ability),
+            "box mon {bx}/{slot} ({}) has ability slot {}, which resolves to \
+             {ability:?} and must be painted, not '-':\n{painted}",
+            mon.species(),
+            mon.ability_slot().raw()
+        );
+        assert!(
+            !painted.contains("loc "),
+            "the raw met-location number must not be shown as the label:\n{painted}"
+        );
+    }
+
+    /// The four move slots paint as 2x2, not four stacked rows. As rows they took
+    /// a third of the mon panel and pushed stats/met info past the fold, which is
+    /// what the "2x2 moveset" request was about. The probe is the painted `PP`
+    /// widget in each cell: four of them must sit on exactly two y bands.
+    #[test]
+    fn the_four_move_slots_paint_in_two_rows() {
+        let Some(mut app) = editor_with_save() else {
+            return;
+        };
+        let order = app.roster_order();
+        app.sel = Some(order[0].clone());
+        app.tab = Tab::Mon;
+        let ctx = egui::Context::default();
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(1800.0, 4000.0),
+            )),
+            focused: true,
+            ..Default::default()
+        };
+        let mut pts: Vec<(f32, f32)> = Vec::new();
+        for _ in 0..3 {
+            pts.clear();
+            let out = ctx.run(input.clone(), |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    app.mon_editor_ui(ui);
+                });
+            });
+            for cs in &out.shapes {
+                walk_pp_rows(&cs.shape, &mut pts);
+            }
+        }
+        // `Grid` centers each cell inside its column, so the x of a cell's PP
+        // widget moves by the width of that row's move name (~24 px). Columns are
+        // therefore separated by clustering on the gap, not on an exact value:
+        // within-column spread is tens of pixels, the gap between the two move
+        // columns is hundreds. Rows sit ~26 px apart.
+        let cluster = |mut vals: Vec<f32>, gap: f32| -> Vec<(f32, f32)> {
+            vals.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            let mut out: Vec<(f32, f32)> = Vec::new();
+            for v in vals {
+                match out.last_mut() {
+                    Some(r) if v - r.1 <= gap => r.1 = v,
+                    _ => out.push((v, v)),
+                }
+            }
+            out
+        };
+        let xs = cluster(pts.iter().map(|(x, _)| *x).collect(), 150.0);
+        let ys = cluster(pts.iter().map(|(_, y)| *y).collect(), 12.0);
+        assert_eq!(
+            pts.len(),
+            4,
+            "the editor should paint one PP widget per move slot, got {pts:?}"
+        );
+        assert_eq!(
+            xs.len(),
+            2,
+            "the four move slots must sit in two columns; x positions: {pts:?}"
+        );
+        assert_eq!(
+            ys.len(),
+            2,
+            "the four move slots must sit in two rows (a 2x2 moveset); y positions: {pts:?}"
+        );
+        // And not four slots piled into one half of the layout: each of the four
+        // cells holds exactly one slot.
+        let cell_of = |p: &(f32, f32)| {
+            let xi = xs
+                .iter()
+                .position(|(a, b)| p.0 >= *a - 1.0 && p.0 <= *b + 1.0)
+                .expect("x inside a column");
+            let yi = ys
+                .iter()
+                .position(|(a, b)| p.1 >= *a - 1.0 && p.1 <= *b + 1.0)
+                .expect("y inside a row");
+            (xi, yi)
+        };
+        let mut cells: Vec<(usize, usize)> = pts.iter().map(cell_of).collect();
+        cells.sort_unstable();
+        cells.dedup();
+        assert_eq!(
+            cells,
+            vec![(0, 0), (0, 1), (1, 0), (1, 1)],
+            "every cell of the 2x2 moveset must hold one move slot; pts {pts:?}"
+        );
+    }
+
+    /// Collect the position of every painted `PP n/m` label (one per move slot).
+    fn walk_pp_rows(shape: &egui::Shape, out: &mut Vec<(f32, f32)>) {
+        match shape {
+            egui::Shape::Vec(v) => {
+                for s in v {
+                    walk_pp_rows(s, out);
+                }
+            }
+            egui::Shape::Text(t) => {
+                let text = t.galley.text();
+                if text.starts_with("PP ") && text.contains('/') {
+                    out.push((t.pos.x, t.pos.y));
+                }
+            }
+            _ => {}
         }
     }
 

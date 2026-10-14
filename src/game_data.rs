@@ -486,6 +486,73 @@ mod tests {
             "the picker covers exactly the same ids as before"
         );
     }
+
+    /// A met-location byte is a region-map SECTION id, so the picker's labels come
+    /// from the game's own `MAPSEC_*` names. Anchors below are literal values from
+    /// `include/constants/region_map_sections.h`: id 0 is the Pokemon Hub (a real
+    /// place, not "unset"), `0xD5` is MAPSEC_NONE, and the 0xF? trio are the
+    /// `METLOC_*` specials.
+    #[test]
+    fn met_location_sections_are_named_from_the_games_header() {
+        for (id, want) in [
+            (0x00, "Pokemon Hub"),
+            (0x03, "Lavaridge Town"),
+            (0x10, "Route 101"),
+            (0x1F, "Route 116"),
+            (0xD5, "None"),
+            (0xFD, "Special Egg"),
+            (0xFE, "In Game Trade"),
+            (0xFF, "Fateful Encounter"),
+        ] {
+            let got = crate::map_secs::MAPSECS
+                .iter()
+                .find(|(v, _)| *v == id)
+                .map(|(_, n)| *n);
+            assert_eq!(
+                got,
+                Some(want),
+                "met location {id:#04x} must render as {want:?}"
+            );
+        }
+        let n = crate::map_secs::MAPSECS.len();
+        assert!(n >= 200, "only {n} sections parsed from the header");
+        let mut ids: Vec<u16> = crate::map_secs::MAPSECS.iter().map(|(v, _)| *v).collect();
+        ids.sort_unstable();
+        ids.dedup();
+        assert_eq!(ids.len(), n, "a section id appears twice in the table");
+        assert!(
+            ids.iter().all(|v| *v <= 0xFF),
+            "a section id does not fit the u8 met-location byte"
+        );
+    }
+
+    /// `hubMap.weatherState` is a u16 seed, not a weather id: the season folds it
+    /// through `% 5` / `% 6` into the weather an outdoor map shows
+    /// (`Rogue_ModifyOverworldMapWeather`, src/rogue_controller.c:1918-2011). The
+    /// editor has to show the weather, since the number alone is meaningless.
+    #[test]
+    fn the_hub_weather_seed_resolves_to_a_weather_per_season() {
+        use crate::domain::Season;
+        let w = |s: Season, v: u16| hub_weather_for(s, v);
+        assert_eq!(w(Season::Spring, 0), "Rain");
+        assert_eq!(w(Season::Spring, 1), "Rain Thunderstorm");
+        assert_eq!(w(Season::Spring, 2), "Fog Diagonal (Misty Terrain)");
+        assert_eq!(w(Season::Spring, 5), "Rain", "spring folds on % 5");
+        assert_eq!(w(Season::Summer, 0), "Rain Thunderstorm");
+        assert_eq!(w(Season::Summer, 1), "None");
+        assert_eq!(w(Season::Autumn, 2), "Leaves (Grassy Terrain)");
+        assert_eq!(w(Season::Autumn, 5), "None");
+        // Winter really does use WEATHER_SNOW even though the header marks the
+        // constant unused for vanilla, so the label must not carry that note.
+        assert_eq!(w(Season::Winter, 0), "Snow");
+        assert_eq!(w(Season::Winter, 3), "Shade");
+        assert_eq!(w(Season::Winter, 4), "None");
+        assert_eq!(
+            w(Season::Unexpected(9), 0),
+            "unknown season: no weather mapping",
+            "a season outside the enum must not guess"
+        );
+    }
 }
 
 /// `homeDecorations[].decorVariant` is an index into a game-generated enum, so the
@@ -497,6 +564,43 @@ pub(crate) fn decor_name(id: u8) -> &'static str {
         .get(id as usize)
         .copied()
         .unwrap_or("out-of-range decoration id")
+}
+
+/// The hub's `weatherState` is a u16 seed, **not** a weather id.
+/// `Rogue_ModifyOverworldMapWeather()` (src/rogue_controller.c:1918-2011) folds it
+/// per season into the weather an outdoor map shows: `state % 5` in spring
+/// (:1941-1956) and summer (:1957-1970), `state % 6` in autumn (:1971-1987) and
+/// winter (:1988-2005). Indoor/underground maps keep their own weather, a run in
+/// progress uses `VAR_ROGUE_DESIRED_WEATHER` instead (:1929-1933), and before the
+/// tutorial finishes the game forces no weather (:1934-1936).
+pub(crate) fn hub_weather_for(season: crate::domain::Season, state: u16) -> &'static str {
+    use crate::domain::Season;
+    use crate::weather_names as w;
+    let id = match season {
+        Season::Spring => match state % 5 {
+            0 => w::WEATHER_RAIN,
+            1 => w::WEATHER_RAIN_THUNDERSTORM,
+            2 => w::WEATHER_MISTY_FOG,
+            _ => w::WEATHER_NONE,
+        },
+        Season::Summer => match state % 5 {
+            0 => w::WEATHER_RAIN_THUNDERSTORM,
+            _ => w::WEATHER_NONE,
+        },
+        Season::Autumn => match state % 6 {
+            0 => w::WEATHER_RAIN,
+            1 => w::WEATHER_RAIN_THUNDERSTORM,
+            2 | 3 => w::WEATHER_LEAVES,
+            _ => w::WEATHER_NONE,
+        },
+        Season::Winter => match state % 6 {
+            0 | 1 | 2 => w::WEATHER_SNOW,
+            3 => w::WEATHER_SHADE,
+            _ => w::WEATHER_NONE,
+        },
+        Season::Unexpected(_) => return "unknown season: no weather mapping",
+    };
+    w::weather_name(id)
 }
 
 // ---------------------------------------------------------------- mon model

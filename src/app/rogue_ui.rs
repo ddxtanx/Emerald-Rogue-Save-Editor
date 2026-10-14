@@ -145,7 +145,12 @@ impl Editor {
                 .add(
                     egui::DragValue::new(&mut weather)
                         .clamp_range(0..=65535)
-                        .prefix("weather "),
+                        .prefix("weather seed "),
+                )
+                .on_hover_text(
+                    "raw u16 seed, not a weather id: the game folds it through % 5 \
+                     (spring/summer) or % 6 (autumn/winter) into the weather an outdoor \
+                     map shows - Rogue_ModifyOverworldMapWeather, src/rogue_controller.c:1918-2011",
                 )
                 .changed()
             {
@@ -154,6 +159,13 @@ impl Editor {
                 }
                 self.dirty = true;
             }
+            // The seed alone says nothing; the season decides which weather it maps
+            // to, so show that instead of leaving the player to do the modulo.
+            ui.label(format!(
+                "in {}: {}",
+                season.name(),
+                crate::game_data::hub_weather_for(season, weather)
+            ));
             ui.label(format!("debug {}", rb.is_debug));
         });
 
@@ -506,7 +518,9 @@ impl Editor {
             ui.add_space(6.0);
             ui.strong("Weather state");
             ui.label(
-                "Raw u16 seed, not a weather id. The game derives the visible weather as state % 5 (spring/summer) or % 6 (autumn/winter).",
+                "Raw u16 seed, not a weather id. Rogue_ModifyOverworldMapWeather \
+                 (src/rogue_controller.c:1918-2011) derives the visible weather as \
+                 seed % 5 in spring/summer and seed % 6 in autumn/winter.",
             );
             let mut wsv = weather_snap as i32;
             if ui
@@ -516,11 +530,15 @@ impl Editor {
             {
                 weather_edit = Some(wsv as u16);
             }
+            // The buckets are only meaningful as weathers, so name them rather than
+            // printing `% 5` / `% 6` results the player has to look up.
             ui.label(format!(
-                "{}: spring/summer bucket {}, autumn/winter bucket {}",
+                "seed {}: spring {} / summer {} / autumn {} / winter {}",
                 weather_snap,
-                weather_snap % 5,
-                weather_snap % 6
+                crate::game_data::hub_weather_for(crate::domain::Season::Spring, weather_snap),
+                crate::game_data::hub_weather_for(crate::domain::Season::Summer, weather_snap),
+                crate::game_data::hub_weather_for(crate::domain::Season::Autumn, weather_snap),
+                crate::game_data::hub_weather_for(crate::domain::Season::Winter, weather_snap),
             ));
 
             ui.add_space(6.0);

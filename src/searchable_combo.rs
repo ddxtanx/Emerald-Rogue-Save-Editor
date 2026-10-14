@@ -43,6 +43,14 @@ pub struct Opts {
     pub none_label: Option<&'static str>,
     /// Label used if the current id is not in the table.
     pub unknown_label: &'static str,
+    /// True when id 0 means "nothing here" in this namespace (species, item,
+    /// move, held item). **False** for namespaces where 0 is a stored value:
+    /// ability slot 0, or met location `MAPSEC_POKEMON_HUB`. Treating those as
+    /// empty is how the ability picker started rendering every slot-0 mon as "-".
+    pub zero_is_none: bool,
+    /// Extra hover text for the trigger button. Names-only pickers hide the raw
+    /// stored number, so this is where it stays discoverable.
+    pub hover: Option<String>,
 }
 
 impl Default for Opts {
@@ -55,6 +63,8 @@ impl Default for Opts {
             hint: "filter by name",
             none_label: None,
             unknown_label: "??????",
+            zero_is_none: true,
+            hover: None,
         }
     }
 }
@@ -96,6 +106,18 @@ impl Opts {
     /// the id carries no information (the 25 natures), showing it is noise.
     pub fn no_id(mut self) -> Self {
         self.show_id = false;
+        self
+    }
+    /// The namespace numbers its values from 0, so 0 is a real choice and must be
+    /// listed and labelled like any other (ability slots, met-location sections).
+    pub fn positional(mut self) -> Self {
+        self.zero_is_none = false;
+        self
+    }
+    /// Hover text for the trigger, used to keep the raw stored value visible when
+    /// `no_id()` hides it from the label.
+    pub fn hover(mut self, text: impl Into<String>) -> Self {
+        self.hover = Some(text.into());
         self
     }
     pub fn compact(mut self) -> Self {
@@ -151,7 +173,8 @@ pub fn show(
 
     // ---- trigger button -----------------------------------------------------
     let cur_name = lookup(table, current, opts);
-    let text = if opts.show_id && current != 0 {
+    let show_cur_id = opts.show_id && !(opts.zero_is_none && current == 0);
+    let text = if show_cur_id {
         format!("{current} · {cur_name}")
     } else {
         cur_name.to_string()
@@ -203,6 +226,13 @@ pub fn show(
             ));
         }
         resp
+    };
+
+    // Names-only pickers hide the stored number from the label, so the raw value
+    // (and any "what this byte is" note) lives on hover instead.
+    let btn_response = match opts.hover.as_deref() {
+        Some(h) => btn_response.on_hover_text(h.to_string()),
+        None => btn_response,
     };
 
     if btn_response.clicked() {
@@ -405,7 +435,7 @@ fn body(
         }
     }
     for (id, name) in table {
-        if *id == 0 {
+        if *id == 0 && opts.zero_is_none {
             continue;
         }
         if needle.is_empty()
@@ -458,12 +488,12 @@ fn body(
         let wide = ui.available_width();
         for r in visible {
             let id = matches[r];
-            let name = if id == 0 {
+            let name = if id == 0 && opts.zero_is_none {
                 opts.none_label.unwrap_or("none")
             } else {
                 lookup(table, id, opts)
             };
-            let label = if opts.show_id && id != 0 {
+            let label = if opts.show_id && !(opts.zero_is_none && id == 0) {
                 format!("{id:5}  {name}")
             } else {
                 format!("  {name}")
@@ -549,7 +579,7 @@ fn footer_line(ui: &mut Ui, shown: usize, total: usize) {
 
 /// Name for an id, honouring the `none` label and unknown ids.
 fn lookup<'a>(table: &'a [(u16, &'a str)], id: u16, opts: &Opts) -> &'a str {
-    if id == 0 {
+    if opts.zero_is_none && id == 0 {
         return opts.none_label.unwrap_or("-");
     }
     table

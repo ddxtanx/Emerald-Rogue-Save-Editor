@@ -29,13 +29,16 @@ mod game_data;
 mod icons;
 mod item_pockets;
 mod lookup;
+mod map_secs;
 mod mon;
 mod move_pp;
+mod move_pp_data;
 mod savefile;
 mod searchable_combo;
 mod species_meta;
 mod tables;
 mod tables_extra;
+mod weather_names;
 
 #[cfg(test)]
 mod glyph_guard;

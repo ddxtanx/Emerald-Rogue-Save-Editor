@@ -1,409 +1,62 @@
-// Auto-generated from rogue-src-2207 (include/constants/moves.h +
-// src/data/battle_moves.h gBattleMoves_Mainline). Do not edit by hand.
-#![allow(dead_code)]
+//! Move PP: the game's base values (generated table in `move_pp_data.rs`) plus
+//! the game's own PP-Up arithmetic, transcribed rather than approximated.
 
-/// Base PP per move id exactly as the game's move table has it.
-/// max_pp = base + base/5 * pp_ups (2 bits per move slot in the PP Bonuses byte,
-/// game-capped at 3 ups: pokemon.c gPPUpGetMask / item_use.c).
-pub const MOVE_PP: &[(u16, u8)] = &[
-    (0, 0),
-    (1, 35),
-    (2, 25),
-    (3, 10),
-    (4, 15),
-    (5, 20),
-    (6, 20),
-    (7, 15),
-    (8, 15),
-    (9, 15),
-    (10, 35),
-    (11, 30),
-    (12, 5),
-    (13, 10),
-    (14, 30),
-    (15, 30),
-    (16, 35),
-    (17, 35),
-    (18, 20),
-    (19, 15),
-    (20, 20),
-    (21, 20),
-    (22, 10),
-    (23, 20),
-    (24, 30),
-    (25, 5),
-    (26, 25),
-    (27, 15),
-    (28, 15),
-    (29, 15),
-    (30, 25),
-    (31, 20),
-    (32, 5),
-    (33, 35),
-    (34, 15),
-    (35, 20),
-    (36, 20),
-    (37, 20),
-    (38, 15),
-    (39, 30),
-    (40, 35),
-    (41, 20),
-    (42, 20),
-    (43, 30),
-    (44, 25),
-    (45, 40),
-    (46, 20),
-    (47, 15),
-    (48, 20),
-    (49, 20),
-    (50, 20),
-    (51, 30),
-    (52, 25),
-    (53, 15),
-    (54, 30),
-    (55, 25),
-    (56, 5),
-    (57, 15),
-    (58, 10),
-    (59, 5),
-    (60, 20),
-    (61, 20),
-    (62, 20),
-    (63, 5),
-    (64, 35),
-    (65, 20),
-    (66, 25),
-    (67, 20),
-    (68, 20),
-    (69, 20),
-    (70, 15),
-    (71, 20),
-    (72, 10),
-    (73, 10),
-    (74, 40),
-    (75, 25),
-    (76, 10),
-    (77, 35),
-    (78, 30),
-    (79, 15),
-    (80, 20),
-    (81, 40),
-    (82, 10),
-    (83, 15),
-    (84, 30),
-    (85, 15),
-    (86, 20),
-    (87, 10),
-    (88, 15),
-    (89, 10),
-    (90, 5),
-    (91, 10),
-    (92, 10),
-    (93, 25),
-    (94, 10),
-    (95, 20),
-    (96, 40),
-    (97, 30),
-    (98, 30),
-    (99, 20),
-    (100, 20),
-    (101, 15),
-    (102, 10),
-    (103, 40),
-    (104, 15),
-    (105, 20),
-    (106, 30),
-    (107, 20),
-    (108, 20),
-    (109, 10),
-    (110, 40),
-    (111, 40),
-    (112, 30),
-    (113, 30),
-    (114, 30),
-    (115, 20),
-    (116, 30),
-    (117, 10),
-    (118, 10),
-    (119, 20),
-    (120, 5),
-    (121, 10),
-    (122, 30),
-    (123, 20),
-    (124, 20),
-    (125, 20),
-    (126, 5),
-    (127, 15),
-    (128, 10),
-    (129, 20),
-    (130, 15),
-    (131, 15),
-    (132, 35),
-    (133, 20),
-    (134, 15),
-    (135, 10),
-    (136, 20),
-    (137, 30),
-    (138, 15),
-    (139, 40),
-    (140, 20),
-    (141, 15),
-    (142, 10),
-    (143, 5),
-    (144, 10),
-    (145, 30),
-    (146, 10),
-    (147, 15),
-    (148, 20),
-    (149, 15),
-    (150, 40),
-    (151, 40),
-    (152, 10),
-    (153, 5),
-    (154, 15),
-    (155, 10),
-    (156, 10),
-    (157, 10),
-    (158, 15),
-    (159, 30),
-    (160, 30),
-    (161, 10),
-    (162, 10),
-    (163, 20),
-    (164, 10),
-    (165, 1),
-    (166, 1),
-    (167, 10),
-    (168, 10),
-    (169, 10),
-    (170, 5),
-    (171, 15),
-    (172, 25),
-    (173, 15),
-    (174, 10),
-    (175, 15),
-    (176, 30),
-    (177, 5),
-    (178, 40),
-    (179, 15),
-    (180, 10),
-    (181, 25),
-    (182, 10),
-    (183, 30),
-    (184, 10),
-    (185, 20),
-    (186, 10),
-    (187, 10),
-    (188, 10),
-    (189, 10),
-    (190, 10),
-    (191, 20),
-    (192, 5),
-    (193, 40),
-    (194, 5),
-    (195, 5),
-    (196, 15),
-    (197, 5),
-    (198, 10),
-    (199, 5),
-    (200, 15),
-    (201, 10),
-    (202, 5),
-    (203, 10),
-    (204, 20),
-    (205, 20),
-    (206, 40),
-    (207, 15),
-    (208, 10),
-    (209, 20),
-    (210, 20),
-    (211, 25),
-    (212, 5),
-    (213, 15),
-    (214, 10),
-    (215, 5),
-    (216, 20),
-    (217, 15),
-    (218, 20),
-    (219, 25),
-    (220, 20),
-    (221, 5),
-    (222, 30),
-    (223, 5),
-    (224, 10),
-    (225, 20),
-    (226, 40),
-    (227, 5),
-    (228, 20),
-    (229, 40),
-    (230, 20),
-    (231, 15),
-    (232, 35),
-    (233, 10),
-    (234, 5),
-    (235, 5),
-    (236, 5),
-    (237, 15),
-    (238, 5),
-    (239, 20),
-    (240, 5),
-    (241, 5),
-    (242, 15),
-    (243, 20),
-    (244, 10),
-    (245, 5),
-    (246, 5),
-    (247, 15),
-    (248, 15),
-    (249, 15),
-    (250, 15),
-    (251, 10),
-    (252, 10),
-    (253, 10),
-    (254, 10),
-    (255, 10),
-    (256, 10),
-    (257, 10),
-    (258, 10),
-    (259, 15),
-    (260, 15),
-    (261, 15),
-    (262, 10),
-    (263, 20),
-    (264, 20),
-    (265, 10),
-    (266, 20),
-    (267, 20),
-    (268, 20),
-    (269, 20),
-    (270, 20),
-    (271, 10),
-    (272, 10),
-    (273, 10),
-    (274, 20),
-    (275, 20),
-    (276, 5),
-    (277, 15),
-    (278, 10),
-    (279, 10),
-    (280, 15),
-    (281, 10),
-    (282, 20),
-    (283, 5),
-    (284, 5),
-    (285, 10),
-    (286, 10),
-    (287, 20),
-    (288, 5),
-    (289, 10),
-    (290, 20),
-    (291, 10),
-    (292, 20),
-    (293, 20),
-    (294, 20),
-    (295, 5),
-    (296, 5),
-    (297, 15),
-    (298, 20),
-    (299, 10),
-    (300, 15),
-    (301, 20),
-    (302, 15),
-    (303, 10),
-    (304, 10),
-    (305, 15),
-    (306, 10),
-    (307, 5),
-    (308, 5),
-    (309, 10),
-    (310, 15),
-    (311, 10),
-    (312, 5),
-    (313, 20),
-    (314, 25),
-    (315, 5),
-    (316, 40),
-    (317, 10),
-    (318, 5),
-    (319, 40),
-    (320, 15),
-    (321, 20),
-    (322, 20),
-    (323, 5),
-    (324, 15),
-    (325, 20),
-    (326, 30),
-    (327, 15),
-    (328, 15),
-    (329, 5),
-    (330, 10),
-    (331, 30),
-    (332, 20),
-    (333, 30),
-    (334, 15),
-    (335, 5),
-    (336, 40),
-    (337, 15),
-    (338, 5),
-    (339, 20),
-    (340, 5),
-    (341, 15),
-    (342, 25),
-    (343, 40),
-    (344, 15),
-    (345, 20),
-    (346, 15),
-    (347, 20),
-    (348, 15),
-    (349, 20),
-    (350, 10),
-    (351, 20),
-    (352, 20),
-    (353, 5),
-    (354, 5),
-    (355, 1),
-    (356, 1),
-    (357, 1),
-    (358, 1),
-    (359, 1),
-    (360, 1),
-    (361, 1),
-    (362, 1),
-    (363, 1),
-    (364, 1),
-    (365, 1),
-    (366, 1),
-    (367, 1),
-    (368, 1),
-    (369, 1),
-    (370, 1),
-    (371, 1),
-    (372, 1),
-    (373, 1),
-    (374, 1),
-    (375, 1),
-];
+use crate::move_pp_data::MOVE_PP;
 
-/// Base max PP for a move id (0 for the empty slot / unknown id).
+/// PP Ups are 2 bits per move slot (`gPPUpGetMask`, `src/pokemon.c:424`) and the
+/// items never push the field past 3: the PP Up branch requires the stored value
+/// `<= 2` (`src/pokemon.c:3638`) and PP Max requires `< 3` (`:3914`), after which
+/// it sets the field to exactly 3 (`gPPUpAddValues * 3`, `:3918`).
+pub const MAX_PP_UPS: u8 = 3;
+
+/// Base max PP as the game's move table stores it (0 for the empty slot).
 pub fn base_pp(move_id: u16) -> u8 {
     MOVE_PP
-        .iter()
-        .find(|(id, _)| *id == move_id)
-        .map(|(_, pp)| *pp)
+        .binary_search_by(|(id, _)| id.cmp(&move_id))
+        .ok()
+        .map(|i| MOVE_PP[i].1)
         .unwrap_or(0)
 }
 
-/// Max PP with `ups` PP Ups applied: the game adds a fifth of base per up,
-/// integer division, capped at 3 ups. `src/pokemon.c` gPPUpGetMask /
-/// `item_use.c` ("dataUnsigned <= 2" guard).
+/// Max PP with `ups` PP Ups, exactly as `CalculatePPWithBonus` computes it:
+/// `basePP + ((basePP * 20 * ups) / 100)` (`src/pokemon.c:3412`).
+///
+/// The earlier editor version used `base + base/5 * ups`, which divides at a
+/// different point and loses a PP for every base that is not a multiple of 5
+/// (base 12: +6 instead of +7 over three ups; base 7: +9 instead of +11).
 pub fn max_pp(move_id: u16, ups: u8) -> u8 {
-    let base = base_pp(move_id) as u16;
-    let ups = ups.min(3) as u16;
-    (base + (base / 5) * ups).min(u8::MAX as u16) as u8
+    let base = base_pp(move_id) as u32;
+    let ups = ups.min(MAX_PP_UPS) as u32;
+    (base + (base * 20 * ups) / 100).min(u8::MAX as u32) as u8
 }
 
-/// The PP-Up ladder for one move: (ups, max PP) for 0..=3 ups. Used by the PP
-/// picker so the user sees the legal values instead of a free-form number.
+/// Whether the PP Up / PP Max items would touch this move at all: both branches
+/// refuse a move whose current max PP is under 5 (`temp1 > 4` at
+/// `src/pokemon.c:3638`, `temp2 >= 5` at `:3914`), which is how Sketch (1 PP) and
+/// Sheer Cold (1 PP) are excluded.
+pub fn vitamins_apply(move_id: u16) -> bool {
+    max_pp(move_id, 0) >= 5
+}
+
+/// Current PP after the cap changes from `from_ups` to `to_ups`. The game adds
+/// the cap delta to the stored current PP rather than refilling the move
+/// (`newCap - oldCap` on top of `MON_DATA_PP1`: `src/pokemon.c:3643-3645` for the
+/// PP Up, `:3920-3922` for PP Max). Mirroring that keeps an edited mon consistent
+/// (raising ups never leaves it at `0/24`); lowering ups clamps to the new cap.
+pub fn bump_current_pp(cur: u8, move_id: u16, from_ups: u8, to_ups: u8) -> u8 {
+    let old_cap = max_pp(move_id, from_ups) as i32;
+    let new_cap = max_pp(move_id, to_ups) as i32;
+    if new_cap >= old_cap {
+        (cur as i32 + (new_cap - old_cap)).min(new_cap) as u8
+    } else {
+        // Nothing in the game lowers PP Ups, so there is no item behaviour to
+        // copy: taking them away clamps current PP down to the smaller cap
+        // instead of draining the mon by a delta nobody asked for.
+        cur.min(new_cap as u8)
+    }
+}
+
+/// The PP ladder for one move slot: (ups, max PP) for 0..=MAX_PP_UPS.
 pub fn pp_ladder(move_id: u16) -> [(u8, u8); 4] {
     [
         (0, max_pp(move_id, 0)),
@@ -411,4 +64,110 @@ pub fn pp_ladder(move_id: u16) -> [(u8, u8); 4] {
         (2, max_pp(move_id, 2)),
         (3, max_pp(move_id, 3)),
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `CalculatePPWithBonus` (`src/pokemon.c:3412`) is `base + (base*20*ups)/100`.
+    /// Hand-computed against the tree's own bases: POUND (id 1, base 35) gives
+    /// 35/42/49/56, ZEN_HEADBUTT (id 428, base 15) gives 15/18/21/24, and
+    /// SHEER_COLD (id 329, base 5) gives 5/6/7/8 - the low base is the interesting
+    /// shape, since 5*20/100 = 1 and each up still adds exactly one.
+    #[test]
+    fn caps_follow_the_game_formula() {
+        assert_eq!(pp_ladder(1), [(0, 35), (1, 42), (2, 49), (3, 56)]);
+        assert_eq!(pp_ladder(428), [(0, 15), (1, 18), (2, 21), (3, 24)]);
+        assert_eq!(pp_ladder(329), [(0, 5), (1, 6), (2, 7), (3, 8)]);
+        // Every base PP in this tree is a multiple of 5, so the older
+        // `base + base/5*ups` happened to agree here; the game's own expression is
+        // used so the cap cannot drift if a base ever stops being one.
+        for (id, base) in crate::move_pp_data::MOVE_PP {
+            let base = *base as u32;
+            if base >= 5 {
+                assert_eq!(
+                    max_pp(*id, 3),
+                    (base + (base * 60) / 100).min(255) as u8,
+                    "slot cap for move id {} must match base + base*20*3/100",
+                    id
+                );
+            }
+        }
+    }
+
+    /// The ups field is 2 bits and the game never stores more than 3 (the PP Up
+    /// branch requires `<= 2`, `src/pokemon.c:3638`; PP Max sets exactly 3, `:3918`).
+    /// A hand-typed 9 must clamp rather than wrap into the next slot's bits.
+    #[test]
+    fn ups_past_three_do_not_move_the_cap() {
+        assert_eq!(max_pp(1, 9), max_pp(1, 3));
+        assert_eq!(MAX_PP_UPS, 3);
+    }
+
+    /// Both items refuse a move under 5 PP (`temp1 > 4` at `src/pokemon.c:3638`,
+    /// `temp2 >= 5` at `:3914`), which is how SKETCH (id 166, 1 PP) is excluded.
+    /// SHEER_COLD sits at exactly 5 and does qualify.
+    #[test]
+    fn vitamins_are_refused_below_five_pp() {
+        assert!(!vitamins_apply(166), "SKETCH has 1 PP");
+        assert!(vitamins_apply(329), "SHEER_COLD has exactly 5 PP");
+        assert!(!vitamins_apply(0), "the empty move slot takes nothing");
+    }
+
+    /// The items add the cap delta to CURRENT PP rather than refilling the move
+    /// (`src/pokemon.c:3643-3645` for the PP Up, `:3920-3922` for PP Max), so an
+    /// edit that changes ups must not leave the mon at `0/24`. Nothing in the game
+    /// lowers PP Ups, so lowering one only clamps current PP to the smaller cap.
+    #[test]
+    fn changing_ups_bumps_current_pp_the_way_the_item_does() {
+        assert_eq!(bump_current_pp(15, 428, 0, 1), 18);
+        // Zen Headbutt's caps run 15/18/21/24, so three ups add nine - and the item
+        // hands that nine to CURRENT PP rather than refilling a depleted move. The
+        // "max PP" button is what fills a slot up to its cap.
+        assert_eq!(
+            bump_current_pp(0, 428, 0, 3),
+            9,
+            "a depleted move gains the delta, not the cap"
+        );
+        assert_eq!(
+            bump_current_pp(15, 428, 0, 3),
+            24,
+            "a full move keeps pace with the cap"
+        );
+        assert_eq!(
+            bump_current_pp(20, 428, 0, 1),
+            18,
+            "current PP never exceeds the cap"
+        );
+        // Lowering: clamp to the cap, never drain below what the mon already has.
+        assert_eq!(bump_current_pp(24, 428, 3, 0), 15);
+        assert_eq!(bump_current_pp(15, 428, 2, 0), 15);
+        assert_eq!(bump_current_pp(3, 428, 2, 0), 3);
+    }
+
+    /// The reported PP bug, at its root: `MOVE_PP` used to be generated from the
+    /// 2.2.07 tree, whose move table stopped at id 376, so Zen Headbutt (428) and
+    /// every other newer move rendered as `PP - base 0` with a ladder of zeroes.
+    /// Every move the picker offers must have a base PP.
+    #[test]
+    fn every_move_the_ui_offers_has_a_base_pp() {
+        let missing: Vec<(u16, &str)> = crate::tables::MOVES
+            .iter()
+            .filter(|(id, _)| *id != 0)
+            .filter(|(id, _)| base_pp(*id) == 0)
+            .map(|(id, name)| (*id, *name))
+            .collect();
+        assert!(
+            missing.is_empty(),
+            "{} moves have no PP entry, first few: {:?}",
+            missing.len(),
+            &missing[..missing.len().min(6)]
+        );
+        assert!(
+            crate::move_pp_data::MOVE_PP.len() >= 800,
+            "the PP table looks truncated: {} entries",
+            crate::move_pp_data::MOVE_PP.len()
+        );
+    }
 }

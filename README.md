@@ -209,6 +209,12 @@ SAV_OUT=save-out-of-adventure.sav SAV_IN=save-in-adventure.sav python3 tools/dif
 - `gen_species_names.py` — species id → name for the whole Rogue species space (Gen 1–9, Mega, Gigantamax,
   regional/alt forms, and Rogue's own fake forms — ~1400 ids, not the ~386 of vanilla Emerald)
 - `gen_basestats.py`, `gen_rogue_items.py` — base-stat and Rogue-item tables
+- `gen_movepp.py` — base PP for every move id, from `src/data/battle_moves.h`. The editor's PP caps come
+  from this table: generated from the wrong tree it silently reports 0 PP for every move past the old
+  tree's highest id, which is what made the PP popup show `PP - base 0` for Zen Headbutt
+- `gen_map_secs.py` — met-location byte → region-map section name (`region_map_sections.h`)
+- `gen_weather_names.py` — `WEATHER_*` id → name (`weather.h`), which is how the hub weather seed gets a
+  readable weather instead of a bare u16
 - `get_icons_from_source.py` — clones the game source and rebuilds every item icon from its own PNG and palette, id by id
 - `diff_states.py`, `diff2.py` — locate every valid Pokémon struct in two saves and diff them by region; this is how
   the in-adventure vs overworld split was found

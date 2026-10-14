@@ -418,3 +418,34 @@ fn popup_spans_the_line_its_trigger_sits_on() {
         "the popup must start at the line's left edge, not inset from it: {frame:?}"
     );
 }
+
+/// Some id spaces number from 0 - ability slots, met-location sections - so id 0
+/// has to be labelled like any other value. The `id == 0` means-empty convention
+/// (right for species, items, moves, held item) is what made every mon with
+/// `abilityNum` 0 show its ability as "-". The visible end of this is covered by
+/// `the_mon_editor_names_the_met_location_and_the_ability_slot`; here the label
+/// resolver itself is pinned so the two conventions cannot bleed into each other.
+#[test]
+fn a_positional_namespace_labels_zero_instead_of_calling_it_empty() {
+    let table: Vec<(u16, &'static str)> =
+        vec![(0, "clear body"), (1, "light metal"), (2, "slot empty")];
+    assert_eq!(
+        lookup(&table, 0, &Opts::named().positional()),
+        "clear body",
+        "id 0 of a positional namespace must resolve to its own name"
+    );
+    // Pickers whose 0 really means "nothing here" keep the placeholder, and id 0
+    // is not offered as a row there (that path is exercised by `with_none`).
+    assert_eq!(
+        lookup(&table, 0, &Opts::named().with_none("none")),
+        "none",
+        "the default convention must stay 0 = empty"
+    );
+    assert_eq!(
+        lookup(&table, 0, &Opts::named()),
+        "-",
+        "without a none label the placeholder is the dash that hid the ability"
+    );
+    // A positional namespace still resolves non-zero ids normally.
+    assert_eq!(lookup(&table, 2, &Opts::named().positional()), "slot empty");
+}

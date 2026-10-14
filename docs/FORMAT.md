@@ -111,6 +111,23 @@ C: nickname is in the header; moves[4] u16 + pp[4] u8 + maxPP/PP-up bits
 D: experience/contest/ribbons etc.
 ```
 
+**PP Ups live in one byte, 2 bits per move slot.** `gPPUpGetMask` / `gPPUpClearMask` /
+`gPPUpAddValues` (`src/pokemon.c:424-426`) select one slot's 2-bit field, and the cap formula is
+`base + (base * 20 * ups) / 100` (`CalculatePPWithBonus`, `:3412`). The stored field never exceeds 3:
+the PP Up item requires `ups <= 2` (`:3638`) and PP Max sets the field to exactly 3 (`:3914-3918`). Both
+items also refuse a move whose current max PP is under 5, which is how Sketch (1 PP) is excluded. When an
+item raises the field it adds `newCap - oldCap` to the move's **current** PP (`:3643-3645`,
+`:3920-3922`) rather than refilling it.
+
+**The met-location byte is a region-map section id, not a map id.** The game stores
+`GetCurrentRegionMapSectionId()` there at catch/hatch time (`src/pokemon.c:946-947`) and compares it with
+the section the player is standing in elsewhere (`:3508`). The ids are the `MAPSEC_*` constants in
+`include/constants/region_map_sections.h` — `0x00` POKEMON_HUB through `0xD5` NONE — so section **0 is a
+real place**, not "unset", plus the three specials the game writes directly: `METLOC_SPECIAL_EGG` `0xFD`,
+`METLOC_IN_GAME_TRADE` `0xFE`, `METLOC_FATEFUL_ENCOUNTER` `0xFF`. `tools/gen_map_secs.py` regenerates the
+editor's id → name table from that header, which is what lets the mon panel print "Route 116" instead of
+"loc 31".
+
 Cached stat block for the 104-byte party variant (plaintext u16, offsets within the struct):
 
 ```
@@ -386,11 +403,28 @@ builder uses a spiral search for a free adjacent tile (`RogueHub_BuildArea` →
 `FindAdjacentTileForArea`); `RogueHub_ClearProgress` then hard-codes the canonical layout and
 zeroes coords 4..10, confirming the coord table is per-save state and not ROM data.
 
-**`weatherState` is a raw u16 seed, not a weather id.** `RogueToD_UpdateWeather` buckets it with a
-different modulo per season: `% 5` for spring/summer (`W_SUNNY, W_RAIN, W_STORM, W_FOG, W_SUNRISE`)
-and `% 6` for autumn/winter (same set + `W_SNOW`). `0xFFFF` is the "no save data yet" sentinel:
-`0xFFFF % 5 = 0` (sunny, matching the live save) and `0xFFFF % 6 = 3` (fog, matching an all-`0xFF`
-backup save). Setting `0xFFFF` therefore restores the game's default behaviour.
+**`weatherState` is a raw u16 seed, not a weather id.** The game folds it through a per-season modulo
+in `Rogue_ModifyOverworldMapWeather` (`src/rogue_controller.c:1918-2011`) to choose the weather an
+outdoor map shows:
+
+| season | modulo | buckets → weather |
+|---|---|---|
+| spring | `% 5` | 0 Rain, 1 Rain Thunderstorm, 2 Fog Diagonal (misty terrain), 3-4 none |
+| summer | `% 5` | 0 Rain Thunderstorm, 1-4 none |
+| autumn | `% 6` | 0 Rain, 1 Rain Thunderstorm, 2-3 Leaves (grassy terrain), 4-5 none |
+| winter | `% 6` | 0-2 Snow, 3 Shade, 4-5 none |
+
+The names are the `WEATHER_*` ids in `include/constants/weather.h`; `tools/gen_weather_names.py`
+regenerates them and `game_data::hub_weather_for` mirrors the table above, so the editor can print the
+weather instead of the bucket number. An earlier revision of this document attributed the buckets to
+`RogueToD_UpdateWeather` with a `W_SUNNY/W_RAIN/W_STORM/W_FOG/W_SUNRISE` set — neither that function nor
+those names exist in the v2.2.0-EX tree. Two more paths bypass the seed entirely: during a run the route
+rooms use `VAR_ROGUE_DESIRED_WEATHER` (:1929-1933), and before the tutorial finishes the game forces no
+weather (:1934-1936).
+
+`0xFFFF` is the "no save data yet" sentinel: `65535 % 5 = 0` and `65535 % 6 = 3`, so a sentinel save is
+not "no weather" but a fixed one — Rain in spring, Rain Thunderstorm in summer, Leaves in autumn, Shade
+in winter. Setting `0xFFFF` therefore restores the game's default behaviour.
 
 **`statueLevel` is never serialized.** `SerializeRogueBlockInternal` writes `weatherState`,
 `timeOfDayMinutes`, `seasonCounter` but no statue field — it is derived from quest-completion state
