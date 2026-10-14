@@ -220,6 +220,25 @@ SAV_OUT=save-out-of-adventure.sav SAV_IN=save-in-adventure.sav python3 tools/dif
   the in-adventure vs overworld split was found
 - `er_iv_edit.py`, `er_moveswap.py`, `er_sav_inspect.py` — early standalone Python prototypes
 
+### Layout rules the UI follows
+
+Two rules earned the hard way, both pinned by tests:
+
+- **Wrap, don't pan.** Content rows reflow to the panel width and the body area
+  scrolls vertically only. A `Grid` that wants more width than its panel has takes
+  it, and egui unions that into the `Ui`'s max_rect, so the overflow silently
+  widens the wrap width of every label that follows: at the default window width
+  this is how the Mon tab's Ability picker ended up off-screen with no scrollbar
+  to reach it. Regions that genuinely cannot wrap (the six-column decoration
+  table) keep a scrollbar *inside their own frame*, and the hub/house tile canvases
+  shrink their cells to the width they were given instead of asking for one.
+- **A picker row carries its own label.** Popup rows are painted, not `Button`s:
+  a button centers its galley inside the row, and a row can be wider than the
+  frame drawing it, so the name was clipped away and the list looked like a
+  column of bare icons. The sprite owns the row's left edge and the text starts
+  after it; the synthetic "none" row gets no sprite and no fallback badge.
+
+
 ## Roadmap
 
 - [x] Decode and edit the Rogue save block (quests, campaigns, daycare, hub map, difficulty config)
