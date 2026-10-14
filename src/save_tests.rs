@@ -513,6 +513,57 @@ mod tests {
         eprintln!("ball ids in this save: {}", named.join(", "));
     }
 
+    /// The Safari Zone row now names the ability its slot resolves to and the gender
+    /// its flag means. In a real save every stored value must therefore name
+    /// something real -- a row that falls back to "no ability in this slot" means the
+    /// species table or the slot decode is wrong.
+    #[test]
+    fn every_safari_row_in_a_real_save_names_its_ability_and_gender() {
+        let Some(path) = std::env::var("ER_TEST_SAVE")
+            .ok()
+            .filter(|p| std::path::Path::new(p).exists())
+        else {
+            eprintln!("every_safari_row_in_a_real_save: ER_TEST_SAVE not set/found, skipping");
+            return;
+        };
+        let sf = SaveFile::open(&path).unwrap();
+        let rb = sf.rogue_block().unwrap();
+        let mut rows = 0;
+        for i in 0..rb.safari_f.n {
+            let Some(s) = sf.safari_mon(&rb, i) else {
+                continue;
+            };
+            let sp = s.species();
+            if sp == 0 {
+                continue;
+            }
+            rows += 1;
+            let slot = s.ability_slot().raw();
+            let label = crate::lookup::ability_slot_options(sp, slot)
+                .into_iter()
+                .find(|(id, _)| *id == slot as u16)
+                .map(|(_, l)| l)
+                .unwrap();
+            assert_ne!(
+                label, "no ability in this slot",
+                "safari row {i} (species {sp}) slot {slot} resolves to no ability"
+            );
+            assert_ne!(
+                label, "slot outside this species' ability list",
+                "safari row {i} stores slot {slot}, past this species' list"
+            );
+            let flag = s.gender().raw();
+            assert!(
+                crate::lookup::gender_flag_options(sp, flag)
+                    .iter()
+                    .any(|(id, _)| *id == flag as u16),
+                "safari row {i} gender flag {flag} is not offered by the picker"
+            );
+        }
+        eprintln!("safari rows checked: {rows}");
+        assert!(rows > 0, "expected populated safari rows in this save");
+    }
+
     #[test]
     #[ignore = "manual: prints derived gender + resolved ability for a real save, run with --ignored"]
     fn dump_mon_derived_fields() {
@@ -555,6 +606,42 @@ mod tests {
                 println!("box {bx}: {}", names.join(", "));
             }
         }
+    }
+
+    /// Each safari roster row is bit-packed fields whose names only exist via the
+    /// species table, so this prints every populated row with the names the game
+    /// would use (ability / gender / ball). Ground truth for the roster UI.
+    #[test]
+    #[ignore = "manual: prints safari roster rows with resolved names, run with --ignored"]
+    fn dump_safari_roster() {
+        let path = std::env::var("ER_TEST_SAVE").unwrap();
+        let sf = SaveFile::open(&path).unwrap();
+        let rb = sf.rogue_block().unwrap();
+        let mut populated = 0;
+        for i in 0..rb.safari_f.n {
+            let Some(s) = sf.safari_mon(&rb, i) else {
+                continue;
+            };
+            let sp = s.species();
+            if sp == 0 {
+                continue;
+            }
+            populated += 1;
+            println!(
+                "safari[{i:3}] sp {:>4} {:<13} abil slot {:>2} -> {:<18} gender {:>2} -> {:<9} ball {:>2} ({})",
+                sp,
+                species_name(sp),
+                s.ability_slot().raw(),
+                crate::lookup::ability_label(sp, s.ability_slot().raw()),
+                s.gender().raw(),
+                crate::lookup::gender_for_species(sp, s.gender().raw())
+                    .map(|g| g.label())
+                    .unwrap_or("?"),
+                s.pokeball().raw(),
+                ball_name(s.pokeball().raw() as u8),
+            );
+        }
+        println!("populated safari rows: {populated} of n={}", rb.safari_f.n);
     }
 
     #[test]

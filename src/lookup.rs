@@ -114,6 +114,61 @@ pub fn ability_label(sp: u16, slot: u8) -> String {
     }
 }
 
+/// The ability a species has in `slot`, as a name. Same resolution as
+/// `ability_label`, but static so a picker can take it straight into its table.
+pub fn ability_slot_label(sp: u16, slot: u8) -> &'static str {
+    match ability_for(sp, slot).and_then(ability_name) {
+        Some(n) => n,
+        None => "no ability in this slot",
+    }
+}
+
+/// The ability slots worth offering for a species, labelled with the ability they
+/// resolve to. A slot the species does not have is left out (picking it would only
+/// store a number), but the currently stored value is always present so an odd save
+/// still renders instead of showing a blank.
+pub fn ability_slot_options(sp: u16, current: u8) -> Vec<(u16, &'static str)> {
+    let mut v: Vec<(u16, &'static str)> = (0..=MAX_ABILITY_SLOT)
+        .filter(|s| ability_for(sp, *s).is_some())
+        .map(|s| (s as u16, ability_slot_label(sp, s)))
+        .collect();
+    if !v.iter().any(|(id, _)| *id == current as u16) {
+        v.push((current as u16, "slot outside this species' ability list"));
+    }
+    v
+}
+
+/// What the saved 3-bit gender flag means for this species, spelled out. The flag
+/// is only decisive for variable-ratio species (Rogue forces those to 50% female),
+/// so for a fixed-gender species the label says the flag is ignored rather than
+/// pretending the flag picked the gender.
+pub fn gender_flag_label(sp: u16, flag: u8) -> &'static str {
+    match gender_for_species(sp, flag) {
+        Some(Gender::Male) if gender_is_fixed(sp) == Some(true) => "Male (always, species-fixed)",
+        Some(Gender::Female) if gender_is_fixed(sp) == Some(true) => {
+            "Female (always, species-fixed)"
+        }
+        Some(Gender::Genderless) => "Genderless (flag ignored)",
+        Some(Gender::Male) => "Male",
+        Some(Gender::Female) => "Female",
+        None => "unknown species: raw flag",
+    }
+}
+
+/// The gender flags a species honors, labelled. A fixed-gender species honors none,
+/// so its list just names the stored flag -- showing Male/Female there would imply
+/// an edit that the game throws away.
+pub fn gender_flag_options(sp: u16, current: u8) -> Vec<(u16, &'static str)> {
+    if gender_is_fixed(sp) == Some(true) {
+        return vec![(current as u16, gender_flag_label(sp, current))];
+    }
+    let mut v = vec![(0u16, "Male"), (1u16, "Female")];
+    if current > 1 {
+        v.push((current as u16, "Female (any nonzero flag)"));
+    }
+    v
+}
+
 /// Whether a species has a fixed gender, i.e. whether `genderFlag` is ignored.
 /// `None` = species not in the table (ratio unknown).
 pub fn gender_is_fixed(sp: u16) -> Option<bool> {
@@ -139,6 +194,69 @@ pub fn gender_for_species(sp: u16, flag: u8) -> Option<Gender> {
 
 #[cfg(test)]
 mod tests {
+    /// The Safari Zone row (and any other picker) must name the ability the species
+    /// has in a slot. These expectations are the generated table's own values, read
+    /// off a live save dump, not a guess about which ability "should" be there.
+    #[test]
+    fn ability_slot_labels_come_from_the_species_table() {
+        for (sp, slot, want) in [
+            (454u16, 1u8, "Dry Skin"),   // Toxicroak
+            (990, 0, "Gorilla Tactics"), // Galarian Darmanitan (form id)
+            (1005, 0, "Sap Sipper"),     // Hisuian Sliggoo (form id)
+            (703, 2, "Sturdy"),          // Carbink, hidden slot
+            (297, 0, "Thick Fat"),       // Hariyama
+        ] {
+            assert_eq!(ability_slot_label(sp, slot), want, "sp {sp} slot {slot}");
+        }
+        // Options are the slots the species actually has, labelled.
+        // This ROM's own ordering (Gen 3 era: Guts is Hariyama's second ability,
+        // Sheer Force its hidden one), so the picker follows the game rather than
+        // modern games' numbering.
+        let opts = ability_slot_options(297, 0);
+        assert_eq!(
+            opts,
+            vec![(0, "Thick Fat"), (1, "Guts"), (2, "Sheer Force")],
+            "hariyama offers its three abilities"
+        );
+        // A stored slot the species has no entry for is still shown, honestly.
+        assert_eq!(
+            ability_slot_options(297, 6),
+            vec![
+                (0, "Thick Fat"),
+                (1, "Guts"),
+                (2, "Sheer Force"),
+                (6, "slot outside this species' ability list")
+            ]
+        );
+        // Form ids resolve through the same table: this ROM gives Hisuian Sliggoo
+        // Gooey in slot 2, which a hand-written list would likely get wrong.
+        assert_eq!(
+            ability_slot_options(1005, 2),
+            vec![(0, "Sap Sipper"), (1, "Shell Armor"), (2, "Gooey")]
+        );
+    }
+
+    /// Gender: the stored 3-bit flag only decides for variable-ratio species, and
+    /// the label has to say that instead of dressing up an ignored field.
+    #[test]
+    fn gender_flag_labels_say_what_the_flag_decides() {
+        assert_eq!(gender_flag_label(454, 0), "Male");
+        assert_eq!(gender_flag_label(454, 1), "Female");
+        // Carbink is genderless: the flag is decoration.
+        assert_eq!(gender_flag_label(703, 1), "Genderless (flag ignored)");
+        // A genderless species gets no Male/Female menu, just the honest label.
+        assert_eq!(
+            gender_flag_options(703, 1),
+            vec![(1, "Genderless (flag ignored)")]
+        );
+        // A variable-ratio species honors 0 and any nonzero flag; a stray flag value
+        // stays selectable so it can be fixed.
+        assert_eq!(
+            gender_flag_options(454, 5),
+            vec![(0, "Male"), (1, "Female"), (5, "Female (any nonzero flag)")]
+        );
+    }
+
     use super::*;
 
     #[test]

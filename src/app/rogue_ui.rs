@@ -883,30 +883,38 @@ impl Editor {
                             s.set_pokeball(crate::domain::Ball::from_raw(id));
                             edits.push((i, s.clone()));
                         }
-                        let mut ab = s.ability_slot().raw() as i32;
-                        if ui
-                            .add(
-                                egui::DragValue::new(&mut ab)
-                                    .clamp_range(0..=crate::lookup::MAX_ABILITY_SLOT as i32)
-                                    .prefix("ability "),
-                            )
-                            .on_hover_text("slot index into this species' ability list")
-                            .changed()
-                        {
-                            s.set_ability_slot(crate::domain::AbilitySlot::from_raw(ab as u8));
-                            edits.push((i, s.clone()));
+                        // The row stores a slot index and a 3-bit flag; what the game
+                        // shows is the ability that species has in that slot and the
+                        // gender that flag means for that species. Show those names,
+                        // with the stored number still visible next to them.
+                        let abil_opts =
+                            crate::lookup::ability_slot_options(sp, s.ability_slot().raw());
+                        if let Some(a) = self.combo(
+                            ui,
+                            &format!("saf{i}abil"),
+                            &abil_opts,
+                            s.ability_slot().raw() as u16,
+                            &Opts::named().compact().with_hint("filter abilities"),
+                        ) {
+                            let a = crate::domain::AbilitySlot::from_raw(a as u8);
+                            if a != s.ability_slot() {
+                                s.set_ability_slot(a);
+                                edits.push((i, s.clone()));
+                            }
                         }
-                        let mut gf = s.gender().raw() as i32;
-                        if ui
-                            .add(egui::DragValue::new(&mut gf).clamp_range(0..=7).prefix("gender "))
-                            .on_hover_text(
-                                "raw 3-bit genderFlag; the game only consults it for \
-                                 variable-ratio species",
-                            )
-                            .changed()
-                        {
-                            s.set_gender(crate::domain::GenderFlag::from_raw(gf as u8));
-                            edits.push((i, s.clone()));
+                        let gender_opts = crate::lookup::gender_flag_options(sp, s.gender().raw());
+                        if let Some(g) = self.combo(
+                            ui,
+                            &format!("saf{i}gend"),
+                            &gender_opts,
+                            s.gender().raw() as u16,
+                            &Opts::named().compact().with_hint("filter"),
+                        ) {
+                            let g = crate::domain::GenderFlag::from_raw(g as u8);
+                            if g != s.gender() {
+                                s.set_gender(g);
+                                edits.push((i, s.clone()));
+                            }
                         }
                         let mut pr = s.priority as i32;
                         if ui
