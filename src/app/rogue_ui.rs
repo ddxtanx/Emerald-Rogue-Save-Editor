@@ -803,12 +803,27 @@ impl Editor {
                     ui.checkbox(&mut self.show_empty_safari, "show empty slots");
                     ui.label(
                     "These are the wild safari-zone spawns (species, IVs, nature, ball, shiny, \
-                     spawn priority). Single-click a row to edit that entry in the Mon tab -- \
+                     spawn priority). Spawn priority is edited right on the row; single-click a row to
+                     edit that entry's species/IVs/nature/ball/ability/gender in the Mon tab -- \
                      the same editor every other Pokemon uses; double-click opens the floating \
                      editor.",
                 );
                     for (i, s) in rows {
-                        self.safari_row(ui, i, &s);
+                        let (row, pr) = self.safari_row(ui, i, &s);
+                        let _ = row;
+                        // Spawn priority is the one field that stays in the row: it is
+                        // safari-zone data (which spawn the game draws first), not a
+                        // property of the Pokemon, so the generic mon editor has no
+                        // section for it. Commit through the same setter the old inline
+                        // roster used; the record's other bytes are copied untouched.
+                        if let Some(pr) = pr {
+                            let mut c = s.clone();
+                            c.priority = pr;
+                            if let Some(sf) = self.file.as_mut() {
+                                sf.set_safari_mon(i, &c);
+                                self.dirty = true;
+                            }
+                        }
                     }
                 },
             );
@@ -952,7 +967,7 @@ impl Editor {
         ui: &mut egui::Ui,
         i: usize,
         s: &SafariMon,
-    ) -> egui::Response {
+    ) -> (egui::Response, Option<u8>) {
         let sel = Sel::Safari(i);
         let selected = self.sel.as_ref() == Some(&sel);
         let sp = s.species();
@@ -968,18 +983,40 @@ impl Editor {
         // rest of self: the closure hands back the row's response and the shared
         // click/double-click semantics are applied after it, exactly as the
         // roster rows do (a row of buttons would swallow `clicked`).
-        let row = {
+        let (row, pr) = {
             let icons = &self.icons;
             ui.horizontal(|ui| {
+                let mut pr_edit = None;
                 let ctx = ui.ctx().clone();
                 icons::draw_icon(ui, icons, &ctx, IconKind::Pokemon, sp, &name, 22.0);
                 ui.monospace(format!("{i:>3}"));
-                ui.selectable_label(selected, format!("{name}{shiny}"))
-                    .on_hover_text(format!("stored species id {sp}"))
+                let lab = ui
+                    .selectable_label(selected, format!("{name}{shiny}"))
+                    .on_hover_text(format!("stored species id {sp}"));
+                // Editable here, in the roster: priorityCounter decides which of
+                // these spawns the game draws first. The label still owns the
+                // click/select semantics; the DragValue is a separate widget.
+                let mut pr = s.priority as i32;
+                if ui
+                    .add(
+                        egui::DragValue::new(&mut pr)
+                            .clamp_range(0..=255)
+                            .speed(1)
+                            .suffix(" pri"),
+                    )
+                    .on_hover_text(
+                        "priorityCounter: the game draws higher-priority spawns first. \
+                             Safari-zone data, so it is edited here rather than in the mon editor.",
+                    )
+                    .changed()
+                {
+                    pr_edit = Some(pr as u8);
+                }
+                (lab, pr_edit)
             })
             .inner
         };
         self.apply_mon_row_click(&row, sel);
-        row
+        (row, pr)
     }
 }

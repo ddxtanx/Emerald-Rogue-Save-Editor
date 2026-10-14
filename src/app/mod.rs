@@ -1483,7 +1483,7 @@ mod tests {
         // PP-picker test: layout-dependent positions must be measured).
         let row_rect: std::cell::Cell<Option<egui::Rect>> = std::cell::Cell::new(None);
         let mut draw = |app: &mut Editor, ui: &mut egui::Ui| {
-            let r = app.safari_row(ui, 7, &s);
+            let r = app.safari_row(ui, 7, &s).0;
             row_rect.set(Some(r.rect));
         };
         run_frame(&ctx, &mut app, vec![], &mut draw); // warm the layout
@@ -1566,7 +1566,15 @@ mod tests {
             roster.contains(&name),
             "the compact roster row must paint {name}:\n{roster}"
         );
-        for gone in ["pri ", "31 all", "filter balls"] {
+        // Priority is safari-zone data, so it now lives ON the row...
+        for kept in [" pri"] {
+            assert!(
+                roster.contains(kept),
+                "the safari roster should expose spawn priority ({kept:?})"
+            );
+        }
+        // ...and the generic editor must not invent it.
+        for gone in ["31 all", "filter balls"] {
             assert!(
                 !roster.contains(gone),
                 "the roster must not draw the inline {gone:?} widget any more"

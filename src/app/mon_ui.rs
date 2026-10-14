@@ -38,7 +38,6 @@ pub(crate) enum MonSection {
     MetInfo,
     CachedStats,
     // Only the Rogue-block spawn entry has this one.
-    SpawnPriority,
 }
 
 /// What the 104-byte `Mon` record stores.
@@ -77,7 +76,6 @@ const SAFARI_SECTIONS: &[MonSection] = &[
     MonSection::Gender,
     MonSection::Ability,
     MonSection::Ivs,
-    MonSection::SpawnPriority,
 ];
 
 /// The selected record, whichever shape it is. This is the ONLY thing the mon
@@ -261,12 +259,9 @@ impl MonRec {
             _ => None,
         }
     }
-    pub(crate) fn safari_mut(&mut self) -> Option<&mut SafariMon> {
-        match self {
-            MonRec::Safari(s) => Some(s),
-            _ => None,
-        }
-    }
+    // No mutable safari view on purpose: the one spawn-only field (spawn
+    // priority) is edited on the Safari Zone roster row and commits through
+    // `SaveFile::set_safari_mon`, so nothing here mutates the 20-byte record.
 }
 
 impl Editor {
@@ -333,11 +328,6 @@ impl Editor {
         if rec.supports(MonSection::LevelExp) {
             if let Some(m) = rec.full_mut() {
                 changed |= self.mon_full_fields_ui(ui, m);
-            }
-        }
-        if rec.supports(MonSection::SpawnPriority) {
-            if let Some(s) = rec.safari_mut() {
-                changed |= self.mon_safari_fields_ui(ui, s);
             }
         }
 
@@ -904,35 +894,6 @@ impl Editor {
         }
         changed
     }
-
-    /// The field only the Rogue-block spawn entry stores: `priorityCounter`,
-    /// how strongly the game prefers this spawn. It used to sit inline in every
-    /// roster row; the row is compact now, so the widget lives here (drawn for
-    /// safari records only -- a caught Pokemon has no such byte).
-    fn mon_safari_fields_ui(&mut self, ui: &mut egui::Ui, s: &mut SafariMon) -> bool {
-        let mut changed = false;
-        ui.add_space(6.0);
-        ui.horizontal(|ui| {
-            let mut pr = s.priority as i32;
-            if ui
-                .add(
-                    egui::DragValue::new(&mut pr)
-                        .clamp_range(0..=255)
-                        .prefix("pri "),
-                )
-                .on_hover_text("priorityCounter: the game draws higher-priority entries first")
-                .changed()
-            {
-                s.priority = pr as u8;
-                changed = true;
-            }
-            // `customMonLookup` is an id into the Rogue custom-mon table that
-            // this entry may point at. Shown, not editable: nothing here can
-            // validate or create that table's entries.
-            ui.label(format!("customMonLookup {}", s.custom_lookup));
-        });
-        changed
-    }
 }
 
 /// Every glyph the last frame painted, concatenated. Test-only: it is how the
@@ -1011,7 +972,21 @@ mod tests {
         ] {
             assert!(rec.supports(shared), "the shared UI must offer {shared:?}");
         }
-        assert!(rec.supports(MonSection::SpawnPriority));
+        for sec in [
+            MonSection::Species,
+            MonSection::Nickname,
+            MonSection::Ball,
+            MonSection::Nature,
+            MonSection::Shiny,
+            MonSection::Gender,
+            MonSection::Ability,
+            MonSection::Ivs,
+        ] {
+            assert!(
+                rec.supports(sec),
+                "spawn entry should support {sec:?} in the shared editor"
+            );
+        }
         // The box record keeps everything the entry lacks.
         let full = MonRec::Full(Mon::blank(0, "OT", 252, 5));
         assert!(full.supports(MonSection::Moves) && full.supports(MonSection::LevelExp));
