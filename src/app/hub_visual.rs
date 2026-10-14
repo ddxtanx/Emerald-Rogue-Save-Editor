@@ -376,6 +376,38 @@ impl super::Editor {
         let slots = snap.len();
         let outside_end = HOME_DECOR_OUTSIDE.min(slots);
 
+        // The coordinate space comes from the game's own region table
+        // (sHomeRegionCoords, src/rogue_hub.c:123-128): the garden accepts props on
+        // x/y 4..31, the interior on 1..10, and the house footprint itself is
+        // x 15..19 / y 14..19. The viewport here used to be a guessed 24x24, which
+        // pushed a prop at (25,15) - the statue in a real save - outside the drawn
+        // grid and into the margin, where it read as a stray floating icon that
+        // could not even be hovered for its name.
+        struct Region {
+            x0: i32,
+            y0: i32,
+            x1: i32,
+            y1: i32,
+        }
+        const GARDEN: Region = Region {
+            x0: 4,
+            y0: 4,
+            x1: 31,
+            y1: 31,
+        };
+        const INTERIOR: Region = Region {
+            x0: 1,
+            y0: 1,
+            x1: 10,
+            y1: 10,
+        };
+        const HOUSE: Region = Region {
+            x0: 15,
+            y0: 14,
+            x1: 19,
+            y1: 19,
+        };
+
         let mut sel = ui
             .ctx()
             .data(|d| d.get_temp::<DecorSel>(egui::Id::new("house_decor_sel")))
@@ -392,9 +424,21 @@ impl super::Editor {
             .small()
             .weak(),
         );
-        let views: [(&'static str, std::ops::Range<usize>, f32, i32); 2] = [
-            ("Outdoor", 0usize..outside_end, 16.0_f32, 24),
-            ("Indoor", outside_end..slots, 16.0_f32, 24),
+        let views: [(&'static str, std::ops::Range<usize>, f32, i32, Region); 2] = [
+            (
+                "Outdoor",
+                0usize..outside_end,
+                16.0_f32,
+                GARDEN.x1 + 1,
+                GARDEN,
+            ),
+            (
+                "Indoor",
+                outside_end..slots,
+                16.0_f32,
+                INTERIOR.x1 + 1,
+                INTERIOR,
+            ),
         ];
         ui.horizontal(|ui| {
             ui.label("prop to place");
@@ -418,7 +462,7 @@ impl super::Editor {
                 let Some((px, py, which)) = sel.pending_tile else {
                     unreachable!("the button is disabled with no armed tile")
                 };
-                let (label, range, _, _) = &views[which as usize];
+                let (label, range, _, _, _) = &views[which as usize];
                 match range.clone().find(|i| !snap[*i].3) {
                     Some(i) => {
                         mut_edits.push((i, px as u8, py as u8, sel.variant, true));
@@ -448,16 +492,20 @@ impl super::Editor {
             }
         });
 
-        for (which, (label, range, cell, span)) in views.into_iter().enumerate() {
+        for (which, (label, range, cell, span, place)) in views.into_iter().enumerate() {
             if range.is_empty() {
                 continue;
             }
             ui.add_space(6.0);
             ui.strong(format!(
-                "{label} - slots {}..{}, {} placed",
+                "{label} - slots {}..{}, {} placed, placeable x {}..{} y {}..{}",
                 range.start,
                 range.end,
-                snap[range.clone()].iter().filter(|(_, _, _, a)| *a).count()
+                snap[range.clone()].iter().filter(|(_, _, _, a)| *a).count(),
+                place.x0,
+                place.x1,
+                place.y0,
+                place.y1
             ));
             let (_grid_rect, resp) = ui.allocate_exact_size(
                 Vec2::new(span as f32 * cell, span as f32 * cell),
@@ -484,6 +532,33 @@ impl super::Editor {
                         Pos2::new(origin.x + span as f32 * cell, y),
                     ],
                     egui::Stroke::new(0.4_f32, Color32::from_gray(50)),
+                );
+            }
+            // The band the game marks placeable, plus the house footprint it
+            // reserves: an anonymous field makes a prop next to the wall impossible
+            // to reason about, and the band is what tells you a prop sits off-map.
+            let band_rect = tile_rect(origin, cell, 0, 0, place.x0, place.y0)
+                .union(tile_rect(origin, cell, 0, 0, place.x1, place.y1));
+            painter.rect_stroke(
+                band_rect,
+                0.0,
+                egui::Stroke::new(1.0_f32, Color32::from_rgb(90, 150, 210)),
+            );
+            if which == 0 {
+                let foot = tile_rect(origin, cell, 0, 0, HOUSE.x0, HOUSE.y0)
+                    .union(tile_rect(origin, cell, 0, 0, HOUSE.x1, HOUSE.y1));
+                painter.rect_filled(foot, 0.0, Color32::from_gray(40));
+                painter.rect_stroke(
+                    foot,
+                    0.0,
+                    egui::Stroke::new(1.0_f32, Color32::from_gray(130)),
+                );
+                painter.text(
+                    foot.center(),
+                    egui::Align2::CENTER_CENTER,
+                    "house",
+                    egui::FontId::proportional(10.0_f32),
+                    Color32::from_gray(130),
                 );
             }
             // Placed props in this range. `on_hover_text` consumes the Response,
@@ -556,7 +631,21 @@ impl super::Editor {
                     }
                     // Marking a target is not an edit: no slot is touched and `dirty`
                     // stays false until the place button commits it.
-                    None => sel.pending_tile = Some((p.0, p.1, which as u8)),
+                    None => {
+                        sel.pending_tile = Some((p.0, p.1, which as u8));
+                        // A warning, not a veto: the region table is where the game
+                        // blits placeable tiles, which is not proof that it rejects a
+                        // prop outside that band, so the user is told and left to choose.
+                        if !(place.x0..=place.x1).contains(&p.0)
+                            || !(place.y0..=place.y1).contains(&p.1)
+                        {
+                            self.status = format!(
+                                "{label} ({},{}): outside the region the game marks \
+                                 placeable (x {}..{}, y {}..{}) - it may not appear in-game",
+                                p.0, p.1, place.x0, place.x1, place.y0, place.y1
+                            );
+                        }
+                    }
                 }
             }
             // Show the armed tile so the two-step flow has visible state.
@@ -965,6 +1054,29 @@ mod functional {
             before,
             count(&p.app),
             "with no tile marked, the place button must change nothing"
+        );
+    }
+
+    #[test]
+    fn the_garden_grid_reaches_every_tile_the_game_can_place_a_prop_on() {
+        let Some(path) = save_path() else { return };
+        let mut p = Panel::open(&path);
+        p.house(vec![]);
+        let rect = p.rect("house_grid_rect_Outdoor");
+        let cell = 16.0f32;
+        // sHomeRegionCoords puts the garden band at 4..31, and a real save keeps its
+        // statue at (25,15). Under the old guessed 24-tile viewport that tile fell
+        // outside the grid, into the margin, where it read as a stray floating icon.
+        assert!(
+            rect.width() >= 32.0 * cell && rect.height() >= 32.0 * cell,
+            "the outdoor grid must cover tiles 0..31, not 0..23 (got {} x {})",
+            rect.width(),
+            rect.height()
+        );
+        let statue_tile = rect.min + Vec2::new(25.5 * cell, 15.5 * cell);
+        assert!(
+            rect.contains(statue_tile),
+            "the tile (25,15) must sit inside the drawn grid so it can be clicked/hovered"
         );
     }
 
