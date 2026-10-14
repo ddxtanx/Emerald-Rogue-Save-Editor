@@ -25,8 +25,8 @@
 
 use crate::icons::{self, IconKind, IconStore};
 use egui::{
-    Align2, Button, Color32, Context, Frame, Id, Key, LayerId, Order, PointerButton, Rect,
-    ScrollArea, TextEdit, TextStyle, Ui, Vec2,
+    Align2, Button, Color32, Context, Frame, Id, Key, LayerId, Order, PointerButton, Pos2, Rect,
+    ScrollArea, Sense, TextEdit, TextStyle, Ui, Vec2,
 };
 
 /// Popup geometry / content options.
@@ -361,8 +361,16 @@ impl AreaPopup {
             .pivot(self.pivot)
             .show(ctx, |ui| {
                 let frame = Frame::popup(ui.style());
+                let width = self.min_width - frame.total_margin().sum().x;
                 let inner = frame.show(ui, |ui| {
-                    ui.set_min_width(self.min_width - frame.total_margin().sum().x);
+                    ui.set_min_width(width);
+                    // The same figure as the MAXIMUM. An `Area` hands its content the
+                    // whole remaining screen width, so a min-width alone let rows lay
+                    // out far wider than the frame that draws them: anything in a row
+                    // that was not glued to the left edge landed past the frame's
+                    // clip and disappeared (that is how the ball picker ended up
+                    // showing icons with no names beside them).
+                    ui.set_max_width(width);
                     ui.set_max_height(self.max_height);
                     contents(ui)
                 });
@@ -498,10 +506,15 @@ fn body(
             } else {
                 format!("  {name}")
             };
-            let resp = ui.add_sized(
-                Vec2::new(wide, row_height),
-                Button::new(label).min_size(Vec2::new(wide, row_height)),
-            );
+            // Rows are painted, not `Button`s. A button centers its galley inside
+            // `min_size`, and a row is as wide as the popup, so the name sat at the
+            // row's center - and whenever the row was wider than the frame that draws
+            // it, the name was clipped away entirely and the list read as a column of
+            // bare icons. Here the icon owns the left edge and the text follows it.
+            let resp = ui
+                .allocate_exact_size(Vec2::new(wide, row_height), Sense::click())
+                .1
+                .on_hover_cursor(egui::CursorIcon::PointingHand);
             if ui.is_rect_visible(resp.rect) {
                 let rect = resp.rect;
                 if r == hi {
@@ -509,6 +522,12 @@ fn body(
                         rect.shrink(1.0),
                         3.0,
                         ui.visuals().selection.bg_fill.gamma_multiply(0.45),
+                    );
+                } else if resp.hovered() {
+                    ui.painter().rect_filled(
+                        rect.shrink(1.0),
+                        3.0,
+                        ui.visuals().widgets.hovered.weak_bg_fill,
                     );
                 }
                 if opts.icons != IconKind::None {
@@ -527,6 +546,23 @@ fn body(
                         icon_rect,
                     );
                 }
+                // Text right of the icon (right of the left edge when there is no
+                // icon): the same `icon_pad` reservation the trigger button uses, so
+                // the sprite never lands on top of the name it is meant to label.
+                let text_x = rect.left()
+                    + if opts.icons == IconKind::None {
+                        4.0
+                    } else {
+                        4.0 + ICON_SIZE + 6.0
+                    };
+                let galley =
+                    ui.painter()
+                        .layout_no_wrap(label, row_font.clone(), ui.visuals().text_color());
+                ui.painter().galley(
+                    Pos2::new(text_x, rect.center().y - galley.size().y * 0.5),
+                    galley,
+                    ui.visuals().text_color(),
+                );
                 if id == current {
                     // mark the currently-selected row
                     let galley = ui.painter().layout_no_wrap(

@@ -480,3 +480,122 @@ fn the_footer_denominator_counts_rows_the_list_can_actually_show() {
         "the default convention hides a stored 0 row and offers no replacement"
     );
 }
+
+/// The pokeball picker looked like a column of bare icons: the names were being
+/// built, but each row laid out wider than the popup frame that draws it and a
+/// `Button` centers its galley, so every name landed past the frame's clip and
+/// vanished. A row must paint its name against its own left edge, clear of the
+/// sprite in front of it, and inside the frame it belongs to.
+#[test]
+fn icon_rows_paint_the_name_beside_the_icon_inside_the_frame() {
+    use egui::Shape;
+    let ctx = egui::Context::default();
+    let store = IconStore::default();
+    let table: Vec<(u16, &'static str)> = crate::game_data::balls().to_vec();
+    let opts = Opts::item()
+        .compact()
+        .with_hint("filter balls")
+        .with_none("(no ball)");
+    let frames: Vec<Vec<Event>> = vec![
+        vec![],
+        vec![],
+        move_to(BUTTON),
+        press(BUTTON),
+        release(BUTTON),
+        vec![],
+        vec![],
+    ];
+    let mut last = None;
+    for ev in frames {
+        let input = RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(1400.0, 900.0))),
+            focused: true,
+            events: ev,
+            ..Default::default()
+        };
+        let t = &table;
+        let o = &opts;
+        let s = &store;
+        last = Some(ctx.run(input, |ctx| {
+            egui::Area::new(Id::new("root"))
+                .fixed_pos(Pos2::new(100.0, 100.0))
+                .show(ctx, |ui| {
+                    let _ = show(ui, "probe", t, 1, o, s);
+                });
+        }));
+    }
+    let out = last.unwrap();
+    assert!(out
+        .shapes
+        .iter()
+        .any(|cs| { matches!(cs.shape, Shape::Text(_)) }));
+
+    // The popup publishes the rect it actually drew, so the test measures the same
+    // frame the user sees rather than re-deriving geometry.
+    let frame: Rect = ctx
+        .data(|d| d.get_temp::<Rect>(Id::new("scombo_frame_rect:probe")))
+        .expect("the picker publishes its own frame rect");
+    assert!(frame.width() >= 150.0, "the popup has a usable width");
+
+    // Names and sprites as painted this frame, not as intended.
+    let mut names: Vec<(String, f32, f32)> = Vec::new();
+    let mut sprites: Vec<(f32, f32, f32, f32)> = Vec::new();
+    fn walk(
+        shape: &Shape,
+        names: &mut Vec<(String, f32, f32)>,
+        sprites: &mut Vec<(f32, f32, f32, f32)>,
+    ) {
+        match shape {
+            Shape::Vec(v) => {
+                for s in v {
+                    walk(s, names, sprites);
+                }
+            }
+            Shape::Text(t) => names.push((t.galley.text().to_string(), t.pos.x, t.pos.y)),
+            Shape::Mesh(m) => {
+                let r = m.calc_bounds();
+                // The frame background is a mesh too; ignore the one that spans
+                // the popup, keep the small per-row sprites.
+                if r.width() < 40.0 && r.height() < 40.0 {
+                    sprites.push((r.left(), r.top(), r.right(), r.bottom()));
+                }
+            }
+            _ => {}
+        }
+    }
+    for cs in &out.shapes {
+        walk(&cs.shape, &mut names, &mut sprites);
+    }
+
+    let mut checked = 0;
+    for (text, x, y) in names {
+        let Some((id, name)) = table.iter().find(|(_, n)| text.contains(n)) else {
+            continue;
+        };
+        checked += 1;
+        assert!(
+            x >= frame.left(),
+            "row {id} ({name:?}) name must be inside its popup frame: x {x}, frame left {}",
+            frame.left()
+        );
+        assert!(
+            x < frame.left() + 120.0,
+            "row {id} ({name:?}) name sits against the row's left edge, not centered: x {x}"
+        );
+        let sprite_right = sprites
+            .iter()
+            .filter(|(_, t, _, b)| *t < y + 9.0 && *b > y)
+            .map(|(_, _, r, _)| *r)
+            .fold(f32::MIN, f32::max);
+        if sprite_right != f32::MIN {
+            assert!(
+                sprite_right <= x + 0.5,
+                "the {name:?} sprite (right edge {sprite_right}) must not sit on the name at x {x}"
+            );
+        }
+    }
+    assert!(
+        checked >= 9,
+        "ball rows must show their names as options; only {checked} name galleys were painted"
+    );
+}
