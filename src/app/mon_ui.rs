@@ -1,43 +1,361 @@
 //! Central Pokemon editor pane (fields of the selected mon).
+//!
+//! One editor, two record shapes. `MonRec` adapts the 104-byte party/box/fusion/
+//! daycare `Mon` and the 20-byte Rogue-block safari spawn entry (`SafariMon`) to
+//! the SAME field widgets: `mon_shared_fields_ui` draws what both shapes store,
+//! and each shape then draws only what its own bytes can actually hold
+//! (`mon_full_fields_ui` / `mon_safari_fields_ui`). A section the shape does not
+//! store gets no widget at all -- `supported_sections` is what says so -- because
+//! a widget with nowhere to write would rewrite a neighbouring field.
 
 use super::*;
 use crate::basestats::base_stats;
 use crate::searchable_combo::Opts;
 use crate::tables::MOVES;
 
+/// One part of the mon editor, so a record shape can name (or refuse) it.
+/// Hiding a section is a correctness statement, not cosmetics: an editor widget
+/// for a field the record does not store has nowhere to put its value.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum MonSection {
+    // Stored by BOTH record shapes (the shared field UI).
+    Species,
+    Nickname,
+    Ball,
+    Nature,
+    Shiny,
+    Gender,
+    Ability,
+    Ivs,
+    // Only the 104-byte box/party record has bytes for these.
+    HeldItem,
+    LevelExp,
+    OtIdentity,
+    PidChecksum,
+    Flags,
+    Evs,
+    Moves,
+    MetInfo,
+    CachedStats,
+    // Only the Rogue-block spawn entry has this one.
+    SpawnPriority,
+}
+
+/// What the 104-byte `Mon` record stores.
+const FULL_SECTIONS: &[MonSection] = &[
+    MonSection::Species,
+    MonSection::Nickname,
+    MonSection::Ball,
+    MonSection::Nature,
+    MonSection::Shiny,
+    MonSection::Gender,
+    MonSection::Ability,
+    MonSection::Ivs,
+    MonSection::HeldItem,
+    MonSection::LevelExp,
+    MonSection::OtIdentity,
+    MonSection::PidChecksum,
+    MonSection::Flags,
+    MonSection::Evs,
+    MonSection::Moves,
+    MonSection::MetInfo,
+    MonSection::CachedStats,
+];
+
+/// What a 20-byte Rogue-block safari spawn entry stores: `w0` is
+/// species:16 | hpIV:5 | atkIV:5 | defIV:5 | shiny:1, `w1` is
+/// speedIV:5 | spAtkIV:5 | spDefIV:5 | pokeball:5 | nature:5 | abilityNum:2 |
+/// genderFlag:1, then nickname[10], priorityCounter, customMonLookup. There is
+/// no room -- and no need -- for level/EXP, EVs, moves, OT/ID, PID or stats:
+/// the game builds the wild mon from scratch and copies these fields in.
+const SAFARI_SECTIONS: &[MonSection] = &[
+    MonSection::Species,
+    MonSection::Nickname,
+    MonSection::Ball,
+    MonSection::Nature,
+    MonSection::Shiny,
+    MonSection::Gender,
+    MonSection::Ability,
+    MonSection::Ivs,
+    MonSection::SpawnPriority,
+];
+
+/// The selected record, whichever shape it is. This is the ONLY thing the mon
+/// editor draws against, so the field widgets exist once.
+#[derive(Clone)]
+pub(crate) enum MonRec {
+    Full(Mon),
+    Safari(SafariMon),
+}
+
+impl MonRec {
+    pub(crate) fn species(&self) -> u16 {
+        match self {
+            MonRec::Full(m) => m.species(),
+            MonRec::Safari(s) => s.species(),
+        }
+    }
+    pub(crate) fn set_species(&mut self, v: u16) {
+        match self {
+            MonRec::Full(m) => m.set_species(v),
+            MonRec::Safari(s) => s.set_species(v),
+        }
+    }
+    pub(crate) fn nickname(&self) -> String {
+        match self {
+            MonRec::Full(m) => m.nickname(),
+            MonRec::Safari(s) => s.nickname(),
+        }
+    }
+    pub(crate) fn set_nickname(&mut self, s: &str) {
+        match self {
+            MonRec::Full(m) => m.set_nickname(s),
+            MonRec::Safari(rec) => rec.set_nickname(s),
+        }
+    }
+    /// The ball as the game stores it: an item id. `Mon` keeps it in a byte,
+    /// the spawn entry in a 5-bit field (masked by its own setter).
+    pub(crate) fn ball(&self) -> u16 {
+        match self {
+            MonRec::Full(m) => m.ball() as u16,
+            MonRec::Safari(s) => s.pokeball().raw(),
+        }
+    }
+    pub(crate) fn set_ball(&mut self, v: u16) {
+        match self {
+            MonRec::Full(m) => m.set_ball(v as u8),
+            MonRec::Safari(s) => s.set_pokeball(crate::domain::Ball::from_raw(v)),
+        }
+    }
+    pub(crate) fn nature(&self) -> crate::domain::Nature {
+        match self {
+            MonRec::Full(m) => m.nature(),
+            MonRec::Safari(s) => s.nature(),
+        }
+    }
+    pub(crate) fn set_nature(&mut self, n: crate::domain::Nature) {
+        match self {
+            MonRec::Full(m) => m.set_nature(n),
+            MonRec::Safari(s) => s.set_nature(n),
+        }
+    }
+    pub(crate) fn ability_slot(&self) -> crate::domain::AbilitySlot {
+        match self {
+            MonRec::Full(m) => m.ability_slot(),
+            MonRec::Safari(s) => s.ability_slot(),
+        }
+    }
+    pub(crate) fn set_ability_slot(&mut self, a: crate::domain::AbilitySlot) {
+        match self {
+            MonRec::Full(m) => m.set_ability_slot(a),
+            MonRec::Safari(s) => s.set_ability_slot(a),
+        }
+    }
+    pub(crate) fn gender_flag(&self) -> crate::domain::GenderFlag {
+        match self {
+            MonRec::Full(m) => m.gender(),
+            MonRec::Safari(s) => s.gender(),
+        }
+    }
+    pub(crate) fn set_gender_flag(&mut self, g: crate::domain::GenderFlag) {
+        match self {
+            MonRec::Full(m) => m.set_gender(g),
+            MonRec::Safari(s) => s.set_gender(g),
+        }
+    }
+    pub(crate) fn shiny(&self) -> bool {
+        match self {
+            MonRec::Full(m) => m.is_shiny(),
+            MonRec::Safari(s) => s.shiny(),
+        }
+    }
+    pub(crate) fn set_shiny(&mut self, v: bool) {
+        match self {
+            MonRec::Full(m) => m.set_shiny(v),
+            MonRec::Safari(s) => s.set_shiny(v),
+        }
+    }
+    pub(crate) fn iv(&self, st: crate::domain::StatIdx) -> u8 {
+        match self {
+            MonRec::Full(m) => m.iv(st),
+            MonRec::Safari(s) => s.iv(st),
+        }
+    }
+    pub(crate) fn set_iv(&mut self, st: crate::domain::StatIdx, v: u8) {
+        match self {
+            MonRec::Full(m) => m.set_iv(st, v),
+            MonRec::Safari(s) => s.set_iv(st, v),
+        }
+    }
+    /// All six IVs at once ("31 all" in the editor, "31 IVs" in the popup).
+    /// `Mon` has one dedicated setter for its packed word; the spawn entry has
+    /// six separate 5-bit fields, so its own accessors get the same value one
+    /// field at a time.
+    pub(crate) fn set_all_ivs(&mut self, v: u8) {
+        match self {
+            MonRec::Full(m) => m.set_all_ivs(v),
+            MonRec::Safari(s) => {
+                for st in crate::domain::StatIdx::ALL {
+                    s.set_iv(st, v);
+                }
+            }
+        }
+    }
+
+    /// Which editor sections this shape stores; anything else stays hidden.
+    pub(crate) fn supported_sections(&self) -> &'static [MonSection] {
+        match self {
+            MonRec::Full(_) => FULL_SECTIONS,
+            MonRec::Safari(_) => SAFARI_SECTIONS,
+        }
+    }
+    pub(crate) fn supports(&self, s: MonSection) -> bool {
+        self.supported_sections().contains(&s)
+    }
+
+    /// Editor heading for this shape. The spawn entry has no level to show and
+    /// its species name must read exactly like the Rogue tab's roster row.
+    pub(crate) fn heading(&self) -> String {
+        match self {
+            MonRec::Full(m) => m.display_name(),
+            MonRec::Safari(s) => {
+                let sp = species_name(s.species());
+                if s.species() == 0 {
+                    return "(empty safari slot)".into();
+                }
+                let nick = s.nickname();
+                if !nick.is_empty() && nick != sp {
+                    format!("{nick} ({sp})")
+                } else {
+                    sp.into()
+                }
+            }
+        }
+    }
+
+    /// Run once after an edit. `Mon` re-seals (substruct permutation, checksum,
+    /// encryption) exactly as the editor always has; `SafariMon`'s accessors
+    /// already wrote its two words, so there is nothing extra to seal.
+    pub(crate) fn commit(&mut self) {
+        match self {
+            MonRec::Full(m) => m.seal(),
+            MonRec::Safari(_) => {}
+        }
+    }
+
+    pub(crate) fn full(&self) -> Option<&Mon> {
+        match self {
+            MonRec::Full(m) => Some(m),
+            _ => None,
+        }
+    }
+    pub(crate) fn full_mut(&mut self) -> Option<&mut Mon> {
+        match self {
+            MonRec::Full(m) => Some(m),
+            _ => None,
+        }
+    }
+    pub(crate) fn safari(&self) -> Option<&SafariMon> {
+        match self {
+            MonRec::Safari(s) => Some(s),
+            _ => None,
+        }
+    }
+    pub(crate) fn safari_mut(&mut self) -> Option<&mut SafariMon> {
+        match self {
+            MonRec::Safari(s) => Some(s),
+            _ => None,
+        }
+    }
+}
+
 impl Editor {
     pub(crate) fn mon_editor_ui(&mut self, ui: &mut egui::Ui) {
-        let Some(mut m) = self.selected_mon() else {
+        let Some(mut rec) = self.selected_rec() else {
             ui.heading("No Pokémon selected");
             return;
         };
         let mut changed = false;
 
-        ui.heading(m.display_name());
-        // The form as its own detail: this ROM's species name embeds it
-        // ("Darmanitan Standard Mode"), and the heading above shows only the
-        // base name, so the form must be spelled out here.
-        if let Some(label) = form_label(m.species()) {
-            ui.label(format!("Form: {label}"));
+        // Identity header: only the box record has a PID/OTID/checksum and a
+        // flag byte. The spawn entry is a template, spelled out below.
+        if rec.supports(MonSection::PidChecksum) {
+            let Some(m) = rec.full() else {
+                return;
+            };
+            ui.heading(m.display_name());
+            // The form as its own detail: this ROM's species name embeds it
+            // ("Darmanitan Standard Mode"), and the heading above shows only
+            // the base name, so the form must be spelled out here.
+            if let Some(label) = form_label(m.species()) {
+                ui.label(format!("Form: {label}"));
+            }
+            let ck = m.checksum_ok();
+            ui.label(format!(
+                "PID {:08X}  OTID {:08X}  checksum {} ({})",
+                m.pid(),
+                m.otid(),
+                m.checksum_stored(),
+                if ck { "OK" } else { "CORRUPT" },
+            ));
+            // Flag byte (0x13 in the party struct): bad-egg / has-species /
+            // is-egg. Shown rather than edited because the game only ever
+            // sets them as a side effect of hatching or receiving a mon.
+            ui.label(format!(
+                "flags: {}has-species={} is-egg={}",
+                if m.is_bad_egg() { "BAD EGG, " } else { "" },
+                m.has_species(),
+                m.is_egg_boxflag(),
+            ));
+        } else if let Some(s) = rec.safari() {
+            ui.heading(rec.heading());
+            ui.colored_label(
+                egui::Color32::from_rgb(120, 190, 255),
+                "Rogue-block safari spawn entry (20 bytes): a wild-spawn template, not a caught \
+                 Pokemon. It stores no level/EXP, EVs, moves, OT/ID, PID or stats, so those \
+                 sections are hidden here instead of being invented.",
+            );
+            // The species picker's selected text is only as good as its id
+            // list: Rogue form ids have no vanilla table entry, so name the
+            // id that is actually on disk.
+            ui.label(format!(
+                "stored species id {} reads {}",
+                s.species(),
+                species_name(s.species())
+            ));
         }
-        let ck = m.checksum_ok();
-        ui.label(format!(
-            "PID {:08X}  OTID {:08X}  checksum {} ({})",
-            m.pid(),
-            m.otid(),
-            m.checksum_stored(),
-            if ck { "OK" } else { "CORRUPT" },
-        ));
-        // Flag byte (0x13 in the party struct): bad-egg / has-species / is-egg.
-        // They are shown rather than edited because the game only ever sets them
-        // as a side effect of hatching or receiving a mon.
-        ui.label(format!(
-            "flags: {}has-species={} is-egg={}",
-            if m.is_bad_egg() { "BAD EGG, " } else { "" },
-            m.has_species(),
-            m.is_egg_boxflag(),
-        ));
         ui.separator();
+
+        // The field widgets both shapes share, drawn once either way.
+        changed |= self.mon_shared_fields_ui(ui, &mut rec);
+        // ...then only the sections this shape's own bytes can store. Which
+        // those are is the record's answer, not a match on the enum.
+        if rec.supports(MonSection::LevelExp) {
+            if let Some(m) = rec.full_mut() {
+                changed |= self.mon_full_fields_ui(ui, m);
+            }
+        }
+        if rec.supports(MonSection::SpawnPriority) {
+            if let Some(s) = rec.safari_mut() {
+                changed |= self.mon_safari_fields_ui(ui, s);
+            }
+        }
+
+        if changed {
+            rec.commit();
+            // Safari records go back through `SaveFile::set_safari_mon`, the same
+            // commit path the Rogue tab's inline rows used; see `apply_rec`.
+            self.apply_rec(&rec);
+        }
+    }
+
+    /// The field widgets BOTH record shapes store, drawn once for either of
+    /// them: species, nickname, ball, nature, shiny, gender, ability slot and
+    /// the six IVs. `SafariMon` packs all eight into its two bitfield words
+    /// through its own accessors, so nothing here has to know which shape it is
+    /// driving.
+    fn mon_shared_fields_ui(&mut self, ui: &mut egui::Ui, rec: &mut MonRec) -> bool {
+        let mut changed = false;
 
         egui::Grid::new("mongrid")
             .num_columns(4)
@@ -48,35 +366,22 @@ impl Editor {
                     ui,
                     "species",
                     species_picker_table(),
-                    m.species(),
+                    rec.species(),
                     &Opts::pokemon(),
                 ) {
-                    m.set_species(id);
-                    changed = true;
-                }
-                ui.label("Held item");
-                if let Some(id) = self.combo(
-                    ui,
-                    "item",
-                    all_items(),
-                    m.held_item(),
-                    &Opts::item().with_none("(none)"),
-                ) {
-                    m.set_held_item(id);
+                    rec.set_species(id);
                     changed = true;
                 }
                 ui.end_row();
 
                 ui.label("Nickname");
-                let mut nick = m.nickname();
+                let mut nick = rec.nickname();
                 if ui.add(egui::TextEdit::singleline(&mut nick)).changed() {
-                    m.set_nickname(&nick);
+                    rec.set_nickname(&nick);
                     changed = true;
                 }
-                ui.label("OT");
-                ui.label(m.ot_name());
                 ui.label("Ball");
-                let mut ball = m.ball();
+                let mut ball = rec.ball();
                 ui.horizontal(|ui| {
                     // Name, not id, and searchable - the request was that the ball
                     // menu say which ball the mon was caught in, using the same
@@ -89,14 +394,14 @@ impl Editor {
                         ui,
                         "ball",
                         crate::game_data::balls(),
-                        ball as u16,
+                        ball,
                         &Opts::item()
                             .compact()
                             .with_hint("filter balls")
                             .with_none("(no ball)"),
                     ) {
-                        ball = id as u8;
-                        m.set_ball(ball);
+                        ball = id;
+                        rec.set_ball(ball);
                         changed = true;
                     }
                     // Raw value stays editable: Emerald Rogue uses ball ids the
@@ -105,14 +410,176 @@ impl Editor {
                         .add(egui::DragValue::new(&mut ball).clamp_range(0..=31))
                         .on_hover_text(format!(
                             "raw ball id (the game's own field). Known name for {ball}: {}",
-                            crate::game_data::ball_name(ball)
+                            crate::game_data::ball_name(ball as u8)
                         ))
                         .changed()
                     {
-                        m.set_ball(ball);
+                        rec.set_ball(ball);
                         changed = true;
                     }
                 });
+                ui.end_row();
+
+                ui.label("Nature");
+                // 25 values, no useful ids: same picker as everything else, with
+                // the numbers hidden (nature 7 means nothing; "Relaxed" does).
+                let nat = rec.nature();
+                if let Some(n) = self.combo(
+                    ui,
+                    "nature",
+                    crate::tables::NATURE_IDS,
+                    nat.raw() as u16,
+                    &Opts::named().no_id().compact(),
+                ) {
+                    rec.set_nature(crate::domain::Nature::from_raw(n as u8));
+                    changed = true;
+                }
+                if !nat.is_known() {
+                    // pid%25 XOR the modifier can exceed 24. Shown rather than
+                    // clamped, because clamping would rewrite the mon.
+                    ui.colored_label(
+                        egui::Color32::GOLD,
+                        format!(
+                            "nature value {} is outside 0..=24 - left exactly as stored",
+                            nat.raw()
+                        ),
+                    );
+                }
+                ui.label("Shiny");
+                let mut sh = rec.shiny();
+                if ui.checkbox(&mut sh, "").changed() {
+                    rec.set_shiny(sh);
+                    changed = true;
+                }
+                // Gender: `genderFlag` is only decisive for variable-ratio
+                // species (Rogue forces those to exactly 50% female, so the flag
+                // alone decides and no pid comparison happens). A fixed-gender
+                // species ignores the flag entirely, so the picker lists what the
+                // flag MEANS for this species instead of offering a Male/Female
+                // choice the game throws away -- that is why the old row that
+                // claimed Metagross (flag 7, MON_GENDERLESS) was "Female (7)"
+                // cannot happen through this list.
+                let sp = rec.species();
+                let gflag = rec.gender_flag();
+                let gender_opts = crate::lookup::gender_flag_options(sp, gflag.raw());
+                ui.label("Gender");
+                if let Some(g) = self.combo(
+                    ui,
+                    "gender",
+                    &gender_opts,
+                    gflag.raw() as u16,
+                    &Opts::named().compact().with_hint("filter"),
+                ) {
+                    let g = crate::domain::GenderFlag::from_raw(g as u8);
+                    if g != rec.gender_flag() {
+                        rec.set_gender_flag(g);
+                        changed = true;
+                    }
+                }
+                if let Some(g) = crate::lookup::gender_for_species(sp, gflag.raw()) {
+                    // The word the game itself shows for this species and flag,
+                    // spelled out next to the picker: the picker names what the
+                    // flag MEANS, which is not always the same sentence.
+                    ui.label(format!("the game shows this one as {}", g.label()));
+                }
+                if !gflag.is_expected() {
+                    // Shown, never rewritten: a flag outside 0/1 means this save's
+                    // struct layout is not what the editor assumed.
+                    ui.colored_label(
+                        egui::Color32::GOLD,
+                        format!(
+                            "stored gender flag {} is not 0/1 - this save's struct layout does \
+                             not match what the editor assumed",
+                            gflag.raw()
+                        ),
+                    );
+                }
+                // `abilityNum` is a slot index into the species' ability list, so
+                // it is meaningless without the species: the picker lists the
+                // abilities THIS species actually has, labelled by the ability
+                // name, and NUM_ABILITY_SLOTS (3 here: 2 normal + 1 hidden) so a
+                // hidden ability is reachable. An odd stored slot is still listed,
+                // so a save we are misreading shows up instead of being rewritten.
+                ui.label("Ability");
+                let slot = rec.ability_slot();
+                let abil_opts = crate::lookup::ability_slot_options(sp, slot.raw());
+                if let Some(a) = self.combo(
+                    ui,
+                    "ability",
+                    &abil_opts,
+                    slot.raw() as u16,
+                    &Opts::named().compact().with_hint("filter abilities"),
+                ) {
+                    let a = crate::domain::AbilitySlot::from_raw(a as u8);
+                    if a != slot {
+                        rec.set_ability_slot(a);
+                        changed = true;
+                    }
+                }
+                if let crate::domain::AbilitySlot::Unexpected(v) = slot {
+                    // `ability_label` resolves the slot against this species, so
+                    // the note says what the game would find there rather than
+                    // just that the number is odd.
+                    ui.colored_label(
+                        egui::Color32::GOLD,
+                        format!(
+                            "stored ability slot {v} is outside this species' list - left \
+                             exactly as stored ({})",
+                            crate::lookup::ability_label(sp, v)
+                        ),
+                    );
+                }
+                ui.end_row();
+            });
+
+        // StatIdx labels the six columns; both shapes pack them in struct order
+        // (hp, atk, def, spe, spa, spd), so the label list cannot silently
+        // disagree with the column it prints.
+        ui.add_space(6.0);
+        ui.horizontal(|ui| {
+            ui.label("IVs");
+            for st in crate::domain::StatIdx::ALL {
+                let nm = st.label();
+                let mut v = rec.iv(st);
+                if ui
+                    .add(
+                        egui::DragValue::new(&mut v)
+                            .clamp_range(0..=31)
+                            .prefix(format!("{nm}: ")),
+                    )
+                    .changed()
+                {
+                    rec.set_iv(st, v);
+                    changed = true;
+                }
+            }
+            if ui.button("31 all").clicked() {
+                rec.set_all_ivs(31);
+                changed = true;
+            }
+        });
+        changed
+    }
+
+    /// The sections only the 104-byte box record stores: held item, OT,
+    /// level/EXP/friendship, EVs, moves, met info and the cached stat block. A
+    /// safari spawn entry has no bytes for any of them, so the editor offers
+    /// none of them there (see `SAFARI_SECTIONS`).
+    fn mon_full_fields_ui(&mut self, ui: &mut egui::Ui, m: &mut Mon) -> bool {
+        let mut changed = false;
+
+        ui.add_space(6.0);
+        egui::Grid::new("mongrid_extra")
+            .num_columns(4)
+            .spacing([12.0, 6.0])
+            .show(ui, |ui| {
+                ui.label("Held item");
+                if let Some(id) = self.combo(ui, "item", all_items(), m.held_item(), &Opts::item().with_none("(none)")) {
+                    m.set_held_item(id);
+                    changed = true;
+                }
+                ui.label("OT");
+                ui.label(m.ot_name());
                 ui.end_row();
 
                 // Level is derived from exp for every mon (box structs have no level
@@ -156,167 +623,9 @@ impl Editor {
                     m.set_friendship(fr);
                     changed = true;
                 }
-                ui.label("Nature");
-                // 25 values, no useful ids: same picker as everything else, with
-                // the numbers hidden (nature 7 means nothing; "Relaxed" does).
-                let nat = m.nature();
-                if let Some(n) = self.combo(
-                    ui,
-                    "nature",
-                    crate::tables::NATURE_IDS,
-                    nat.raw() as u16,
-                    &Opts::named().no_id().compact(),
-                ) {
-                    m.set_nature(crate::domain::Nature::from_raw(n as u8));
-                    changed = true;
-                }
-                if !nat.is_known() {
-                    // pid%25 XOR the modifier can exceed 24. Shown rather than
-                    // clamped, because clamping would rewrite the mon.
-                    ui.colored_label(
-                        egui::Color32::GOLD,
-                        format!("nature value {} is outside 0..=24 - left exactly as stored", nat.raw()),
-                    );
-                }
-                ui.label("Shiny");
-                let mut sh = m.is_shiny();
-                if ui.checkbox(&mut sh, "").changed() {
-                    m.set_shiny(sh);
-                    changed = true;
-                }
-                // Gender: `genderFlag` is only consulted for variable-ratio
-                // species. The game returns the species' fixed value otherwise,
-                // so printing the raw bit claimed Metagross (flag 7, ratio
-                // MON_GENDERLESS) was "Female (7)".
-                let sp = m.species();
-                let gflag = m.gender();
-                let derived = crate::lookup::gender_for_species(sp, gflag.raw());
-                let shown = derived.unwrap_or(match gflag {
-                    crate::domain::GenderFlag::Male => crate::lookup::Gender::Male,
-                    _ => crate::lookup::Gender::Female,
-                });
-                let fixed = crate::lookup::gender_is_fixed(sp) == Some(true);
-                ui.label("Gender");
-                egui::ComboBox::from_id_source("gender")
-                    .selected_text(shown.label())
-                    .show_ui(ui, |ui| {
-                        if fixed {
-                            // Editing the flag cannot change what the game shows.
-                            ui.label(format!(
-                                "fixed by species; stored flag {} is ignored by the game",
-                                gflag.raw()
-                            ));
-                        } else if !gflag.is_expected() {
-                            ui.colored_label(
-                                egui::Color32::GOLD,
-                                format!(
-                                    "stored gender flag {} is not 0/1 - this save's struct layout \
-                                     does not match what the editor assumed",
-                                    gflag.raw()
-                                ),
-                            );
-                        } else {
-                            if derived.is_none() {
-                                ui.label(format!(
-                                    "species {sp} not in the gender table -- showing the raw flag ({gflag})"
-                                ));
-                            }
-                            for (val, g) in [
-                                (
-                                    crate::domain::GenderFlag::Male,
-                                    crate::lookup::Gender::Male,
-                                ),
-                                (
-                                    crate::domain::GenderFlag::Female,
-                                    crate::lookup::Gender::Female,
-                                ),
-                            ] {
-                                if ui
-                                    .selectable_label(
-                                        shown == g,
-                                        format!("{} ({})", g.label(), val.raw()),
-                                    )
-                                    .clicked()
-                                {
-                                    m.set_gender(val);
-                                    changed = true;
-                                }
-                            }
-                        }
-                    });
-                // `abilityNum` is a slot index into the species' ability list,
-                // so it is meaningless without the species. NUM_ABILITY_SLOTS is
-                // 3 in this build (2 normal + 1 hidden); the old loop ran
-                // 0..2, which left hidden abilities unselectable.
-                ui.label("Ability");
-                let slot = m.ability_slot();
-                egui::ComboBox::from_id_source("ability")
-                    .selected_text(format!(
-                        "{} (slot {})",
-                        crate::lookup::ability_label(sp, slot.raw()),
-                        slot.raw()
-                    ))
-                    .show_ui(ui, |ui| {
-                        // The three slots the game's NUM_ABILITY_SLOTS allows...
-                        for a in [
-                            crate::domain::AbilitySlot::First,
-                            crate::domain::AbilitySlot::Second,
-                            crate::domain::AbilitySlot::Hidden,
-                        ] {
-                            if ui
-                                .selectable_label(
-                                    slot == a,
-                                    format!(
-                                        "{} (slot {})",
-                                        crate::lookup::ability_label(sp, a.raw()),
-                                        a.raw()
-                                    ),
-                                )
-                                .clicked()
-                            {
-                                m.set_ability_slot(a);
-                                changed = true;
-                            }
-                        }
-                        // ...plus anything else actually on disk, so a save we are
-                        // misreading is shown rather than silently rewritten.
-                        if let crate::domain::AbilitySlot::Unexpected(v) = slot {
-                            if ui
-                                .selectable_label(true, format!("stored slot {v} - out of range"))
-                                .clicked()
-                            {
-                                changed = false;
-                            }
-                        }
-                    });
                 ui.end_row();
             });
 
-        ui.add_space(6.0);
-        ui.horizontal(|ui| {
-            ui.label("IVs");
-            for st in crate::domain::StatIdx::ALL {
-                let nm = st.label();
-                let mut v = m.iv(st);
-                if ui
-                    .add(
-                        egui::DragValue::new(&mut v)
-                            .clamp_range(0..=31)
-                            .prefix(format!("{nm}: ")),
-                    )
-                    .changed()
-                {
-                    m.set_iv(st, v);
-                    changed = true;
-                }
-            }
-            if ui.button("31 all").clicked() {
-                for st in crate::domain::StatIdx::ALL {
-                    m.set_iv(st, 31);
-                }
-                changed = true;
-            }
-        });
         ui.horizontal(|ui| {
             ui.label("EVs");
             let names = ["HP", "Atk", "Def", "Spe", "SpA", "SpD"];
@@ -593,10 +902,190 @@ impl Editor {
                 }
             });
         }
+        changed
+    }
 
-        if changed {
-            m.seal();
-            self.apply_mon(m);
+    /// The field only the Rogue-block spawn entry stores: `priorityCounter`,
+    /// how strongly the game prefers this spawn. It used to sit inline in every
+    /// roster row; the row is compact now, so the widget lives here (drawn for
+    /// safari records only -- a caught Pokemon has no such byte).
+    fn mon_safari_fields_ui(&mut self, ui: &mut egui::Ui, s: &mut SafariMon) -> bool {
+        let mut changed = false;
+        ui.add_space(6.0);
+        ui.horizontal(|ui| {
+            let mut pr = s.priority as i32;
+            if ui
+                .add(
+                    egui::DragValue::new(&mut pr)
+                        .clamp_range(0..=255)
+                        .prefix("pri "),
+                )
+                .on_hover_text("priorityCounter: the game draws higher-priority entries first")
+                .changed()
+            {
+                s.priority = pr as u8;
+                changed = true;
+            }
+            // `customMonLookup` is an id into the Rogue custom-mon table that
+            // this entry may point at. Shown, not editable: nothing here can
+            // validate or create that table's entries.
+            ui.label(format!("customMonLookup {}", s.custom_lookup));
+        });
+        changed
+    }
+}
+
+/// Every glyph the last frame painted, concatenated. Test-only: it is how the
+/// UI tests assert what the user would actually see (a widget that exists but
+/// is not painted, or is painted with the wrong name, still fails).
+#[cfg(test)]
+pub(crate) fn painted_text(out: &egui::FullOutput) -> String {
+    fn walk(shape: &egui::Shape, out: &mut String) {
+        match shape {
+            egui::Shape::Vec(v) => {
+                for s in v {
+                    walk(s, out);
+                }
+            }
+            egui::Shape::Text(t) => {
+                out.push_str(t.galley.text());
+                out.push('\n');
+            }
+            _ => {}
         }
+    }
+    let mut s = String::new();
+    for cs in &out.shapes {
+        walk(&cs.shape, &mut s);
+    }
+    s
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn safari_entry(species: u16) -> SafariMon {
+        let mut s = SafariMon::default();
+        s.nick = vec![0u8; 10];
+        s.set_species(species);
+        s
+    }
+
+    /// The shared field UI must be reachable for a Rogue-block safari entry, and
+    /// that record must name exactly the sections it has nowhere to store. A
+    /// spawn entry is 20 bytes of template: no level/EXP, EVs, moves, OT/ID, PID
+    /// or stat bytes exist, so the editor must hide those sections instead of
+    /// inventing widgets whose writes would land in a neighbouring field.
+    #[test]
+    fn a_safari_record_names_the_sections_it_lacks_and_reaches_the_shared_field_ui() {
+        let mut rec = MonRec::Safari(safari_entry(252)); // Treecko
+
+        // Hidden for a spawn entry -- the whole point of the section list.
+        for hidden in [
+            MonSection::LevelExp,
+            MonSection::Evs,
+            MonSection::Moves,
+            MonSection::OtIdentity,
+            MonSection::PidChecksum,
+            MonSection::Flags,
+            MonSection::HeldItem,
+            MonSection::MetInfo,
+            MonSection::CachedStats,
+        ] {
+            assert!(
+                !rec.supports(hidden),
+                "a safari entry must not offer {hidden:?}"
+            );
+        }
+        // Shared with the box record -- one implementation serves both.
+        for shared in [
+            MonSection::Species,
+            MonSection::Nickname,
+            MonSection::Ball,
+            MonSection::Nature,
+            MonSection::Shiny,
+            MonSection::Gender,
+            MonSection::Ability,
+            MonSection::Ivs,
+        ] {
+            assert!(rec.supports(shared), "the shared UI must offer {shared:?}");
+        }
+        assert!(rec.supports(MonSection::SpawnPriority));
+        // The box record keeps everything the entry lacks.
+        let full = MonRec::Full(Mon::blank(0, "OT", 252, 5));
+        assert!(full.supports(MonSection::Moves) && full.supports(MonSection::LevelExp));
+        assert_eq!(
+            full.supported_sections().len() + rec.supported_sections().len() - 8,
+            FULL_SECTIONS.len() + SAFARI_SECTIONS.len() - 8,
+            "the two section lists share the eight shared fields exactly"
+        );
+
+        // Writes go through the SafariMon accessors (the bitfields are the only
+        // place these values can live).
+        rec.set_iv(crate::domain::StatIdx::Spd, 31);
+        rec.set_iv(crate::domain::StatIdx::Hp, 7);
+        rec.set_shiny(true);
+        rec.set_ball(2);
+        rec.set_nature(crate::domain::Nature::from_raw(7));
+        rec.set_ability_slot(crate::domain::AbilitySlot::Hidden);
+        rec.set_gender_flag(crate::domain::GenderFlag::Female);
+        rec.set_nickname("SILVA");
+        let s = match rec.safari() {
+            Some(s) => s,
+            None => panic!("the adapter still wraps a SafariMon"),
+        };
+        assert_eq!(s.iv_at(5), 31, "Spd IV landed in w1");
+        assert_eq!(s.iv_at(0), 7, "HP IV landed in w0");
+        assert!(s.shiny());
+        assert_eq!(s.pokeball().raw(), 2);
+        assert_eq!(s.nature().raw(), 7);
+        assert_eq!(s.ability_slot().raw(), 2);
+        assert_eq!(s.gender().raw(), 1);
+        assert_eq!(s.nickname(), "SILVA");
+        assert_eq!(rec.species(), 252);
+        rec.set_all_ivs(31);
+        assert!(
+            (0..6).all(|i| rec.safari().map(|s| s.iv_at(i) == 31).unwrap_or(false)),
+            "\"31 all\" must reach all six 5-bit IV fields of the spawn entry"
+        );
+        // Sealing is a box-record operation; a spawn entry has nothing to seal.
+        rec.commit();
+
+        // And the ONE shared field UI renders for it, with no save file open.
+        // egui measures a `Grid` on the first frame and only paints its cells on
+        // the next, so the assertion runs against the LAST frame.
+        let mut app = Editor::default();
+        let ctx = egui::Context::default();
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(1500.0, 1200.0),
+            )),
+            focused: true,
+            ..Default::default()
+        };
+        let mut painted = String::new();
+        for _ in 0..3 {
+            let out = ctx.run(input.clone(), |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    app.mon_shared_fields_ui(ui, &mut rec);
+                });
+            });
+            painted = painted_text(&out);
+        }
+        for want in [
+            "Species", "Nickname", "Ball", "Nature", "Gender", "Ability", "IVs",
+        ] {
+            assert!(painted.contains(want), "the shared UI must paint {want}");
+        }
+        assert!(
+            painted.contains("SpD: 31"),
+            "the SafariMon's own IV must show in the shared IV row:\n{painted}"
+        );
+        assert!(
+            !painted.contains("Moves") && !painted.contains("EVs"),
+            "the shared UI must not draw box-only sections for a spawn entry"
+        );
     }
 }

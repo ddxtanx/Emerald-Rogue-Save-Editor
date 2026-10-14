@@ -797,140 +797,21 @@ impl Editor {
                 .filter_map(|i| sf.safari_mon(&rb, i).map(|s| (i, s)))
                 .filter(|(_, s)| s.species() != 0 || self.show_empty_safari)
                 .collect();
-            ui.collapsing(format!("Safari zone roster ({} entries)", rb.safari_f.n), |ui| {
-                ui.checkbox(&mut self.show_empty_safari, "show empty slots");
-                ui.label("These are the wild safari-zone spawns (species, IVs, nature, ball, shiny, spawn priority).");
-                let mut edits: Vec<(usize, SafariMon)> = Vec::new();
-                for (i, mut s) in rows {
-                    ui.horizontal(|ui| {
-                        ui.monospace(format!("{i:3}"));
-                        let mut sp = s.species();
-                        if let Some(v) = self.combo(
-                            ui,
-                            &format!("saf{i}sp"),
-                            species_picker_table(),
-                            sp,
-                            &Opts::pokemon(),
-                        ) {
-                            sp = v;
-                        }
-                        if sp != s.species() {
-                            s.set_species(sp);
-                            edits.push((i, s.clone()));
-                        }
-                        // The picker's selected text is only as good as its id
-                        // list, so also name the id on disk (Rogue form ids have
-                        // no entry in the vanilla species table and read blank).
-                        ui.label(format!(
-                            "= {} (id {sp})",
-                            crate::game_data::species_name(sp)
-                        ));
-                        let mut nick = s.nickname();
-                        if ui.add(egui::TextEdit::singleline(&mut nick).desired_width(84.0)).changed() {
-                            s.set_nickname(&nick);
-                            edits.push((i, s.clone()));
-                        }
-                        // StatIdx labels the six columns the struct actually
-                        // packs, in struct order; an unlabeled run of six IV
-                        // boxes is unusable, and a hand-written label list can
-                        // silently disagree with the index it prints.
-                        for st in crate::domain::StatIdx::ALL {
-                            let mut v = s.iv(st) as i32;
-                            if ui
-                                .add(
-                                    egui::DragValue::new(&mut v)
-                                        .clamp_range(0..=31)
-                                        .prefix(format!("{} ", st.label())),
-                                )
-                                .changed()
-                            {
-                                s.set_iv(st, v as u8);
-                                edits.push((i, s.clone()));
-                            }
-                        }
-                        let nat = s.nature();
-                        if let Some(n) = self.combo(
-                            ui,
-                            &format!("saf{i}nat"),
-                            crate::tables::NATURE_IDS,
-                            nat.raw() as u16,
-                            &Opts::named().no_id().compact(),
-                        ) {
-                            s.set_nature(crate::domain::Nature::from_raw(n as u8));
-                            edits.push((i, s.clone()));
-                        }
-                        let mut sh = s.shiny();
-                        if ui.checkbox(&mut sh, "shiny").changed() {
-                            s.set_shiny(sh);
-                            edits.push((i, s.clone()));
-                        }
-                        // Ball / ability slot / gender flag: the game copies all
-                        // three into the wild mon it generates, so they are worth
-                        // showing here even though the mon does not exist yet.
-                        let ball = s.pokeball();
-                        if let Some(id) = self.combo(
-                            ui,
-                            &format!("saf{i}ball"),
-                            crate::game_data::balls(),
-                            ball.raw(),
-                            // Item icons again: the stored value is the ball's item id,
-                            // so the row can show that ball's real sprite.
-                            &Opts::item()
-                                .compact()
-                                .with_hint("filter balls")
-                                .with_none("(no ball)"),
-                        ) {
-                            s.set_pokeball(crate::domain::Ball::from_raw(id));
-                            edits.push((i, s.clone()));
-                        }
-                        // The row stores a slot index and a 3-bit flag; what the game
-                        // shows is the ability that species has in that slot and the
-                        // gender that flag means for that species. Show those names,
-                        // with the stored number still visible next to them.
-                        let abil_opts =
-                            crate::lookup::ability_slot_options(sp, s.ability_slot().raw());
-                        if let Some(a) = self.combo(
-                            ui,
-                            &format!("saf{i}abil"),
-                            &abil_opts,
-                            s.ability_slot().raw() as u16,
-                            &Opts::named().compact().with_hint("filter abilities"),
-                        ) {
-                            let a = crate::domain::AbilitySlot::from_raw(a as u8);
-                            if a != s.ability_slot() {
-                                s.set_ability_slot(a);
-                                edits.push((i, s.clone()));
-                            }
-                        }
-                        let gender_opts = crate::lookup::gender_flag_options(sp, s.gender().raw());
-                        if let Some(g) = self.combo(
-                            ui,
-                            &format!("saf{i}gend"),
-                            &gender_opts,
-                            s.gender().raw() as u16,
-                            &Opts::named().compact().with_hint("filter"),
-                        ) {
-                            let g = crate::domain::GenderFlag::from_raw(g as u8);
-                            if g != s.gender() {
-                                s.set_gender(g);
-                                edits.push((i, s.clone()));
-                            }
-                        }
-                        let mut pr = s.priority as i32;
-                        if ui
-                            .add(egui::DragValue::new(&mut pr).clamp_range(0..=255).prefix("pri "))
-                            .changed()
-                        {
-                            s.priority = pr as u8;
-                            edits.push((i, s.clone()));
-                        }
-                    });
-                }
-                for (i, s) in edits {
-                    self.file.as_mut().unwrap().set_safari_mon(i, &s);
-                    self.dirty = true;
-                }
-            });
+            ui.collapsing(
+                format!("Safari zone roster ({} entries)", rb.safari_f.n),
+                |ui| {
+                    ui.checkbox(&mut self.show_empty_safari, "show empty slots");
+                    ui.label(
+                    "These are the wild safari-zone spawns (species, IVs, nature, ball, shiny, \
+                     spawn priority). Single-click a row to edit that entry in the Mon tab -- \
+                     the same editor every other Pokemon uses; double-click opens the floating \
+                     editor.",
+                );
+                    for (i, s) in rows {
+                        self.safari_row(ui, i, &s);
+                    }
+                },
+            );
         }
 
         if rb.ok && rb.unique_f.n > 0 {
@@ -1056,5 +937,49 @@ impl Editor {
                  stashed block above is the *hub* state (and vice versa when at the hub).",
             );
         }
+    }
+
+    /// One compact safari row: index, species icon, species name (plus a short
+    /// shiny marker). Everything else the entry stores -- nickname, the six IVs,
+    /// nature, ball, ability slot, gender flag, spawn priority -- lives in the
+    /// shared Mon-tab editor, which these rows open through the same click
+    /// plumbing as the roster and daycare rows (`apply_mon_row_click`). A row
+    /// carrying twelve inline widgets made a 60-row list unreadable, and the
+    /// editor already has those widgets. Returns the row's response so a caller
+    /// (or a test) can measure where the clickable row actually landed.
+    pub(crate) fn safari_row(
+        &mut self,
+        ui: &mut egui::Ui,
+        i: usize,
+        s: &SafariMon,
+    ) -> egui::Response {
+        let sel = Sel::Safari(i);
+        let selected = self.sel.as_ref() == Some(&sel);
+        let sp = s.species();
+        // `species_name` is exactly what the Mon-tab heading prints for a spawn
+        // entry (`MonRec::heading`), so the row and the editor cannot disagree.
+        let name = if sp == 0 {
+            "(empty)".to_string()
+        } else {
+            species_name(sp).to_string()
+        };
+        let shiny = if s.shiny() { " [shiny]" } else { "" };
+        // `icons` is borrowed for the whole row, so the row may not touch the
+        // rest of self: the closure hands back the row's response and the shared
+        // click/double-click semantics are applied after it, exactly as the
+        // roster rows do (a row of buttons would swallow `clicked`).
+        let row = {
+            let icons = &self.icons;
+            ui.horizontal(|ui| {
+                let ctx = ui.ctx().clone();
+                icons::draw_icon(ui, icons, &ctx, IconKind::Pokemon, sp, &name, 22.0);
+                ui.monospace(format!("{i:>3}"));
+                ui.selectable_label(selected, format!("{name}{shiny}"))
+                    .on_hover_text(format!("stored species id {sp}"))
+            })
+            .inner
+        };
+        self.apply_mon_row_click(&row, sel);
+        row
     }
 }
