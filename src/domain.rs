@@ -15,7 +15,7 @@
 
 use crate::format::{HOME_STYLE_EXTERIOR, HOME_STYLE_INTERIOR, HOME_STYLE_PATH};
 use crate::game_data::{
-    BALLS, BATTLE_FORMATS, CONFIG_RANGES, CONFIG_TOGGLES, DIFF_PRESETS, GAME_MODES, REVISION_MODES,
+    BATTLE_FORMATS, CONFIG_RANGES, CONFIG_TOGGLES, DIFF_PRESETS, GAME_MODES, REVISION_MODES,
     TRAINER_ORDERS,
 };
 use crate::game_data::{HUB_AREAS, HUB_UPGRADES, SEASONS};
@@ -186,8 +186,12 @@ indexed_domain!(
     crate::deco_variants::DECOR_VARIANTS
 );
 
-/// `ball` field. Unlike the indexed domains this is an *id*, not a table index:
-/// the vanilla table runs 1..=15 with gaps and Rogue adds ids past it.
+/// `ball` field. Unlike the indexed domains this is an *id*, not a table index: it is
+/// the 5-bit `pokeball` ITEM id (`pokeball:5`, include/pokemon.h:120), which on this
+/// branch runs contiguously 1..=28 (`FIRST_BALL`=ITEM_POKE_BALL ..
+/// `LAST_BALL`=ITEM_ROGUE_BALL). Names/ids come from the item table itself via
+/// `game_data::balls()` so the mon panel and the bag tab can never disagree about what
+/// an id means.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 pub struct Ball(pub u16);
 impl Ball {
@@ -198,11 +202,13 @@ impl Ball {
         self.0
     }
     pub fn is_known(self) -> bool {
-        BALLS.iter().any(|(id, _)| *id == self.0)
+        crate::game_data::balls()
+            .iter()
+            .any(|(id, _)| *id == self.0)
     }
     /// The ball's name, or `"?"` for an id the table has no entry for.
     pub fn name(self) -> &'static str {
-        BALLS
+        crate::game_data::balls()
             .iter()
             .find(|(id, _)| *id == self.0)
             .map(|(_, n)| *n)
@@ -616,11 +622,17 @@ mod tests {
         assert_eq!(PathStyle::from_raw(4).name(), "Muddy Tracks");
         assert!(!PathStyle::from_raw(5).is_known());
         assert_eq!(PathStyle::from_raw(5).name(), "?");
-        // A Rogue ball id past the vanilla table is legal and must not be
-        // renamed or rejected, but it is not nameable either.
+        // An id outside the 5-bit field's meaningful range must stay raw, not be
+        // renamed or rejected.
         assert!(!Ball::from_raw(200).is_known());
-        assert_eq!(Ball::from_raw(4).name(), "Poké Ball");
+        // The branch truth, and the reason this test exists: on this expansion branch
+        // id 1 IS the Poké Ball and id 4 is the Master Ball. The hand-written table
+        // this replaced carried the 2.2.07-era master-branch numbering, which named
+        // these two the other way round.
+        assert_eq!(Ball::from_raw(1).name(), "Poke Ball");
+        assert_eq!(Ball::from_raw(4).name(), "Master Ball");
         assert!(Ball::from_raw(4).is_known());
+        assert!(Ball::from_raw(crate::game_data::LAST_BALL).is_known());
     }
 
     /// The bug the three style types exist to prevent: the slots hold different

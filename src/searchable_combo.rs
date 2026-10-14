@@ -87,6 +87,11 @@ impl Opts {
         self.none_label = Some(label);
         self
     }
+    /// Rename the search-field hint for a narrow list (balls, styles...).
+    pub fn with_hint(mut self, hint: &'static str) -> Self {
+        self.hint = hint;
+        self
+    }
     /// Drop the numeric id from rows and from the trigger label. For domains where
     /// the id carries no information (the 25 natures), showing it is noise.
     pub fn no_id(mut self) -> Self {

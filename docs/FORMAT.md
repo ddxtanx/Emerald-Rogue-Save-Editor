@@ -427,9 +427,10 @@ versa: exterior has 5 entries, interior 6, path 5).
 
 Every type keeps the byte it read. `from_raw` never rejects, `raw()` returns what
 was on disk, and `is_known()` tells the UI whether to name the value or warn. That
-is a format requirement, not a style choice: Rogue ball ids run past the vanilla
-table, ability slot 2 only exists in the expansion build's 2-bit field, and the
-effective nature (`pid % 25` XOR the stored modifier) can exceed 24. An enum that
+is a format requirement, not a style choice: the ball field is a 5-bit **item id**
+whose numbering is branch-specific (see below), ability slot 2 only exists in the
+expansion build's 2-bit field, and the effective nature (`pid % 25` XOR the stored
+modifier) can exceed 24. An enum that
 clamped on read would turn a byte the game wrote into a byte the editor invented,
 which breaks the byte-for-byte round-trip the tests hold.
 
@@ -443,7 +444,36 @@ which breaks the byte-for-byte round-trip the tests hold.
 | `ExteriorStyle`/`InteriorStyle`/`PathStyle` | `homeStyles[0..3]` | separate tables, separate types |
 | `HubArea` / `Upgrade` | `areaBuiltFlags`, `upgradeFlags` | named by `HUB_AREAS` / `HUB_UPGRADES` |
 | `DecorVariant` | `homeDecorations[].decorVariant` | `DecorationExporter` enum order |
-| `Ball` | ball | id-keyed, not positional (Rogue ids exceed the vanilla table) |
+| `Ball` | `pokeball:5` | a 5-bit **item id**: `FIRST_BALL..=LAST_BALL` = 1..=28 here (`ITEM_POKE_BALL` .. `ITEM_ROGUE_BALL`). Names come from the item table itself (`game_data::balls()`), never a second hand-written list |
+
+### Ball ids: the field is an item id, and the numbering is branch-specific
+
+`/*0x0A*/ u16 pokeball:5; //31 balls` (`include/pokemon.h:120`). A ball IS an item to
+the game: `value = ITEM_POKE_BALL; SetBoxMonData(boxMon, MON_DATA_POKEBALL, &value)`
+(`src/pokemon.c:950-951`), a ball check reads
+`GetMonData(.., MON_DATA_POKEBALL) == ITEM_LUXURY_BALL` (`src/pokemon.c:3506`), and the
+summary screen converts the stored id back to a sprite with `ItemIdToBallId`
+(`src/pokemon_summary_screen.c:4645`). So a mon's ball value is an id into the item
+table, and the same value is the item icon key.
+
+Two trees number that range differently (`FIRST_BALL`/`LAST_BALL`,
+`include/constants/items.h:39-40` in the expansion tree, `:24-25` in the 2.2.07-era
+tree). The game's own header flags the hazard —
+`// Note: If moving ball IDs around, updating FIRST_BALL/LAST_BALL is not sufficient`.
+
+| tree | ITEM_POKE_BALL | ITEM_MASTER_BALL | ITEM_ULTRA_BALL | ITEM_ROGUE_BALL | `FIRST_BALL` |
+|---|---|---|---|---|---|
+| expansion / EX (this editor, verified live) | 1 | 4 | 3 | 28 | `ITEM_POKE_BALL` |
+| 2.2.07-era tree (`rogue-src-2207`) | 4 | 1 | 2 | 13 | `ITEM_MASTER_BALL` |
+
+A hand-written ball list carrying the 2.2.07-era numbering shipped in this editor
+and mislabelled real saves: a save holding 17 mons at id 1 displayed them as Master
+Balls, ids 23 (Safari Ball) and 27 (Cherish Ball) had no entry at all, and the bag tab
+called those same ids what they really are. `balls()` now filters the generated item
+table to `FIRST_BALL..=LAST_BALL`, with tests pinning id 1 = Poke Ball / id 4 = Master
+Ball / id 28 = Rogue Ball, requiring the range to be contiguous (a gap means the branch
+reordered items), requiring every ball name to equal the item name for that id, and
+checking every ball in a real save names a known ball.
 | `Pocket` | item pocket | id-keyed; `POCKET_NONE` items cannot be bagged |
 | `ConfigToggle` / `ConfigRange` | Lab difficulty config | toggle bit / range slot |
 | `BattleFormat`..`TrainerOrder` | range slot values | one option table per slot |

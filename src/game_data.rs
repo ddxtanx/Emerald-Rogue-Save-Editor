@@ -5,28 +5,44 @@
 use crate::tables;
 use crate::tables_extra;
 
-/// Poké Balls, in the game's own id order: `FIRST_BALL` (ITEM_MASTER_BALL = 1)
-/// through `LAST_BALL` (ITEM_ROGUE_BALL = 13) in include/constants/items.h.
-/// A mon's `ball` field stores this item id, so the same ids double as the icon
-/// keys (assets/icons/items/<id>.png).
-pub(crate) const BALLS: &[(u16, &str)] = &[
-    (1, "Master Ball"),
-    (2, "Ultra Ball"),
-    (3, "Great Ball"),
-    (4, "Poké Ball"),
-    (5, "Safari Ball"),
-    (6, "Net Ball"),
-    (7, "Dive Ball"),
-    (8, "Nest Ball"),
-    (9, "Repeat Ball"),
-    (10, "Timer Ball"),
-    (11, "Luxury Ball"),
-    (12, "Premier Ball"),
-    (13, "Rogue Ball"),
-];
+/// A mon's ball field is a **5-bit item id**, not a small table index:
+/// `/*0x0A*/ u16 pokeball:5; //31 balls` (include/pokemon.h:120). A ball IS an item
+/// to the game -- `value = ITEM_POKE_BALL; SetBoxMonData(boxMon, MON_DATA_POKEBALL,
+/// &value)` (src/pokemon.c:950-951), `GetMonData(.., MON_DATA_POKEBALL) ==
+/// ITEM_LUXURY_BALL` (src/pokemon.c:3506), and the summary screen turns the stored id
+/// back into a sprite with `ItemIdToBallId` (src/pokemon_summary_screen.c:4645).
+///
+/// So the ball list is the generated item table restricted to
+/// `FIRST_BALL..=LAST_BALL` (include/constants/items.h:39-40 -- on this expansion
+/// branch ITEM_POKE_BALL = 1 .. ITEM_ROGUE_BALL = 28), deliberately NOT a second
+/// hand-written list. An earlier copy of this table carried the 2.2.07-era
+/// master-branch numbering (see the `rogue-src-2207` checkout: ITEM_MASTER_BALL = 1,
+/// ITEM_POKE_BALL = 4, ITEM_ROGUE_BALL = 13), which made the mon panel label a Poké
+/// Ball "Master Ball" while the bag tab called that same id a Poké Ball. Deriving the
+/// list from the item table makes that contradiction unrepresentable, and the ids are
+/// also the icon keys (`assets/icons/items/<id>.png`), which is what lets the ball
+/// picker draw the real ball sprites.
+pub(crate) const FIRST_BALL: u16 = 1; // ITEM_POKE_BALL
+pub(crate) const LAST_BALL: u16 = 28; // ITEM_ROGUE_BALL
+
+pub(crate) fn balls() -> &'static [(u16, &'static str)] {
+    use std::sync::OnceLock;
+    static T: OnceLock<Vec<(u16, &'static str)>> = OnceLock::new();
+    T.get_or_init(|| {
+        all_items()
+            .iter()
+            .copied()
+            .filter(|(id, _)| (FIRST_BALL..=LAST_BALL).contains(id))
+            .collect()
+    })
+}
 
 pub(crate) fn ball_name(ball: u8) -> &'static str {
-    BALLS
+    if ball == 0 {
+        // ITEM_NONE: a mon with no ball recorded (eggs, event gifts that skip it).
+        return "(no ball)";
+    }
+    balls()
         .iter()
         .find(|(id, _)| *id == ball as u16)
         .map(|(_, n)| *n)
@@ -400,6 +416,51 @@ mod tests {
                 "base {base} of form {form} is itself a form: families must not chain"
             );
         }
+    }
+
+    /// The ball list must be the item table's own ball range. This is the
+    /// regression pin for the wrong-branch numbering: id 1 is the Poké Ball on this
+    /// branch, and the mon panel may never name an id differently from the bag tab.
+    #[test]
+    fn ball_ids_are_the_item_range_and_named_exactly_like_the_item_table() {
+        let b = balls();
+        assert_eq!(
+            b.first().map(|(id, _)| *id),
+            Some(FIRST_BALL),
+            "the range starts at ITEM_POKE_BALL"
+        );
+        assert_eq!(
+            b.last().map(|(id, _)| *id),
+            Some(LAST_BALL),
+            "the range ends at ITEM_ROGUE_BALL"
+        );
+        assert_eq!(
+            b.len(),
+            (LAST_BALL - FIRST_BALL + 1) as usize,
+            "ball ids are contiguous on this branch - a gap means the branch reordered
+             items, so re-read items.h before trusting any ball label"
+        );
+        let items = all_items();
+        for (id, name) in b {
+            let item = items
+                .iter()
+                .find(|(i, _)| *i == *id)
+                .expect("every ball id must exist in the item table");
+            assert_eq!(
+                item.1, *name,
+                "ball {id} named differently in bag vs mon panel"
+            );
+            assert!(
+                item.1.ends_with("Ball"),
+                "id {id} ({}) sits in the ball range but is not a ball",
+                item.1
+            );
+        }
+        // The two ids the old table had exactly backwards.
+        assert_eq!(ball_name(1), "Poke Ball");
+        assert_eq!(ball_name(4), "Master Ball");
+        assert_eq!(ball_name(28), "Rogue Ball");
+        assert_eq!(ball_name(0), "(no ball)", "ITEM_NONE is not a ball");
     }
 
     /// Species pickers must stay unambiguous: form ids are distinct ids the

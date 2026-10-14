@@ -323,6 +323,36 @@ fn rows_resolve_sprite_textures_and_badges() {
     );
 }
 
+/// User report: "the ball menu does not include the icons for the balls." A ball's
+/// stored id IS the ball's item id (pokeball:5 + `ItemIdToBallId`), so the ball picker
+/// must request the ITEM icon namespace; a name-only row hides which ball it is.
+#[test]
+fn ball_rows_request_the_item_icon_namespace() {
+    if crate::icons::find_asset_root().is_none() {
+        eprintln!("no assets/icons tree present; skipping");
+        return;
+    }
+    let mut h = Harness::new();
+    h.opts = Opts::item()
+        .compact()
+        .with_hint("filter balls")
+        .with_none("(no ball)");
+    h.table = crate::game_data::balls().to_vec();
+    h.click(BUTTON);
+    assert!(h.popup_open());
+    h.frame(vec![]); // the list paints one frame after the Area is requested
+    let items = h.store.tally(IconKind::Item);
+    assert!(
+        items.resolved >= 1,
+        "ball rows must resolve the ball's own art (items/<id>.png, e.g. id 1 = Poké Ball)"
+    );
+    assert_eq!(
+        h.store.tally(IconKind::Pokemon).resolved + h.store.tally(IconKind::Pokemon).missing,
+        0,
+        "a ball id must never be looked up in the species namespace"
+    );
+}
+
 /// A picker narrower than the row it floats over leaves that row sticking out on
 /// both sides, which reads as the pokemon next to the search bar being cut off.
 /// The popup has to span the line its trigger sits on.

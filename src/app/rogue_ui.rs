@@ -871,9 +871,14 @@ impl Editor {
                         if let Some(id) = self.combo(
                             ui,
                             &format!("saf{i}ball"),
-                            crate::game_data::BALLS,
+                            crate::game_data::balls(),
                             ball.raw(),
-                            &Opts::named().compact().with_none("(no ball)"),
+                            // Item icons again: the stored value is the ball's item id,
+                            // so the row can show that ball's real sprite.
+                            &Opts::item()
+                                .compact()
+                                .with_hint("filter balls")
+                                .with_none("(no ball)"),
                         ) {
                             s.set_pokeball(crate::domain::Ball::from_raw(id));
                             edits.push((i, s.clone()));

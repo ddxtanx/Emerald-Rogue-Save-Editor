@@ -458,6 +458,61 @@ mod tests {
         std::fs::remove_file(out).ok();
     }
 
+    /// A real save is the only proof that the ball id range is the right one: every
+    /// mon the game caught must name as a ball. Skips (green) when the fixture is not
+    /// on this machine, so CI without saves stays green.
+    #[test]
+    fn every_ball_in_a_real_save_names_a_known_ball() {
+        let Some(path) = std::env::var("ER_TEST_SAVE")
+            .ok()
+            .filter(|p| std::path::Path::new(p).exists())
+        else {
+            eprintln!("every_ball_in_a_real_save: ER_TEST_SAVE not set/found, skipping");
+            return;
+        };
+        let sf = SaveFile::open(&path).unwrap();
+        let mut mons: Vec<(&'static str, u8)> = sf
+            .party()
+            .into_iter()
+            .map(|m| (species_name(m.species()), m.ball()))
+            .collect();
+        for bx in 0..crate::format::ACTIVE_BOXES {
+            for slot in 0..crate::format::BOX_SLOTS {
+                let m = sf.box_mon(bx, slot);
+                if m.species() != 0 {
+                    mons.push((species_name(m.species()), m.ball()));
+                }
+            }
+        }
+        for i in 0..crate::format::FUSION_COUNT {
+            let m = sf.fusion_mon(i);
+            if m.species() != 0 {
+                mons.push((species_name(m.species()), m.ball()));
+            }
+        }
+        assert!(
+            mons.len() > 10,
+            "expected a populated save, got {} mons",
+            mons.len()
+        );
+        let mut tally: std::collections::BTreeMap<u8, usize> = Default::default();
+        for (name, ball) in &mons {
+            tally.entry(*ball).and_modify(|c| *c += 1).or_insert(1);
+            assert!(
+                *ball == 0 || crate::domain::Ball::from_raw(*ball as u16).is_known(),
+                "{name} holds ball id {ball}, outside the branch's ball range \
+                 ({}..={}) - the ball table and the save disagree",
+                crate::game_data::FIRST_BALL,
+                crate::game_data::LAST_BALL
+            );
+        }
+        let named: Vec<String> = tally
+            .iter()
+            .map(|(b, n)| format!("{b}={}x{}", crate::game_data::ball_name(*b), n))
+            .collect();
+        eprintln!("ball ids in this save: {}", named.join(", "));
+    }
+
     #[test]
     #[ignore = "manual: prints derived gender + resolved ability for a real save, run with --ignored"]
     fn dump_mon_derived_fields() {
@@ -466,8 +521,10 @@ mod tests {
         for (i, m) in sf.party().into_iter().enumerate() {
             let sp = m.species();
             println!(
-                "party[{i}] {} gflag {} -> {} | ability slot {} -> {}",
+                "party[{i}] {} ball {} ({}) | gflag {} -> {} | ability slot {} -> {}",
                 species_name(sp),
+                m.ball(),
+                crate::game_data::ball_name(m.ball()),
                 m.gender_flag(),
                 crate::lookup::gender_for_species(sp, m.gender_flag())
                     .map(|g| g.label())

@@ -81,13 +81,19 @@ impl Editor {
                     // Name, not id, and searchable - the request was that the ball
                     // menu say which ball the mon was caught in, using the same
                     // picker class as every other list. Ball ids live in
-                    // include/constants/items.h (a ball IS an item to the game).
+                    // include/constants/items.h (a ball IS an item to the game), so the
+                    // picker uses the ITEM icon namespace: the stored id is the item id,
+                    // which is also the icon key, so each row shows that ball's own
+                    // sprite instead of a bare name.
                     if let Some(id) = self.combo(
                         ui,
                         "ball",
-                        crate::game_data::BALLS,
+                        crate::game_data::balls(),
                         ball as u16,
-                        &Opts::named().compact().with_none("(no ball)"),
+                        &Opts::item()
+                            .compact()
+                            .with_hint("filter balls")
+                            .with_none("(no ball)"),
                     ) {
                         ball = id as u8;
                         m.set_ball(ball);
