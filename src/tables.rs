@@ -2588,9 +2588,9 @@ pub const ITEMS: &[(u16, &str)] = &[
     (826, "Stellar Tera Shard"),
     (827, "Rogue Item First"),
 ];
-/// The 25 natures as `(id, name)` pairs — the id is the value the game stores
+/// The 25 natures as `(id, name)` pairs - the id is the value the game stores
 /// (`pid % 25`, and `enum Nature` in include/constants/pokemon.h). The ids are the `enum Nature` values the game stores
-/// in `pid % 25` — index 0 is Hardy, so a "no nature" mon reads as Hardy, not blank.
+/// in `pid % 25` - index 0 is Hardy, so a "no nature" mon reads as Hardy, not blank.
 pub const NATURE_IDS: &[(u16, &str)] = &[
     (0, "Hardy"),
     (1, "Lonely"),

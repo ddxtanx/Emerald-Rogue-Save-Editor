@@ -1,4 +1,4 @@
-//! er-save-editor — PKHeX-like editor for Pokémon Emerald Rogue (v2.x EX) saves.
+//! er-save-editor - PKHeX-like editor for Pokémon Emerald Rogue (v2.x EX) saves.
 //!
 //! Format grounded in Pokabbie/pokeemerald-rogue (expansion branch):
 //!   include/save.h          sector layout (4084+12 footer, security 0x08012025)
@@ -23,6 +23,7 @@ mod area_popup;
 mod basestats;
 mod deco_variants;
 mod domain;
+mod form_tables;
 mod format;
 mod game_data;
 mod icons;

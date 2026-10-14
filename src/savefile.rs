@@ -32,7 +32,7 @@ pub struct RogueField {
 
 /// The stashed hub state (sRunRestoreBlock): the state that is NOT currently
 /// loaded in SaveBlock1. When SaveBlock1 holds the adventure party, this holds
-/// the hub party/money/bag — and vice versa. Offsets are block-relative once
+/// the hub party/money/bag - and vice versa. Offsets are block-relative once
 /// `base` (absolute merged offset) is known.
 #[derive(Clone, Default)]
 pub struct Stash {
@@ -1164,7 +1164,7 @@ impl SaveFile {
     // one CONTIGUOUS RUN per pocket, walking pockets 1..9 in order and stopping at
     // the first id whose pocket differs: "Expects items to always be sorted".
     // A real v2.2.0 bag is exactly that (probe on a live save: 64 packed slots in
-    // runs 1,2,3,5,6,7,8,9 — the empty Stones pocket simply leaves no run).
+    // runs 1,2,3,5,6,7,8,9 - the empty Stones pocket simply leaves no run).
     //
     // So every scripted edit must (a) keep runs contiguous, (b) keep the run
     // order ascending by pocket, and (c) keep zero-quantity slots at the tail,
@@ -1295,14 +1295,14 @@ impl SaveFile {
         let runs = Self::bag_run_summary(&slots);
         if runs.windows(2).any(|p| p[0].0 > p[1].0) {
             w.push(format!(
-                "pocket runs are out of order ({}) — UpdateBagItemsPointers stops at the first reversal, so items after it are invisible in-game",
+                "pocket runs are out of order ({}) - UpdateBagItemsPointers stops at the first reversal, so items after it are invisible in-game",
                 runs.iter().map(|(p, n)| format!("{p}x{n}")).collect::<Vec<_>>().join(" ")
             ));
         }
         for (id, _) in slots.iter().take_while(|(id, _)| *id != 0) {
             if item_pocket(*id) == crate::domain::Pocket::NONE {
                 w.push(format!(
-                    "id {id} ({}) has no pocket and must be removed — the game's pointer scan stops there and hides everything after it",
+                    "id {id} ({}) has no pocket and must be removed - the game's pointer scan stops there and hides everything after it",
                     item_name(*id)
                 ));
             }
@@ -1329,7 +1329,7 @@ impl SaveFile {
             }
             if *q == 0 {
                 w.push(format!(
-                    "slot {i}: id {id} ({}) has quantity 0 — the game still counts it as a used slot; write again to drop it",
+                    "slot {i}: id {id} ({}) has quantity 0 - the game still counts it as a used slot; write again to drop it",
                     item_name(*id)
                 ));
             }
@@ -1368,7 +1368,7 @@ impl SaveFile {
         let pocket = item_pocket(id);
         if pocket == crate::domain::Pocket::NONE {
             return Err(format!(
-                "item {id} ({}) has no bag pocket — the game would refuse it (POCKET_NONE)",
+                "item {id} ({}) has no bag pocket - the game would refuse it (POCKET_NONE)",
                 item_name(id)
             ));
         }
@@ -1413,7 +1413,7 @@ impl SaveFile {
         while left > 0 {
             if budget < inserted + 1 {
                 return Err(format!(
-                    "bag full: {filled} of {cap} slots used, {budget} free slot(s) left for pocket {pocket} ({}); {left} of {qty} still unplaced — nothing written",
+                    "bag full: {filled} of {cap} slots used, {budget} free slot(s) left for pocket {pocket} ({}); {left} of {qty} still unplaced - nothing written",
                     pocket_name(pocket)
                 ));
             }
@@ -1503,7 +1503,7 @@ impl SaveFile {
         Ok(())
     }
 
-    /// Re-sort the whole bag by (pocket, id) — the same primary key the game
+    /// Re-sort the whole bag by (pocket, id) - the same primary key the game
     /// uses. Use after hand-editing to restore the contiguous-run invariant.
     pub fn sort_bag(&mut self, stash: bool) -> Result<String, String> {
         let Some(slots) = self.bag_slots_raw(stash) else {

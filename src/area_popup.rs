@@ -1,15 +1,15 @@
 //! A popup anchored to a widget that SURVIVES clicks inside itself.
 //!
 //! `egui::ComboBox` is built on `containers/popup.rs`, whose rule is "close when the
-//! widget that owns the popup reports `clicked_elsewhere()`" — and a press on a
+//! widget that owns the popup reports `clicked_elsewhere()`" - and a press on a
 //! `TextEdit` *inside* that popup counts as elsewhere. That is the bug behind
 //! "clicking the search box makes the menu disappear": any popup carrying an input
 //! field closes the moment you try to use it.
 //!
 //! The fix is the one applied to [`crate::searchable_combo`]: own the popup with an
 //! `Area` in the foreground order and decide dismissal yourself. This is the small,
-//! reusable form of that for popups which are not a filtered list — the PP ladder
-//! picker, for instance — where the content is arbitrary widgets and may include an
+//! reusable form of that for popups which are not a filtered list - the PP ladder
+//! picker, for instance - where the content is arbitrary widgets and may include an
 //! editable field.
 //!
 //! Contract:
@@ -19,7 +19,7 @@
 //! * as an `Area` in `Order::Foreground` it is not clipped by the `ScrollArea` the
 //!   trigger sits in (a `ComboBox` inside a scrolled page is).
 
-use egui::{Area, Frame, Id, Key, Order, PointerButton, Rect, Response, Ui};
+use egui::{Area, Context, Frame, Id, Key, Order, PointerButton, Rect, Response, Ui};
 
 #[derive(Clone)]
 struct State {
@@ -112,14 +112,23 @@ pub fn anchored<T>(
     Some(value)
 }
 
+/// Is the anchored popup registered under `id` currently open? Escape
+/// handling elsewhere (the mon editor window) must not close while one of
+/// these is up: they are `Area` popups with private state, invisible to
+/// egui's `any_popup_open()`.
+pub fn is_open(ctx: &Context, id: &str) -> bool {
+    ctx.data(|d| d.get_temp::<State>(Id::new(id)))
+        .map_or(false, |st| st.open)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use egui::{Event, Modifiers, Pos2, RawInput};
 
     /// This module exists for one claim: a popup you can actually type in. A
-    /// `ComboBox` popup closes when its own text field is pressed — the bug
-    /// reported against every dropdown in the editor — so every test here is about
+    /// `ComboBox` popup closes when its own text field is pressed - the bug
+    /// reported against every dropdown in the editor - so every test here is about
     /// what a press does to the popup's open state.
     struct H {
         ctx: egui::Context,

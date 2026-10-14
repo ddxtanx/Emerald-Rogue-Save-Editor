@@ -17,7 +17,7 @@ impl Editor {
         //
         // Bag header: the bag is one flat array the game splits into contiguous
         // per-pocket runs on load (`UpdateBagItemsPointers`), and it does NOT
-        // re-sort after loading — so quantity edits go through
+        // re-sort after loading - so quantity edits go through
         // set_bag_slot_qty (re-compacts, keeps runs intact) and new ids only
         // ever arrive via add_bag_item, which inserts in sorted position.
         let (bag_items, pc_items, cap, mut cap_up, warnings, sort_mode) = match &self.file {
@@ -79,7 +79,7 @@ impl Editor {
             if let Some(sf) = self.file.as_mut() {
                 sf.set_bag_sort_mode(sort_mode as u8);
                 self.status = format!(
-                    "bag sort mode set to {} (unsaved — press Save to write)",
+                    "bag sort mode set to {} (unsaved - press Save to write)",
                     crate::format::BAG_SORT_MODES[sort_mode]
                 );
             }
@@ -141,7 +141,7 @@ impl Editor {
             if let Some(sf) = self.file.as_mut() {
                 match sf.remove_bag_item(id, qty, stash) {
                     Ok(msg) => {
-                        self.status = format!("{msg} (unsaved — press Save to write)");
+                        self.status = format!("{msg} (unsaved - press Save to write)");
                         self.dirty = true;
                     }
                     Err(e) => self.status = format!("remove failed: {e}"),

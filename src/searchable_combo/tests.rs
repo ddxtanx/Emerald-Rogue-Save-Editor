@@ -1,5 +1,5 @@
 //! Functional tests for the searchable dropdown: real egui frames driven by
-//! synthetic pointer and key events, checking what the user reported — the
+//! synthetic pointer and key events, checking what the user reported - the
 //! popup must survive a press on its search field, take the caret when it
 //! opens, filter as you type, and return the id you pick.
 //!
@@ -126,7 +126,7 @@ impl Harness {
         self.last = picked;
     }
 
-    /// A full click, three frames: hover, press, release — the way a real
+    /// A full click, three frames: hover, press, release - the way a real
     /// pointer arrives. egui registers click interest only once the pointer has
     /// been over the widget for a frame, so skipping the hover frame makes the
     /// synthetic click land nowhere.
@@ -380,7 +380,7 @@ fn popup_spans_the_line_its_trigger_sits_on() {
     assert!(
         frame.width() >= 380.0,
         "the popup must cover the 400-px line under its trigger; it is {:.1} wide \
-         at {frame:?} — a narrow popup leaves the row poking out on both sides",
+         at {frame:?} - a narrow popup leaves the row poking out on both sides",
         frame.width()
     );
     assert!(

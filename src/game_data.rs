@@ -216,6 +216,74 @@ pub(crate) fn species_name(id: u16) -> &'static str {
     }
 }
 
+// ---- form linkage (generated from the game's own formSpeciesIdTable data) ---
+// The UI shows BASE names ("Darmanitan") with the form as a separate detail,
+// because this ROM bakes the form into the species name string ("Darmanitan
+// Standard Mode"). The mapping is the game's: see src/form_tables.rs and
+// tools/gen_form_tables.py.
+
+/// The family anchor (base) id for a species id. A form id maps to the id
+/// that owns its family's formSpeciesIdTable; any other id is its own base.
+/// (In this ROM the family anchor is itself the default-form id: species.h
+/// aliases SPECIES_DARMANITAN onto SPECIES_DARMANITAN_STANDARD_MODE = 555.)
+pub(crate) fn form_base_id(id: u16) -> u16 {
+    crate::form_tables::FORM_BASES
+        .iter()
+        .find(|(f, _)| *f == id)
+        .map(|(_, b)| *b)
+        .unwrap_or(id)
+}
+
+/// The form label for a species id, when the id names a specific form.
+pub(crate) fn form_label(id: u16) -> Option<&'static str> {
+    crate::form_tables::FORM_LABELS
+        .iter()
+        .find(|(s, _)| *s == id)
+        .map(|(_, l)| *l)
+}
+
+/// Base (family) display name for a species id: what the roster, popup title
+/// and Mon tab show. For a form id this is the family name; for a plain id it
+/// is just its own name.
+pub(crate) fn species_base_name(id: u16) -> &'static str {
+    if id == 0 {
+        return species_name(id);
+    }
+    let base = form_base_id(id);
+    crate::form_tables::FAMILY_NAMES
+        .iter()
+        .find(|(a, _)| *a == base)
+        .map(|(_, n)| *n)
+        .unwrap_or_else(|| species_name(base))
+}
+
+/// The species pick-list with unambiguous rows: a form id renders as
+/// "Base (Form)" -- e.g. "Darmanitan (Standard Mode)" -- because form ids are
+/// distinct ids the user picks, and two family members must not look alike.
+pub(crate) fn species_picker_table() -> &'static [(u16, &'static str)] {
+    use std::sync::OnceLock;
+    static T: OnceLock<Vec<(u16, &'static str)>> = OnceLock::new();
+    T.get_or_init(|| {
+        all_species()
+            .iter()
+            .map(|(id, name)| {
+                let decorated = match form_label(*id) {
+                    Some(label) => {
+                        let base = species_base_name(*id);
+                        if name.starts_with('(') && name.ends_with(')') {
+                            format!("{base} {name}")
+                        } else {
+                            format!("{base} ({label})")
+                        }
+                    }
+                    None => name.to_string(),
+                };
+                (*id, Box::leak(decorated.into_boxed_str()) as &'static str)
+            })
+            .collect()
+    })
+}
+
 /// item lookup that also covers Rogue custom items (827+)
 pub(crate) fn item_name(id: u16) -> &'static str {
     match title_lookup(tables::ITEMS, id) {
@@ -258,11 +326,104 @@ pub(crate) fn bag_sort_key(id: u16) -> (crate::domain::Pocket, bool, u16) {
 
 pub(crate) fn pocket_name(p: crate::domain::Pocket) -> String {
     // Display names in POCKET_ORDER are human labels ("Items"), not the C
-    // constant names — never slice a prefix off them (that panicked once).
+    // constant names - never slice a prefix off them (that panicked once).
     if p.is_known() {
         format!("{} (pocket {})", p.name(), p.raw())
     } else {
         format!("unpocketed (POCKET_NONE = {})", p.raw())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The user's example, straight from the game's own linkage: species 555
+    /// (ROM name string "Darmanitan Standard Mode") shows as base "Darmanitan"
+    /// with "Standard Mode" as the separate form detail. Note the base id: in
+    /// this ROM the FAMILY ANCHOR is 555 itself -- species.h has
+    /// `#define SPECIES_DARMANITAN SPECIES_DARMANITAN_STANDARD_MODE`, and id
+    /// 554 is "Darumaka", the pre-evolution, not a Darmanitan form entry.
+    #[test]
+    fn darmanitan_case_from_the_games_linkage() {
+        assert_eq!(species_name(555), "Darmanitan Standard Mode");
+        assert_eq!(species_name(554), "Darumaka");
+        assert_eq!(form_base_id(555), 555, "555 is its family's anchor");
+        assert_eq!(form_label(555), Some("Standard Mode"));
+        assert_eq!(species_base_name(555), "Darmanitan");
+        // Zen Mode lives beyond FORMS_START and anchors to the same family.
+        assert_eq!(form_base_id(1092), 555);
+        assert_eq!(form_label(1092), Some("Zen Mode"));
+        assert_eq!(species_base_name(1092), "Darmanitan");
+    }
+
+    #[test]
+    fn alcremie_case_keeps_the_full_form_label() {
+        assert_eq!(species_base_name(869), "Alcremie");
+        assert_eq!(form_label(869), Some("Strawberry Vanilla Cream"));
+        assert_eq!(form_base_id(1216), 869);
+        assert_eq!(form_label(1216), Some("Strawberry Ruby Cream"));
+        assert_eq!(species_base_name(1216), "Alcremie");
+    }
+
+    #[test]
+    fn a_non_form_species_has_no_form_row_and_keeps_its_name() {
+        assert_eq!(form_label(143), None);
+        assert_eq!(form_base_id(143), 143);
+        assert_eq!(species_base_name(143), "Snorlax");
+        assert_eq!(form_label(0), None);
+        assert_eq!(species_base_name(0), species_name(0));
+    }
+
+    /// The generated table's shape is part of the contract: the pinned entry
+    /// count changes only when the game source or the generator changes, and
+    /// every emitted pair must be a real, non-chaining, non-zero mapping.
+    #[test]
+    fn the_generated_linkage_table_is_sane_and_pinned() {
+        assert_eq!(
+            crate::form_tables::FORM_BASES.len(),
+            442,
+            "form->base entry count moved: regenerate with tools/gen_form_tables.py \
+             and pin the new number only after checking the printed warnings"
+        );
+        for (form, base) in crate::form_tables::FORM_BASES {
+            assert_ne!(*form, 0);
+            assert_ne!(*base, 0, "form {form} would anchor to species 0");
+            assert_ne!(
+                form, base,
+                "species {form} is its own base - not a form row"
+            );
+            assert!(
+                !crate::form_tables::FORM_BASES
+                    .iter()
+                    .any(|(m, _)| *m == *base),
+                "base {base} of form {form} is itself a form: families must not chain"
+            );
+        }
+    }
+
+    /// Species pickers must stay unambiguous: form ids are distinct ids the
+    /// user picks, so each renders "Base (Form)".
+    #[test]
+    fn picker_rows_render_base_form_and_stay_ambiguous() {
+        let t = species_picker_table();
+        let name = |id: u16| {
+            t.iter()
+                .find(|(i, _)| *i == id)
+                .map(|(_, n)| *n)
+                .unwrap_or("<missing>")
+        };
+        assert_eq!(name(555), "Darmanitan (Standard Mode)");
+        assert_eq!(name(1092), "Darmanitan (Zen Mode)");
+        assert_eq!(name(869), "Alcremie (Strawberry Vanilla Cream)");
+        assert_eq!(name(906), "Venusaur (Mega)");
+        assert_eq!(name(143), "Snorlax");
+        assert_eq!(name(1), "Bulbasaur", "plain species keep their plain names");
+        assert_eq!(
+            t.len(),
+            all_species().len(),
+            "the picker covers exactly the same ids as before"
+        );
     }
 }
 

@@ -1,4 +1,4 @@
-//! Visual editors for the hub ("home base") — the tile map and the player's house.
+//! Visual editors for the hub ("home base") - the tile map and the player's house.
 //!
 //! The batch asked for "a visual editor for the home base menu". The old UI was a
 //! grid of checkboxes plus x/y number fields, which is technically complete but
@@ -273,7 +273,7 @@ impl super::Editor {
             });
             let text = match (what, sel.area) {
                 (Some(i), _) => format!(
-                    "{} — built at ({},{}). Click to select it for moving.",
+                    "{} - built at ({},{}). Click to select it for moving.",
                     HUB_AREAS[i], hp.0, hp.1
                 ),
                 (None, Some(mv)) => format!(
@@ -454,7 +454,7 @@ impl super::Editor {
             }
             ui.add_space(6.0);
             ui.strong(format!(
-                "{label} — slots {}..{}, {} placed",
+                "{label} - slots {}..{}, {} placed",
                 range.start,
                 range.end,
                 snap[range.clone()].iter().filter(|(_, _, _, a)| *a).count()

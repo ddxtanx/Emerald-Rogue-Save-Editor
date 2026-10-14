@@ -321,7 +321,7 @@ impl Mon {
     /// `Rogue_ModifyExperienceTables()` (src/rogue_baked.c) is just `level * 300`,
     /// ignoring growthRate entirely. `struct BoxPokemon` has no level field at all,
     /// so the game always recomputes the level from exp
-    /// (`GetLevelFromBoxMonExp` / `GetLevelFromMonExp`, src/pokemon.c) — a loop over
+    /// (`GetLevelFromBoxMonExp` / `GetLevelFromMonExp`, src/pokemon.c) - a loop over
     /// that schedule clamped to MAX_LEVEL (100). `CalculateMonStats` then writes the
     /// result back into the party struct's cached level byte. Exp is therefore the
     /// authoritative field for *both* the 104-byte party and the 80-byte box layout,
@@ -424,7 +424,9 @@ impl Mon {
 
     pub fn display_name(&self) -> String {
         let nick = self.nickname();
-        let sp = species_name(self.species());
+        // Base (family) name: a form mon reads "Darmanitan", not
+        // "Darmanitan Standard Mode". See crate::game_data::species_base_name.
+        let sp = species_base_name(self.species());
         if !nick.is_empty() && nick != sp {
             format!("Lv{} {} ({})", self.level().unwrap_or(0), nick, sp)
         } else {
@@ -488,5 +490,31 @@ fn random_pid() -> u32 {
         0x2c2b_1b18 // Gen 3 has a reserved PID of 0; any non-zero value works
     } else {
         pid
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn mon_of_species(sp: u16) -> Mon {
+        let mut m = Mon::from_bytes(&vec![0u8; 80]);
+        m.set_species(sp);
+        m
+    }
+
+    /// The user's request #3: a mon with a form reads as its BASE name, not
+    /// the ROM's form-qualified speciesName string. 555's stored name string
+    /// is "Darmanitan Standard Mode"; the display shows "Darmanitan".
+    #[test]
+    fn a_form_mon_displays_its_base_name() {
+        assert_eq!(
+            crate::game_data::species_name(555),
+            "Darmanitan Standard Mode"
+        );
+        assert_eq!(mon_of_species(555).display_name(), "Lv0 Darmanitan");
+        assert_eq!(mon_of_species(1092).display_name(), "Lv0 Darmanitan");
+        // A plain id is untouched.
+        assert_eq!(mon_of_species(143).display_name(), "Lv0 Snorlax");
     }
 }

@@ -20,13 +20,13 @@ impl Editor {
         let mut picked = None;
         egui::ComboBox::from_id_source(id)
             .selected_text(format!(
-                "{cur} — {}",
+                "{cur} - {}",
                 if dom.is_known() { dom.name() } else { "?" }
             ))
             .show_ui(ui, |ui| {
                 for v in crate::domain::values::<D>() {
                     if ui
-                        .selectable_label(v.raw() == cur, format!("{} — {}", v.raw(), v.name()))
+                        .selectable_label(v.raw() == cur, format!("{} - {}", v.raw(), v.name()))
                         .clicked()
                     {
                         picked = Some(v.raw());
@@ -55,7 +55,7 @@ impl Editor {
                 egui::Color32::GOLD,
                 format!(
                     "Rogue block header v{} found, but the stream layout does not match the \
-                     expected v2.2.0 layout — showing header only; editing is disabled for this block.",
+                     expected v2.2.0 layout - showing header only; editing is disabled for this block.",
                     rb.version
                 ),
             );
@@ -188,68 +188,59 @@ impl Editor {
             ui.ctx().data_mut(|d| d.insert_temp(filt_id, filt.clone()));
             let f = filt.to_lowercase();
             let mut edits: Vec<(usize, u16, u8)> = Vec::new();
-            egui::ScrollArea::vertical()
-                .max_height(340.0)
-                .auto_shrink([false, false])
-                .show(ui, |ui| {
-                    for i in 0..n {
-                        let (flags, hc) = snap[i];
-                        let name = qn.get(i).copied().unwrap_or("?");
-                        if flags == 0 && hc == 0 {
-                            continue; // untouched slot
-                        }
-                        if !f.is_empty() && !name.to_lowercase().contains(&f) {
-                            continue;
-                        }
-                        let mut edit = [
-                            flags & 1 != 0,
-                            flags & 2 != 0,
-                            flags & 4 != 0,
-                            flags & 8 != 0,
-                            flags & 0x10 != 0,
-                            flags & 0x20 != 0,
-                        ];
-                        ui.horizontal(|ui| {
-                            ui.monospace(format!("{i:3}"));
-                            ui.with_layout(
-                                egui::Layout::left_to_right(egui::Align::Center),
-                                |ui| {
-                                    ui.add_sized(
-                                        [240.0, 0.0],
-                                        egui::Label::new(name).truncate(true),
-                                    );
-                                },
-                            );
-                            let lbls = ["unlock", "active", "pin", "rwrd", "new", "done"];
-                            let mut changed = false;
-                            for (k, lb) in lbls.iter().enumerate() {
-                                if ui.checkbox(&mut edit[k], *lb).changed() {
-                                    changed = true;
-                                }
-                            }
-                            let mut hcv = hc;
-                            if ui
-                                .add(
-                                    egui::DragValue::new(&mut hcv)
-                                        .clamp_range(0..=7)
-                                        .prefix("maxDiff "),
-                                )
-                                .changed()
-                            {
+            Self::wide_scroll_area().max_height(340.0).show(ui, |ui| {
+                for i in 0..n {
+                    let (flags, hc) = snap[i];
+                    let name = qn.get(i).copied().unwrap_or("?");
+                    if flags == 0 && hc == 0 {
+                        continue; // untouched slot
+                    }
+                    if !f.is_empty() && !name.to_lowercase().contains(&f) {
+                        continue;
+                    }
+                    let mut edit = [
+                        flags & 1 != 0,
+                        flags & 2 != 0,
+                        flags & 4 != 0,
+                        flags & 8 != 0,
+                        flags & 0x10 != 0,
+                        flags & 0x20 != 0,
+                    ];
+                    ui.horizontal(|ui| {
+                        ui.monospace(format!("{i:3}"));
+                        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                            ui.add_sized([240.0, 0.0], egui::Label::new(name).truncate(true));
+                        });
+                        let lbls = ["unlock", "active", "pin", "rwrd", "new", "done"];
+                        let mut changed = false;
+                        for (k, lb) in lbls.iter().enumerate() {
+                            if ui.checkbox(&mut edit[k], *lb).changed() {
                                 changed = true;
                             }
-                            if changed {
-                                let mut nf = 0u16;
-                                for k in 0..6 {
-                                    if edit[k] {
-                                        nf |= 1 << k;
-                                    }
+                        }
+                        let mut hcv = hc;
+                        if ui
+                            .add(
+                                egui::DragValue::new(&mut hcv)
+                                    .clamp_range(0..=7)
+                                    .prefix("maxDiff "),
+                            )
+                            .changed()
+                        {
+                            changed = true;
+                        }
+                        if changed {
+                            let mut nf = 0u16;
+                            for k in 0..6 {
+                                if edit[k] {
+                                    nf |= 1 << k;
                                 }
-                                edits.push((i, nf, hcv));
                             }
-                        });
-                    }
-                });
+                            edits.push((i, nf, hcv));
+                        }
+                    });
+                }
+            });
             if !edits.is_empty() {
                 if let Some(sf) = self.file.as_mut() {
                     for (i, nf, hcv) in edits {
@@ -598,9 +589,8 @@ impl Editor {
                         .collect()
                 };
                 let mut edits: Vec<(usize, u8, u8, crate::domain::DecorVariant, bool)> = Vec::new();
-                egui::ScrollArea::vertical()
+                Self::wide_scroll_area()
                     .max_height(240.0)
-                    .auto_shrink([false, false])
                     .show(ui, |ui| {
                         egui::Grid::new("hubdecor")
                             .num_columns(6)
@@ -773,23 +763,32 @@ impl Editor {
         });
 
         ui.collapsing("Daycare (current)", |ui| {
-            let sf = self.file.as_ref().unwrap();
-            for i in 0..rb.daycare_f.n {
-                let off = rb.daycare_f.data + i * DAYCARE_ELEMSZ;
-                let m = Mon::from_bytes(&sf.merged[off..off + BOXSZ]);
-                if m.species() == 0 {
+            // Snapshot first (the save must not stay borrowed while the row
+            // helper mutates selection), then draw through the shared
+            // mon_row helper: single click = select + Mon tab, double click =
+            // popup editor. The old rows only selected on click and offered
+            // no double-click path at all -- the reported "double tapping
+            // pokemon in the daycare opens nothing" bug.
+            let rows: Vec<(usize, Option<String>)> = {
+                let sf = self.file.as_ref().unwrap();
+                (0..rb.daycare_f.n)
+                    .map(|i| {
+                        let off = rb.daycare_f.data + i * DAYCARE_ELEMSZ;
+                        let m = Mon::from_bytes(&sf.merged[off..off + BOXSZ]);
+                        (i, (m.species() != 0).then(|| m.display_name()))
+                    })
+                    .collect()
+            };
+            for (i, dn) in rows {
+                if let Some(dn) = dn {
+                    self.mon_row(ui, Sel::BlockDaycare(i), format!("slot {i}: {dn}"));
+                } else {
                     ui.label(format!("slot {i}: empty"));
-                    continue;
-                }
-                let sel = matches!(self.sel, Some(Sel::BlockDaycare(x)) if x == i);
-                if ui
-                    .selectable_label(sel, format!("slot {i}: {}", m.display_name()))
-                    .clicked()
-                {
-                    self.sel = Some(Sel::BlockDaycare(i));
                 }
             }
-            ui.label("Select a slot to edit it like a boxed Pokémon.");
+            ui.label(
+                "Single-click a slot to edit it in the Mon tab; double-click opens the popup.",
+            );
         });
 
         if rb.ok && rb.safari_f.n > 0 {
@@ -806,9 +805,13 @@ impl Editor {
                     ui.horizontal(|ui| {
                         ui.monospace(format!("{i:3}"));
                         let mut sp = s.species();
-                        if let Some(v) =
-                            self.combo(ui, &format!("saf{i}sp"), all_species(), sp, &Opts::pokemon())
-                        {
+                        if let Some(v) = self.combo(
+                            ui,
+                            &format!("saf{i}sp"),
+                            species_picker_table(),
+                            sp,
+                            &Opts::pokemon(),
+                        ) {
                             sp = v;
                         }
                         if sp != s.species() {
@@ -928,9 +931,13 @@ impl Editor {
                     ui.horizontal(|ui| {
                         ui.monospace(format!("slot {i}  id {cid}"));
                         let mut s = sp;
-                        if let Some(v) =
-                            self.combo(ui, &format!("uniq{i}sp"), all_species(), s, &Opts::pokemon())
-                        {
+                        if let Some(v) = self.combo(
+                            ui,
+                            &format!("uniq{i}sp"),
+                            species_picker_table(),
+                            s,
+                            &Opts::pokemon(),
+                        ) {
                             s = v;
                         }
                         if s != sp {
@@ -962,25 +969,21 @@ impl Editor {
                     if m.species() == 0 {
                         continue;
                     }
-                    let sel = matches!(self.sel, Some(Sel::StashParty(x)) if x == i);
-                    if ui
-                        .selectable_label(sel, format!("[{i}] {}", m.display_name()))
-                        .clicked()
-                    {
-                        self.sel = Some(Sel::StashParty(i));
-                    }
+                    self.mon_row(
+                        ui,
+                        Sel::StashParty(i),
+                        format!("[{i}] {}", m.display_name()),
+                    );
                 }
                 for (i, m) in rb.stash.daycare.iter().enumerate() {
                     if m.species() == 0 {
                         continue;
                     }
-                    let sel = matches!(self.sel, Some(Sel::StashDaycare(x)) if x == i);
-                    if ui
-                        .selectable_label(sel, format!("daycare[{i}]: {}", m.display_name()))
-                        .clicked()
-                    {
-                        self.sel = Some(Sel::StashDaycare(i));
-                    }
+                    self.mon_row(
+                        ui,
+                        Sel::StashDaycare(i),
+                        format!("daycare[{i}]: {}", m.display_name()),
+                    );
                 }
                 let mut money = self.file.as_ref().unwrap().stash_money();
                 if ui

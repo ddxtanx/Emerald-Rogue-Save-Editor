@@ -14,6 +14,12 @@ impl Editor {
         let mut changed = false;
 
         ui.heading(m.display_name());
+        // The form as its own detail: this ROM's species name embeds it
+        // ("Darmanitan Standard Mode"), and the heading above shows only the
+        // base name, so the form must be spelled out here.
+        if let Some(label) = form_label(m.species()) {
+            ui.label(format!("Form: {label}"));
+        }
         let ck = m.checksum_ok();
         ui.label(format!(
             "PID {:08X}  OTID {:08X}  checksum {} ({})",
@@ -38,9 +44,13 @@ impl Editor {
             .spacing([12.0, 6.0])
             .show(ui, |ui| {
                 ui.label("Species");
-                if let Some(id) =
-                    self.combo(ui, "species", all_species(), m.species(), &Opts::pokemon())
-                {
+                if let Some(id) = self.combo(
+                    ui,
+                    "species",
+                    species_picker_table(),
+                    m.species(),
+                    &Opts::pokemon(),
+                ) {
                     m.set_species(id);
                     changed = true;
                 }
@@ -68,7 +78,7 @@ impl Editor {
                 ui.label("Ball");
                 let mut ball = m.ball();
                 ui.horizontal(|ui| {
-                    // Name, not id, and searchable — the request was that the ball
+                    // Name, not id, and searchable - the request was that the ball
                     // menu say which ball the mon was caught in, using the same
                     // picker class as every other list. Ball ids live in
                     // include/constants/items.h (a ball IS an item to the game).
@@ -159,7 +169,7 @@ impl Editor {
                     // clamped, because clamping would rewrite the mon.
                     ui.colored_label(
                         egui::Color32::GOLD,
-                        format!("nature value {} is outside 0..=24 — left exactly as stored", nat.raw()),
+                        format!("nature value {} is outside 0..=24 - left exactly as stored", nat.raw()),
                     );
                 }
                 ui.label("Shiny");
@@ -194,7 +204,7 @@ impl Editor {
                             ui.colored_label(
                                 egui::Color32::GOLD,
                                 format!(
-                                    "stored gender flag {} is not 0/1 — this save's struct layout \
+                                    "stored gender flag {} is not 0/1 - this save's struct layout \
                                      does not match what the editor assumed",
                                     gflag.raw()
                                 ),
@@ -266,7 +276,7 @@ impl Editor {
                         // misreading is shown rather than silently rewritten.
                         if let crate::domain::AbilitySlot::Unexpected(v) = slot {
                             if ui
-                                .selectable_label(true, format!("stored slot {v} — out of range"))
+                                .selectable_label(true, format!("stored slot {v} - out of range"))
                                 .clicked()
                             {
                                 changed = false;
@@ -387,7 +397,7 @@ impl Editor {
                     // The PP picker: the PP-Up steps the game knows, each shown with
                     // the PP it unlocks, plus a free-form entry (the request asked
                     // for both). This is an `Area` popup rather than a ComboBox, so
-                    // its text field can actually be clicked — the bug that made
+                    // its text field can actually be clicked - the bug that made
                     // ComboBox popups vanish the moment you touched their field.
                     let trig = ui
                         .small_button("PP…")
@@ -405,7 +415,7 @@ impl Editor {
                         opening,
                         |ui| {
                             let mut out: Option<(Option<u8>, u8)> = None;
-                            ui.strong(format!("PP — base {base}"));
+                            ui.strong(format!("PP - base {base}"));
                             for (ups, val) in ladder.iter() {
                                 let lbl = format!(
                                     "{} PP up{} -> {val}",

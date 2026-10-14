@@ -15,7 +15,7 @@ pub(crate) const BOXSZ: usize = 80;
 // Rogue discards the vanilla growth-rate curves: Rogue_ModifyExperienceTables()
 // (src/rogue_baked.c) returns `level * 300` for every growthRate, and the level loop
 // in GetLevelFrom{Box}MonExp clamps at MAX_LEVEL. So exp == level*300 and level ==
-// clamp(exp/300, 0, MAX_LEVEL) — the same schedule for every species.
+// clamp(exp/300, 0, MAX_LEVEL) - the same schedule for every species.
 pub(crate) const EXP_PER_LEVEL: u32 = 300;
 pub(crate) const MAX_LEVEL: u8 = 100;
 

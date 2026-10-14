@@ -40,12 +40,18 @@ impl Gender {
             Gender::Genderless => "Genderless",
         }
     }
-    /// Compact mark for roster rows: ♂ / ♀ / ∅ (U+2205 empty set — "no gender").
+    /// Compact mark for roster rows: ♂ / ♀ / Ø. The slashed O (U+00D8) reads
+    /// as an empty-set-style genderless marker next to ♂/♀ and, unlike the
+    /// old U+2205 (present only in Hack, the MONO font chain), it is covered
+    /// by the fonts egui 0.27 bundles for PROPORTIONAL text -- so genderless
+    /// mons no longer show an empty tofu box. The word stays the primary cue:
+    /// label() spells "Genderless" and the mon editor's gender picker uses
+    /// the word, never the glyph alone.
     pub fn glyph(self) -> char {
         match self {
             Gender::Male => '♂',
             Gender::Female => '♀',
-            Gender::Genderless => '\u{2205}',
+            Gender::Genderless => 'Ø',
         }
     }
 }
@@ -222,5 +228,26 @@ mod tests {
         assert_eq!(species_meta(1438), None);
         assert_eq!(gender_for_species(1438, 1), None);
         assert_eq!(ability_for(1438, 0), None);
+    }
+
+    /// The user's "genderless shows an empty box" bug: the old genderless
+    /// glyph was U+2205, which egui 0.27's PROPORTIONAL font chain cannot
+    /// draw (it exists only in Hack), while ♂/♀ exist in both chains. The
+    /// replacement must be a code point the guard/check_glyphs tool verifies
+    /// for the proportional chain, and the WORD must stay available wherever
+    /// a word fits, so the symbol is never the only cue.
+    #[test]
+    fn the_genderless_glyph_renders_in_eguis_proportional_fonts() {
+        assert_eq!(Gender::Male.glyph(), '♂');
+        assert_eq!(Gender::Female.glyph(), '♀');
+        assert_eq!(Gender::Genderless.glyph(), 'Ø'); // U+00D8, verified in both chains
+        assert_ne!(Gender::Genderless.glyph(), '\u{2205}');
+        for g in [Gender::Male, Gender::Female, Gender::Genderless] {
+            assert!(
+                g.label().chars().all(|c| c.is_ascii_alphabetic()),
+                "the gender word must be spelled out, not symbolic: {g:?}"
+            );
+        }
+        assert_eq!(Gender::Genderless.label(), "Genderless");
     }
 }

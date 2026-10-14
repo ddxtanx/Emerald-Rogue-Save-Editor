@@ -10,7 +10,7 @@
 //! run past the vanilla table, ability slots depend on the save version, and a
 //! corrupt save can hold any byte. So `from_raw` never rejects, `raw()` returns
 //! what was read, and `is_known()` tells the UI whether to name the value or
-//! warn about it. Nothing here clamps or substitutes on read — that would turn
+//! warn about it. Nothing here clamps or substitutes on read - that would turn
 //! a byte the game wrote into a byte we invented.
 
 use crate::format::{HOME_STYLE_EXTERIOR, HOME_STYLE_INTERIOR, HOME_STYLE_PATH};
@@ -128,7 +128,7 @@ indexed_domain!(
 );
 indexed_domain!(
     /// Lab difficulty-config range slot (`CONFIG_RANGE_*`). Which value domain
-    /// applies is per slot — see [`ConfigRange::options`].
+    /// applies is per slot - see [`ConfigRange::options`].
     ConfigRange,
     CONFIG_RANGES
 );

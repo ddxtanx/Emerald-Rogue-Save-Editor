@@ -16,8 +16,8 @@
 //!   * the field is focused the frame the popup opens, so you can type right
 //!     away and the list filters as a case-insensitive name substring.
 //!
-//! Rows are virtualized (`show_rows`) — the species table is ~1500 rows and the
-//! item table ~900 — and each row can carry an icon from `crate::icons`.
+//! Rows are virtualized (`show_rows`) - the species table is ~1500 rows and the
+//! item table ~900 - and each row can carry an icon from `crate::icons`.
 //!
 //! Transient state (filter text, highlighted row, focus arming) lives in egui's
 //! per-`Id` data store, so it survives the frame in which the popup loses focus
@@ -256,8 +256,8 @@ pub fn show(
         ctx.data_mut(|d| d.insert_temp(rect_key, frame_rect));
 
         // ---- dismissal ------------------------------------------------------
-        // A press outside our popup frame closes it. A press inside the frame —
-        // including on the search field, the scrollbar, or empty padding — does
+        // A press outside our popup frame closes it. A press inside the frame -
+        // including on the search field, the scrollbar, or empty padding - does
         // not, which is the whole point of this module.
         let press = ctx.input(|i| {
             if i.pointer.any_pressed() {
@@ -369,7 +369,7 @@ fn body(
     // The field has focus, so egui would hand it our arrow keys: a focused
     // TextEdit installs a focus-lock filter (text_edit/builder.rs:589) and
     // `Memory::begin_frame` DROPS any event that filter claims
-    // (memory.rs:386-396) — `vertical_arrows: true` by default
+    // (memory.rs:386-396) - `vertical_arrows: true` by default
     // (builder.rs:128). Without releasing it, the first Up/Down after the popup
     // opens is consumed as caret movement and never reaches the list, so the
     // keyboard walk is off by one press. Applied after `ui.add`, this overrides
@@ -495,7 +495,7 @@ fn body(
                 if id == current {
                     // mark the currently-selected row
                     let galley = ui.painter().layout_no_wrap(
-                        "●".to_owned(),
+                        "○".to_owned(),
                         TextStyle::Small.resolve(ui.style()),
                         ui.visuals().strong_text_color(),
                     );
@@ -508,7 +508,7 @@ fn body(
                 }
             }
             // `Response::clicked` also fires for keyboard/accesskit activation
-            // (`fake_primary_click`, response.rs:137) — egui activates whatever
+            // (`fake_primary_click`, response.rs:137) - egui activates whatever
             // button is focusable when Enter arrives. Rows must answer only to
             // the pointer, or every Enter would pick a row out from under the
             // highlight the up/down walk just built. `clicked_by` is egui's own
@@ -527,7 +527,7 @@ fn body(
 
     // ---- footer: match count / empty state --------------------------------
     if matches.is_empty() {
-        ui.weak(format!("nothing matches “{}”", st.filter.trim()));
+        ui.weak(format!("nothing matches '{}'", st.filter.trim()));
     } else {
         footer_line(ui, matches.len(), table.len());
     }
@@ -545,7 +545,7 @@ fn footer_line(ui: &mut Ui, shown: usize, total: usize) {
 /// Name for an id, honouring the `none` label and unknown ids.
 fn lookup<'a>(table: &'a [(u16, &'a str)], id: u16, opts: &Opts) -> &'a str {
     if id == 0 {
-        return opts.none_label.unwrap_or("—");
+        return opts.none_label.unwrap_or("-");
     }
     table
         .iter()

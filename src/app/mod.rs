@@ -25,8 +25,10 @@ mod mon_ui;
 mod rogue_ui;
 mod trainer_ui;
 
-#[derive(PartialEq, Clone, Copy)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 enum Tab {
+    /// The selected mon's editor, in-window (the popup stays for double-click).
+    Mon,
     Items,
     Trainer,
     Rogue,
@@ -289,12 +291,12 @@ impl Editor {
     }
 
     /// Popup title: which mon, in which slot. Legal because the `Window` pins its
-    /// id with `.id(..)` — egui keys a window's area on its title otherwise, so a
+    /// id with `.id(..)` - egui keys a window's area on its title otherwise, so a
     /// changing title would reset the window's position every frame.
     fn window_title(&self) -> String {
         let slot = self.sel_label();
         match self.selected_mon() {
-            Some(m) if m.species() != 0 => format!("{} — {}", m.display_name(), slot),
+            Some(m) if m.species() != 0 => format!("{} - {}", m.display_name(), slot),
             _ => slot,
         }
     }
@@ -332,7 +334,7 @@ impl Editor {
         self.sel = Some(Sel::Party(slot));
         self.mon_popup = true;
         self.status = format!(
-            "Added species {species} to party slot {} (unsaved — press Save to write)",
+            "Added species {species} to party slot {} (unsaved - press Save to write)",
             slot + 1
         );
     }
@@ -355,7 +357,7 @@ impl Editor {
         self.sel = Some(Sel::Box(bx, slot));
         self.mon_popup = true;
         self.status = format!(
-            "Added species {species} to box {} slot {} (unsaved — press Save to write)",
+            "Added species {species} to box {} slot {} (unsaved - press Save to write)",
             bx + 1,
             slot + 1
         );
@@ -464,6 +466,64 @@ impl Editor {
         self.mon_note = None;
     }
 
+    // ---- shared mon-row behaviour ------------------------------------------
+    /// The ONE place that decides what clicking a mon row does, so every mon
+    /// list (roster, daycare, stashed hub state...) behaves identically:
+    ///   * single click  = select the mon and switch to the Mon tab, so the
+    ///     editor appears in-window (a click that "does nothing" was reported);
+    ///   * double click  = also open the popup editor, exactly like the old
+    ///     roster row's `double_clicked` path (the row's selection is set
+    ///     first, so the popup title pins to this mon).
+    fn apply_mon_row_click(&mut self, r: &egui::Response, sel: Sel) {
+        if r.clicked() {
+            self.sel = Some(sel.clone());
+            self.tab = Tab::Mon;
+        }
+        if r.double_clicked() {
+            self.sel = Some(sel);
+            self.mon_popup = true;
+        }
+    }
+
+    /// A selectable mon row with the shared click/double-click behaviour
+    /// above. Every mon list that is not the roster draws its rows through
+    /// this helper.
+    fn mon_row(&mut self, ui: &mut egui::Ui, sel: Sel, text: impl Into<egui::WidgetText>) {
+        let selected = self.sel.as_ref() == Some(&sel);
+        let r = ui.selectable_label(selected, text);
+        self.apply_mon_row_click(&r, sel);
+    }
+
+    /// The ONE ScrollArea config for content that can be wider than its
+    /// panel. `both()` + `auto_shrink([false, false])`: a vertical-only area
+    /// has no horizontal scroll range at all, which was the report "I cannot
+    /// scroll to the right in any menu even if the content is overflowing".
+    fn wide_scroll_area() -> egui::ScrollArea {
+        egui::ScrollArea::both().auto_shrink([false, false])
+    }
+
+    /// Escape closes the mon popup -- but ONLY when no dropdown/anchored
+    /// popup is open, so one Escape never closes both the mon window and a
+    /// picker at once. Must run BEFORE the panels draw: a searchable combo
+    /// closes itself in the same frame it sees Escape, so checking after the
+    /// panels would find its popup already gone and close the window too.
+    fn handle_mon_escape(&mut self, ctx: &egui::Context) {
+        if !self.mon_popup {
+            return;
+        }
+        let escape = ctx.input(|i| i.key_pressed(egui::Key::Escape));
+        if !escape || ctx.memory(|m| m.any_popup_open()) {
+            return;
+        }
+        // The PP ladder pickers inside the mon editor are `area_popup`s, not
+        // egui-memory popups: Escape should dismiss one of those first.
+        let pp_open = (0..4).any(|s| crate::area_popup::is_open(ctx, &format!("pp_pop{s}")));
+        if pp_open {
+            return;
+        }
+        self.mon_popup = false;
+    }
+
     // ---- roster panel ------------------------------------------------------
     fn roster_ui(&mut self, ui: &mut egui::Ui) {
         // Snapshot everything the panel draws. The save must not stay borrowed
@@ -492,7 +552,7 @@ impl Editor {
 
         // ---- party ---------------------------------------------------------
         ui.horizontal(|ui| {
-            ui.strong(format!("Party — {}", party.len()));
+            ui.strong(format!("Party - {}", party.len()));
             if ui
                 .add_enabled(party.len() < 6, |ui: &mut egui::Ui| ui.button("+ add"))
                 .clicked()
@@ -504,7 +564,7 @@ impl Editor {
             let picked = self.combo(
                 ui,
                 "add_party_species",
-                all_species(),
+                species_picker_table(),
                 self.add_party_species,
                 &Opts::pokemon(),
             );
@@ -526,7 +586,7 @@ impl Editor {
         // ---- fusion storage ------------------------------------------------
         if !fusions.is_empty() {
             ui.add_space(8.0);
-            ui.strong(format!("Fusion storage — {}", fusions.len()));
+            ui.strong(format!("Fusion storage - {}", fusions.len()));
             for (f, m) in fusions {
                 self.roster_row(ui, Sel::Fusion(f), &m, f + 1);
             }
@@ -561,7 +621,7 @@ impl Editor {
                 let picked = self.combo(
                     ui,
                     &format!("add_box_species_{bx}"),
-                    all_species(),
+                    species_picker_table(),
                     self.add_box_species[bx],
                     &Opts::pokemon().compact(),
                 );
@@ -591,7 +651,9 @@ impl Editor {
         let sp = m.species();
         let name = m.nickname();
         let name = if name.is_empty() {
-            species_name(sp).to_string()
+            // Base name only: a form mon's roster row should read
+            // "Darmanitan", not "Darmanitan Standard Mode".
+            species_base_name(sp).to_string()
         } else {
             name
         };
@@ -602,9 +664,9 @@ impl Editor {
         let shiny = if m.is_shiny() { "★" } else { "" };
 
         // `icons` is borrowed for the whole row, so the row may not touch the
-        // rest of self: it just reports which button was pressed and the
-        // mutations happen afterwards, below.
-        let (dbl, edit, mv, del) = {
+        // rest of self: the closure returns the responses, and the shared
+        // click/double-click semantics are applied by apply_mon_row_click.
+        let (row, edit, mv, del) = {
             let icons = &self.icons;
             ui.horizontal(|ui| {
                 let ctx = ui.ctx().clone();
@@ -615,7 +677,7 @@ impl Editor {
                 // have no pencil / cross / arrow glyphs, so the old icons drew as
                 // empty tofu boxes. The tooltips carry the full meaning.
                 let edit = ui.small_button("edit").on_hover_text("edit in popup");
-                let mv = match &sel {
+                let mv: Option<egui::Response> = match &sel {
                     Sel::Party(_) => Some(
                         ui.small_button("to PC")
                             .on_hover_text("move this mon to the first empty box slot"),
@@ -626,32 +688,30 @@ impl Editor {
                     ),
                     _ => None,
                 };
-                let del = match &sel {
+                let del: Option<egui::Response> = match &sel {
                     Sel::Party(..) | Sel::Box(..) | Sel::Fusion(..) => Some(
                         ui.small_button("del")
                             .on_hover_text("delete this mon (clears the slot)"),
                     ),
                     _ => None,
                 };
-                (
-                    r.double_clicked(),
-                    edit.clicked(),
-                    mv.map(|r| r.clicked()),
-                    del.map(|r| r.clicked()),
-                )
+                (r, edit, mv, del)
             })
             .inner
         };
 
-        if dbl || edit {
+        // Single click: select + Mon tab. Double click: also open the popup
+        // (identical state to the old roster double-click path).
+        self.apply_mon_row_click(&row, sel.clone());
+        if edit.clicked() {
             self.sel = Some(sel.clone());
             self.mon_popup = true;
         }
-        if mv == Some(true) {
+        if mv.map(|r| r.clicked()).unwrap_or(false) {
             self.sel = Some(sel.clone());
             self.move_between_party_and_box();
         }
-        if del == Some(true) {
+        if del.map(|r| r.clicked()).unwrap_or(false) {
             self.sel = Some(sel);
             self.delete_selected();
         }
@@ -673,76 +733,75 @@ impl Editor {
             .show(ctx, |ui| {
                 // The window content is scrollable: with every dropdown open
                 // the fields no longer fit, which was the reported complaint.
-                egui::ScrollArea::vertical()
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| {
-                        // Walk the roster from inside the popup. The PKHeX workflow
-                        // is "open once, step through mons", not "close, find the
-                        // next row, reopen" — and the walk follows the exact order
-                        // the left panel draws, so what is next is what is on screen.
-                        let order = self.roster_order();
-                        let idx = self
-                            .sel
-                            .as_ref()
-                            .and_then(|s| order.iter().position(|o| o == s));
-                        let has_prev = matches!(idx, Some(i) if i > 0);
-                        let has_next = matches!(idx, Some(i) if i + 1 < order.len());
-                        let can_move =
-                            matches!(self.sel, Some(Sel::Party(..)) | Some(Sel::Box(..)));
-                        ui.horizontal(|ui| {
-                            if ui
-                                .add_enabled(has_prev, |ui: &mut egui::Ui| ui.button("< prev"))
-                                .on_hover_text("previous mon, in roster order")
-                                .clicked()
-                            {
-                                self.step_selection(-1);
-                            }
-                            if ui
-                                .add_enabled(has_next, |ui: &mut egui::Ui| ui.button("next >"))
-                                .on_hover_text("next mon, in roster order")
-                                .clicked()
-                            {
-                                self.step_selection(1);
-                            }
-                            if let Some(i) = idx {
-                                ui.label(
-                                    egui::RichText::new(format!("{}/{}", i + 1, order.len()))
-                                        .small()
-                                        .weak(),
-                                );
-                            }
-                            ui.separator();
-                            if can_move && ui.button("move party <-> box").clicked() {
-                                self.move_between_party_and_box();
-                            }
-                            if ui.button("delete mon").clicked() {
-                                self.delete_selected();
-                            }
-                            if ui.button("31 IVs / max PP").clicked() {
-                                if let Some(mut m) = self.selected_mon() {
-                                    m.set_all_ivs(31);
-                                    for s in 0..4 {
-                                        m.set_pp_bonus(s, 3);
-                                        // cap = base + base/5 * 3, exactly what the
-                                        // game allows after three PP Ups
-                                        let cap = crate::move_pp::max_pp(m.moves()[s], 3);
-                                        m.set_pp(s, cap);
-                                    }
-                                    m.seal();
-                                    self.apply_mon(m);
-                                }
-                            }
-                        });
-                        // Editor warnings ("no base stats in the table for this
-                        // species", "not enough room in that box") used to appear
-                        // only in the left panel — far from the field that raised
-                        // them, and invisible if that panel was scrolled away.
-                        if let Some(note) = self.mon_note.clone() {
-                            ui.colored_label(egui::Color32::GOLD, note);
+                // It pans BOTH ways: a wide mon editor must be reachable in
+                // full, not clipped at the right edge (scroll-to-the-right bug).
+                Self::wide_scroll_area().show(ui, |ui| {
+                    // Walk the roster from inside the popup. The PKHeX workflow
+                    // is "open once, step through mons", not "close, find the
+                    // next row, reopen" - and the walk follows the exact order
+                    // the left panel draws, so what is next is what is on screen.
+                    let order = self.roster_order();
+                    let idx = self
+                        .sel
+                        .as_ref()
+                        .and_then(|s| order.iter().position(|o| o == s));
+                    let has_prev = matches!(idx, Some(i) if i > 0);
+                    let has_next = matches!(idx, Some(i) if i + 1 < order.len());
+                    let can_move = matches!(self.sel, Some(Sel::Party(..)) | Some(Sel::Box(..)));
+                    ui.horizontal(|ui| {
+                        if ui
+                            .add_enabled(has_prev, |ui: &mut egui::Ui| ui.button("< prev"))
+                            .on_hover_text("previous mon, in roster order")
+                            .clicked()
+                        {
+                            self.step_selection(-1);
+                        }
+                        if ui
+                            .add_enabled(has_next, |ui: &mut egui::Ui| ui.button("next >"))
+                            .on_hover_text("next mon, in roster order")
+                            .clicked()
+                        {
+                            self.step_selection(1);
+                        }
+                        if let Some(i) = idx {
+                            ui.label(
+                                egui::RichText::new(format!("{}/{}", i + 1, order.len()))
+                                    .small()
+                                    .weak(),
+                            );
                         }
                         ui.separator();
-                        self.mon_editor_ui(ui);
+                        if can_move && ui.button("move party <-> box").clicked() {
+                            self.move_between_party_and_box();
+                        }
+                        if ui.button("delete mon").clicked() {
+                            self.delete_selected();
+                        }
+                        if ui.button("31 IVs / max PP").clicked() {
+                            if let Some(mut m) = self.selected_mon() {
+                                m.set_all_ivs(31);
+                                for s in 0..4 {
+                                    m.set_pp_bonus(s, 3);
+                                    // cap = base + base/5 * 3, exactly what the
+                                    // game allows after three PP Ups
+                                    let cap = crate::move_pp::max_pp(m.moves()[s], 3);
+                                    m.set_pp(s, cap);
+                                }
+                                m.seal();
+                                self.apply_mon(m);
+                            }
+                        }
                     });
+                    // Editor warnings ("no base stats in the table for this
+                    // species", "not enough room in that box") used to appear
+                    // only in the left panel - far from the field that raised
+                    // them, and invisible if that panel was scrolled away.
+                    if let Some(note) = self.mon_note.clone() {
+                        ui.colored_label(egui::Color32::GOLD, note);
+                    }
+                    ui.separator();
+                    self.mon_editor_ui(ui);
+                });
             });
         self.mon_popup = open && resp.is_some();
     }
@@ -750,6 +809,10 @@ impl Editor {
 
 impl eframe::App for Editor {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // First thing: Esc may close the mon popup. It must run before any
+        // panel/picker draws so a combo popup that also handles Escape this
+        // frame is still visible to `any_popup_open()` (one Esc = one close).
+        self.handle_mon_escape(ctx);
         egui::TopBottomPanel::top("top").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 if ui.button("Open").clicked() {
@@ -772,7 +835,7 @@ impl eframe::App for Editor {
                 if let Some(p) = &self.path {
                     ui.label(p);
                     if self.dirty {
-                        ui.colored_label(egui::Color32::GOLD, "● modified");
+                        ui.colored_label(egui::Color32::GOLD, "○ modified");
                     }
                 } else {
                     ui.label("no file open");
@@ -784,6 +847,10 @@ impl eframe::App for Editor {
             if self.file.is_some() {
                 ui.horizontal(|ui| {
                     // No Party/Boxes tab: the roster is always in the left panel.
+                    // The Mon tab shows the selected mon's editor in-window
+                    // (clicking a mon row switches to it; double-click still
+                    // opens the popup).
+                    ui.selectable_value(&mut self.tab, Tab::Mon, "Mon");
                     ui.selectable_value(&mut self.tab, Tab::Items, "Items");
                     ui.selectable_value(&mut self.tab, Tab::Trainer, "Trainer");
                     ui.selectable_value(&mut self.tab, Tab::Rogue, "Rogue");
@@ -807,14 +874,12 @@ impl eframe::App for Editor {
                 .default_width(320.0)
                 .min_width(260.0)
                 .show(ctx, |ui| {
-                    egui::ScrollArea::vertical()
-                        .auto_shrink([false, false])
-                        .show(ui, |ui| {
-                            if let Some(note) = &self.mon_note {
-                                ui.colored_label(egui::Color32::GOLD, note);
-                            }
-                            self.roster_ui(ui);
-                        });
+                    Self::wide_scroll_area().show(ui, |ui| {
+                        if let Some(note) = &self.mon_note {
+                            ui.colored_label(egui::Color32::GOLD, note);
+                        }
+                        self.roster_ui(ui);
+                    });
                 });
         }
 
@@ -830,14 +895,26 @@ impl eframe::App for Editor {
                 return;
             }
             // Everything in the centre is scrollable, including the Rogue tab
-            // with a dozen collapsing sections open at once.
-            egui::ScrollArea::vertical()
-                .auto_shrink([false, false])
-                .show(ui, |ui| match self.tab {
-                    Tab::Items => self.items_ui(ui),
-                    Tab::Trainer => self.trainer_ui(ui),
-                    Tab::Rogue => self.rogue_ui(ui),
-                });
+            // with a dozen collapsing sections open at once. The areas pan
+            // both ways: wide content (the Mon tab's move/IV rows, the Rogue
+            // grids) must stay reachable (scroll-to-the-right bug).
+            Self::wide_scroll_area().show(ui, |ui| match self.tab {
+                Tab::Mon => {
+                    if self.selected_mon().is_none() {
+                        ui.heading("No Pokemon selected");
+                        ui.label(
+                            "Click a Pokemon row in the left roster (or a daycare / stashed \
+                             row on the Rogue tab) to edit it here; double-click opens the \
+                             floating editor instead.",
+                        );
+                    } else {
+                        self.mon_editor_ui(ui);
+                    }
+                }
+                Tab::Items => self.items_ui(ui),
+                Tab::Trainer => self.trainer_ui(ui),
+                Tab::Rogue => self.rogue_ui(ui),
+            });
         });
 
         self.mon_window(ctx);
@@ -910,7 +987,7 @@ mod tests {
     /// The Rogue tab is the largest surface of typed-domain widgets (season row,
     /// home styles, Lab config toggles and ranges, safari roster). Two things
     /// must hold: it must not panic on a real save, and rendering it must not
-    /// touch the file — opening a save is not consent to write it.
+    /// touch the file - opening a save is not consent to write it.
     #[test]
     fn rogue_tab_renders_against_a_real_save_without_writing_it() {
         use egui::{Event, RawInput};
@@ -1014,5 +1091,313 @@ mod tests {
         app.sel = Some(Sel::StashParty(0));
         assert!(!app.step_selection(1));
         assert_eq!(app.sel, Some(Sel::StashParty(0)));
+    }
+
+    // ---- UI behaviour: shared row clicks, Escape, two-way scrolling ---------
+    //
+    // Same headless pattern as searchable_combo/tests.rs: a real egui Context
+    // driven by synthetic frames. Press and release ride separate frames the
+    // way a real mouse delivers them; the first frame only warms the layout
+    // (a widget cannot be clicked in the frame it first appears).
+
+    fn move_to(p: egui::Pos2) -> Vec<egui::Event> {
+        vec![egui::Event::PointerMoved(p)]
+    }
+
+    fn press(p: egui::Pos2) -> Vec<egui::Event> {
+        vec![
+            egui::Event::PointerMoved(p),
+            egui::Event::PointerButton {
+                pos: p,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::default(),
+            },
+        ]
+    }
+
+    fn release(p: egui::Pos2) -> Vec<egui::Event> {
+        vec![
+            egui::Event::PointerMoved(p),
+            egui::Event::PointerButton {
+                pos: p,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::default(),
+            },
+        ]
+    }
+
+    fn key(k: egui::Key) -> Vec<egui::Event> {
+        vec![egui::Event::Key {
+            key: k,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::default(),
+        }]
+    }
+
+    /// One frame: `draw` renders inside an Area pinned at (100,100).
+    fn run_frame(
+        ctx: &egui::Context,
+        app: &mut Editor,
+        events: Vec<egui::Event>,
+        draw: &mut dyn FnMut(&mut Editor, &mut egui::Ui),
+    ) {
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(1200.0, 900.0),
+            )),
+            focused: true,
+            events,
+            ..Default::default()
+        };
+        ctx.run(input, |ctx| {
+            egui::Area::new(egui::Id::new("root"))
+                .fixed_pos(egui::Pos2::new(100.0, 100.0))
+                .show(ctx, |ui| draw(app, ui));
+        });
+    }
+
+    const ROW: egui::Pos2 = egui::Pos2::new(150.0, 110.0);
+
+    fn row_draw(app: &mut Editor, ui: &mut egui::Ui) {
+        app.mon_row(ui, Sel::BlockDaycare(0), "slot 0: Daycare Teston");
+    }
+
+    /// User report 2: "Singly clicking any pokemon also does nothing." A
+    /// single click on a mon row must select it AND switch to the Mon tab,
+    /// showing the editor inside the window (no popup).
+    #[test]
+    fn a_single_click_on_a_mon_row_opens_the_in_window_editor() {
+        let ctx = egui::Context::default();
+        let mut app = Editor::default();
+        assert_eq!(app.tab, Tab::Items);
+        run_frame(&ctx, &mut app, vec![], &mut row_draw); // warm the layout
+        run_frame(&ctx, &mut app, move_to(ROW), &mut row_draw);
+        run_frame(&ctx, &mut app, press(ROW), &mut row_draw);
+        run_frame(&ctx, &mut app, release(ROW), &mut row_draw);
+        assert_eq!(app.sel, Some(Sel::BlockDaycare(0)), "the row is selected");
+        assert_eq!(app.tab, Tab::Mon, "and the Mon tab is showing");
+        assert!(!app.mon_popup, "a single click never opens the popup");
+    }
+
+    /// User report 1: "when double tapping pokemon in the daycare, no editor
+    /// opens." The daycare rows run through the same helper as the roster,
+    /// and a double click on any of them opens the popup editor.
+    #[test]
+    fn a_double_click_on_a_mon_row_opens_the_popup_editor() {
+        let ctx = egui::Context::default();
+        let mut app = Editor::default();
+        run_frame(&ctx, &mut app, vec![], &mut row_draw);
+        for _ in 0..2 {
+            run_frame(&ctx, &mut app, move_to(ROW), &mut row_draw);
+            run_frame(&ctx, &mut app, press(ROW), &mut row_draw);
+            run_frame(&ctx, &mut app, release(ROW), &mut row_draw);
+        }
+        assert_eq!(app.sel, Some(Sel::BlockDaycare(0)));
+        assert!(
+            app.mon_popup,
+            "the second click was a double-click: the popup opens"
+        );
+    }
+
+    /// User report 4: Escape closes the mon popup as well as the X button.
+    #[test]
+    fn escape_closes_the_mon_popup_when_no_picker_is_open() {
+        let ctx = egui::Context::default();
+        let mut app = Editor::default();
+        app.mon_popup = true;
+        run_frame(&ctx, &mut app, vec![], &mut |app, ui| {
+            app.handle_mon_escape(ui.ctx())
+        });
+        assert!(app.mon_popup, "Escape must not close it on a warm-up frame");
+        run_frame(&ctx, &mut app, key(egui::Key::Escape), &mut |app, ui| {
+            app.handle_mon_escape(ui.ctx())
+        });
+        assert!(!app.mon_popup, "Escape closes the mon popup");
+    }
+
+    /// One Escape = one close. With a searchable picker open, the Escape
+    /// dismisses the PICKER (its own rule) and must leave the mon window up;
+    /// `handle_mon_escape` runs first in the frame (as update() does) and
+    /// must see the still-open popup memory.
+    #[test]
+    fn escape_closes_the_picker_but_never_the_mon_window_too() {
+        let ctx = egui::Context::default();
+        let mut app = Editor::default();
+        app.mon_popup = true;
+        let table: Vec<(u16, &str)> = vec![(1, "applum"), (2, "oran berry")];
+        let opts = crate::searchable_combo::Opts::named();
+        let store = crate::icons::IconStore::default();
+        let mut draw = |app: &mut Editor, ui: &mut egui::Ui| {
+            app.handle_mon_escape(ui.ctx());
+            let _ = crate::searchable_combo::show(ui, "probe", &table, 0, &opts, &store);
+        };
+        run_frame(&ctx, &mut app, vec![], &mut draw);
+        // open the picker
+        run_frame(&ctx, &mut app, move_to(ROW), &mut draw);
+        run_frame(&ctx, &mut app, press(ROW), &mut draw);
+        run_frame(&ctx, &mut app, release(ROW), &mut draw);
+        assert!(
+            ctx.memory(|m| m.any_popup_open()),
+            "the picker popup opened (it is an egui-memory popup)"
+        );
+        // Escape frame: handle runs first (combo still open -> window stays),
+        // then the combo's own dismissal closes the picker.
+        run_frame(&ctx, &mut app, key(egui::Key::Escape), &mut draw);
+        assert!(
+            !ctx.memory(|m| m.any_popup_open()),
+            "the Escape dismissed the picker"
+        );
+        assert!(
+            app.mon_popup,
+            "one Escape must not also close the mon window"
+        );
+    }
+
+    /// The PP ladder pickers are `area_popup`s (not egui-memory popups), so
+    /// the Escape guard has to see them too: Escape closes the PP popup
+    /// first, the window second.
+    #[test]
+    fn escape_closes_an_open_pp_picker_before_it_would_close_the_window() {
+        let ctx = egui::Context::default();
+        let mut app = Editor::default();
+        app.mon_popup = true;
+        // The PP trigger's rect is layout-dependent, so record it from the first
+        // frame and drive the click from the recorded rect (never a guess).
+        let btn_rect: std::cell::Cell<Option<egui::Rect>> = std::cell::Cell::new(None);
+        let mut draw = |app: &mut Editor, ui: &mut egui::Ui| {
+            app.handle_mon_escape(ui.ctx());
+            let btn = ui.button("PP...");
+            btn_rect.set(Some(btn.rect));
+            let _ = crate::area_popup::anchored(ui, "pp_pop0", &btn, btn.clicked(), |ui| {
+                ui.label("PP ladder");
+                7u32
+            });
+        };
+        run_frame(&ctx, &mut app, vec![], &mut draw);
+        let pp = btn_rect
+            .get()
+            .expect("the PP trigger was laid out")
+            .center();
+        run_frame(&ctx, &mut app, move_to(pp), &mut draw);
+        run_frame(&ctx, &mut app, press(pp), &mut draw);
+        run_frame(&ctx, &mut app, release(pp), &mut draw);
+        assert!(
+            crate::area_popup::is_open(&ctx, "pp_pop0"),
+            "the anchored PP popup is open (invisible to any_popup_open)"
+        );
+        run_frame(&ctx, &mut app, key(egui::Key::Escape), &mut draw);
+        assert!(
+            !crate::area_popup::is_open(&ctx, "pp_pop0"),
+            "Escape dismissed the PP popup"
+        );
+        assert!(app.mon_popup, "the same Escape left the window open");
+    }
+
+    /// User report 5: "I cannot scroll to the right in any menu even if the
+    /// content is overflowing past the right." The shared wide area must give
+    /// a REAL horizontal scroll range, verified functionally: setting a
+    /// horizontal offset actually moves wide content to the left (the popup
+    /// pager row and the tab pages use this same helper).
+    #[test]
+    fn the_wide_area_can_scroll_right_so_wide_content_reaches_the_right() {
+        let ctx = egui::Context::default();
+        let mut first_x = f32::NAN;
+        let mut second_x = f32::NAN;
+        let mut out = (0.0f32, 0.0f32, 0.0f32, egui::Vec2::ZERO);
+        for pass in 0..2 {
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1200.0, 900.0),
+                )),
+                focused: true,
+                events: vec![egui::Event::PointerMoved(egui::Pos2::new(5.0, 5.0))],
+                ..Default::default()
+            };
+            ctx.run(input, |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    let mut area = Editor::wide_scroll_area()
+                        .max_width(500.0)
+                        .max_height(200.0);
+                    if pass == 1 {
+                        area = area.horizontal_scroll_offset(100.0);
+                    }
+                    let out2 = area.show(ui, |ui| {
+                        let r = ui.add_sized([1500.0, 800.0], egui::Button::new("wide mon editor"));
+                        if pass == 0 {
+                            first_x = r.rect.min.x;
+                        } else {
+                            second_x = r.rect.min.x;
+                        }
+                    });
+                    out = (
+                        out2.state.offset.x,
+                        out2.state.offset.y,
+                        out2.state.offset.x,
+                        out2.content_size,
+                    );
+                });
+            });
+        }
+        assert!(
+            out.3.x > 1400.0,
+            "content must keep its natural width inside the area"
+        );
+        assert!(
+            out.0 > 0.0,
+            "horizontal scroll range is zero: the both-way area did not accept a \
+             horizontal offset (x-offset {} after asking for 100)",
+            out.0
+        );
+        assert!(
+            second_x < first_x - 90.0,
+            "the wide content must actually pan left when panned right \
+             (x went {first_x} -> {second_x})"
+        );
+    }
+
+    /// The Mon tab must survive "nothing selected" with a clear message
+    /// instead of a panic, and must render the editor body when something is.
+    #[test]
+    fn the_mon_tab_renders_selected_and_unselected_states() {
+        let Some(mut app) = editor_with_save() else {
+            return;
+        };
+        app.tab = Tab::Mon;
+        let ctx = egui::Context::default();
+        // no selection: message branch must not panic
+        app.sel = None;
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(1500.0, 1200.0),
+            )),
+            focused: true,
+            ..Default::default()
+        };
+        let _ = ctx.run(input.clone(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                if app.selected_mon().is_none() {
+                    ui.heading("No Pokemon selected");
+                    ui.label("Click a Pokemon row first.");
+                } else {
+                    app.mon_editor_ui(ui);
+                }
+            });
+        });
+        // selection: the editor body renders (a real mon from the real save)
+        let order = app.roster_order();
+        assert!(!order.is_empty(), "this save has mons to select");
+        app.sel = Some(order[0].clone());
+        let _ = ctx.run(input, |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                app.mon_editor_ui(ui);
+            });
+        });
     }
 }

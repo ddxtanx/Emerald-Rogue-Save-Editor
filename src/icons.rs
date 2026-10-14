@@ -3,7 +3,7 @@
 //! Icons are NOT bundled in the binary and NOT extracted from a ROM: they are
 //! downloaded by `tools/get_icons.py` from a public sprite repo into
 //! `assets/icons/{pokemon,items}/<id>.png`, keyed by the editor's own species /
-//! item ids. If that directory is absent the editor still works — every icon
+//! item ids. If that directory is absent the editor still works - every icon
 //! slot falls back to a generated letter badge, and the top bar says so.
 //!
 //! The store is interior-mutable (`&self` methods) so icon lookups can happen
@@ -104,7 +104,7 @@ impl IconStore {
     /// per namespace so "items are all badges" can never read as intentional.
     pub fn status(&self) -> String {
         match self.root() {
-            None => "icons: no assets/icons dir — run `python3 tools/get_icons.py`".into(),
+            None => "icons: no assets/icons dir - run `python3 tools/get_icons.py`".into(),
             Some(r) => {
                 let p = self.tally(IconKind::Pokemon);
                 let i = self.tally(IconKind::Item);
@@ -231,7 +231,7 @@ fn decode_png(bytes: &[u8]) -> Option<(usize, usize, Vec<u8>)> {
     let mut decoder = png::Decoder::new(std::io::Cursor::new(bytes));
     // The crate defaults to `Transformations::IDENTITY`, i.e. exactly what is on
     // disk. Every sprite in the public repos is a 4-bit *paletted* PNG (some with
-    // tRNS transparency), and paletted indices are useless here — without this the
+    // tRNS transparency), and paletted indices are useless here - without this the
     // whole icon set silently renders as fallback badges. `ALPHA | EXPAND |
     // STRIP_16` (the crate's `normalize_to_color8` plus forced alpha) yields 8-bit
     // RGBA for every input colour type, transparent background included. Must be
@@ -533,7 +533,7 @@ mod tests {
         }
         assert!(
             checked > 2000,
-            "only {checked} icons on disk — re-run tools/get_icons.py"
+            "only {checked} icons on disk - re-run tools/get_icons.py"
         );
         assert!(
             bad.is_empty(),
