@@ -266,6 +266,15 @@ impl MonRec {
 
 impl Editor {
     pub(crate) fn mon_editor_ui(&mut self, ui: &mut egui::Ui) {
+        // Pin the width the editor has to work with. egui unions a `Ui`'s
+        // `max_rect` with whatever a widget asks for, so one row that wants more
+        // width than the panel (the four-column field grid, with its 320px item
+        // and species pickers) leaves every LATER label wrapping past the window
+        // edge - which looks exactly like the panel scrolling sideways. Rows wrap
+        // here instead, and this line stops the leak.
+        let avail = ui.available_width().max(320.0);
+        ui.set_min_width(avail);
+        ui.set_max_width(avail);
         let Some(mut rec) = self.selected_rec() else {
             ui.heading("No Pokémon selected");
             return;
@@ -347,199 +356,202 @@ impl Editor {
     fn mon_shared_fields_ui(&mut self, ui: &mut egui::Ui, rec: &mut MonRec) -> bool {
         let mut changed = false;
 
-        egui::Grid::new("mongrid")
-            .num_columns(4)
-            .spacing([12.0, 6.0])
-            .show(ui, |ui| {
-                ui.label("Species");
+        // Wrapping rows, not a Grid. The widest cells here are searchable pickers
+        // (species with its icon, ball, nature, ability), and four columns of them
+        // want more width than the panel has - a Grid then grows this ui's
+        // max_rect, which egui unions, and every label below starts wrapping past
+        // the window edge. That is what made the Ability picker look missing.
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = egui::vec2(12.0, 6.0);
+            ui.label("Species");
+            if let Some(id) = self.combo(
+                ui,
+                "species",
+                species_picker_table(),
+                rec.species(),
+                &Opts::pokemon(),
+            ) {
+                rec.set_species(id);
+                changed = true;
+            }
+            ui.end_row();
+
+            ui.label("Nickname");
+            let mut nick = rec.nickname();
+            if ui.add(egui::TextEdit::singleline(&mut nick)).changed() {
+                rec.set_nickname(&nick);
+                changed = true;
+            }
+            ui.label("Ball");
+            let mut ball = rec.ball();
+            ui.horizontal_wrapped(|ui| {
+                // Name, not id, and searchable - the request was that the ball
+                // menu say which ball the mon was caught in, using the same
+                // picker class as every other list. Ball ids live in
+                // include/constants/items.h (a ball IS an item to the game), so the
+                // picker uses the ITEM icon namespace: the stored id is the item id,
+                // which is also the icon key, so each row shows that ball's own
+                // sprite instead of a bare name.
                 if let Some(id) = self.combo(
                     ui,
-                    "species",
-                    species_picker_table(),
-                    rec.species(),
-                    &Opts::pokemon(),
-                ) {
-                    rec.set_species(id);
-                    changed = true;
-                }
-                ui.end_row();
-
-                ui.label("Nickname");
-                let mut nick = rec.nickname();
-                if ui.add(egui::TextEdit::singleline(&mut nick)).changed() {
-                    rec.set_nickname(&nick);
-                    changed = true;
-                }
-                ui.label("Ball");
-                let mut ball = rec.ball();
-                ui.horizontal(|ui| {
-                    // Name, not id, and searchable - the request was that the ball
-                    // menu say which ball the mon was caught in, using the same
-                    // picker class as every other list. Ball ids live in
-                    // include/constants/items.h (a ball IS an item to the game), so the
-                    // picker uses the ITEM icon namespace: the stored id is the item id,
-                    // which is also the icon key, so each row shows that ball's own
-                    // sprite instead of a bare name.
-                    if let Some(id) = self.combo(
-                        ui,
-                        "ball",
-                        crate::game_data::balls(),
-                        ball,
-                        &Opts::item()
-                            .compact()
-                            .with_hint("filter balls")
-                            .with_none("(no ball)"),
-                    ) {
-                        ball = id;
-                        rec.set_ball(ball);
-                        changed = true;
-                    }
-                    // Raw value stays editable: Emerald Rogue uses ball ids the
-                    // stock list does not cover.
-                    if ui
-                        .add(egui::DragValue::new(&mut ball).clamp_range(0..=31))
-                        .on_hover_text(format!(
-                            "raw ball id (the game's own field). Known name for {ball}: {}",
-                            crate::game_data::ball_name(ball as u8)
-                        ))
-                        .changed()
-                    {
-                        rec.set_ball(ball);
-                        changed = true;
-                    }
-                });
-                ui.end_row();
-
-                ui.label("Nature");
-                // 25 values, no useful ids: same picker as everything else, with
-                // the numbers hidden (nature 7 means nothing; "Relaxed" does).
-                let nat = rec.nature();
-                if let Some(n) = self.combo(
-                    ui,
-                    "nature",
-                    crate::tables::NATURE_IDS,
-                    nat.raw() as u16,
-                    &Opts::named().no_id().compact(),
-                ) {
-                    rec.set_nature(crate::domain::Nature::from_raw(n as u8));
-                    changed = true;
-                }
-                if !nat.is_known() {
-                    // pid%25 XOR the modifier can exceed 24. Shown rather than
-                    // clamped, because clamping would rewrite the mon.
-                    ui.colored_label(
-                        egui::Color32::GOLD,
-                        format!(
-                            "nature value {} is outside 0..=24 - left exactly as stored",
-                            nat.raw()
-                        ),
-                    );
-                }
-                ui.label("Shiny");
-                let mut sh = rec.shiny();
-                if ui.checkbox(&mut sh, "").changed() {
-                    rec.set_shiny(sh);
-                    changed = true;
-                }
-                // Gender: `genderFlag` is only decisive for variable-ratio
-                // species (Rogue forces those to exactly 50% female, so the flag
-                // alone decides and no pid comparison happens). A fixed-gender
-                // species ignores the flag entirely, so the picker lists what the
-                // flag MEANS for this species instead of offering a Male/Female
-                // choice the game throws away -- that is why the old row that
-                // claimed Metagross (flag 7, MON_GENDERLESS) was "Female (7)"
-                // cannot happen through this list.
-                let sp = rec.species();
-                let gflag = rec.gender_flag();
-                let gender_opts = crate::lookup::gender_flag_options(sp, gflag.raw());
-                ui.label("Gender");
-                if let Some(g) = self.combo(
-                    ui,
-                    "gender",
-                    &gender_opts,
-                    gflag.raw() as u16,
-                    &Opts::named().compact().with_hint("filter"),
-                ) {
-                    let g = crate::domain::GenderFlag::from_raw(g as u8);
-                    if g != rec.gender_flag() {
-                        rec.set_gender_flag(g);
-                        changed = true;
-                    }
-                }
-                if let Some(g) = crate::lookup::gender_for_species(sp, gflag.raw()) {
-                    // The word the game itself shows for this species and flag,
-                    // spelled out next to the picker: the picker names what the
-                    // flag MEANS, which is not always the same sentence.
-                    ui.label(format!("the game shows this one as {}", g.label()));
-                }
-                if !gflag.is_expected() {
-                    // Shown, never rewritten: a flag outside 0/1 means this save's
-                    // struct layout is not what the editor assumed.
-                    ui.colored_label(
-                        egui::Color32::GOLD,
-                        format!(
-                            "stored gender flag {} is not 0/1 - this save's struct layout does \
-                             not match what the editor assumed",
-                            gflag.raw()
-                        ),
-                    );
-                }
-                // `abilityNum` is a slot index into the species' ability list, so
-                // it is meaningless without the species: the picker lists the
-                // abilities THIS species actually has, labelled by the ability
-                // name, and NUM_ABILITY_SLOTS (3 here: 2 normal + 1 hidden) so a
-                // hidden ability is reachable. An odd stored slot is still listed,
-                // so a save we are misreading shows up instead of being rewritten.
-                ui.label("Ability");
-                let slot = rec.ability_slot();
-                let abil_opts = crate::lookup::ability_slot_options(sp, slot.raw());
-                // Slot 0 is a real value (the first normal ability), so this
-                // namespace must not be treated as "0 = empty" - that is what made
-                // every slot-0 mon render as "-". The slot number is the stored
-                // value, not the thing being named, so it lives on hover.
-                if let Some(a) = self.combo(
-                    ui,
-                    "ability",
-                    &abil_opts,
-                    slot.raw() as u16,
-                    &Opts::named()
+                    "ball",
+                    crate::game_data::balls(),
+                    ball,
+                    &Opts::item()
                         .compact()
-                        .with_hint("filter abilities")
-                        .positional()
-                        .no_id()
-                        .hover(format!(
-                            "stored abilityNum {} = slot {} of this species' ability list",
-                            slot.raw(),
-                            slot.raw()
-                        )),
+                        .with_hint("filter balls")
+                        .with_none("(no ball)"),
                 ) {
-                    let a = crate::domain::AbilitySlot::from_raw(a as u8);
-                    if a != slot {
-                        rec.set_ability_slot(a);
-                        changed = true;
-                    }
+                    ball = id;
+                    rec.set_ball(ball);
+                    changed = true;
                 }
-                if let crate::domain::AbilitySlot::Unexpected(v) = slot {
-                    // `ability_label` resolves the slot against this species, so
-                    // the note says what the game would find there rather than
-                    // just that the number is odd.
-                    ui.colored_label(
-                        egui::Color32::GOLD,
-                        format!(
-                            "stored ability slot {v} is outside this species' list - left \
-                             exactly as stored ({})",
-                            crate::lookup::ability_label(sp, v)
-                        ),
-                    );
+                // Raw value stays editable: Emerald Rogue uses ball ids the
+                // stock list does not cover.
+                if ui
+                    .add(egui::DragValue::new(&mut ball).clamp_range(0..=31))
+                    .on_hover_text(format!(
+                        "raw ball id (the game's own field). Known name for {ball}: {}",
+                        crate::game_data::ball_name(ball as u8)
+                    ))
+                    .changed()
+                {
+                    rec.set_ball(ball);
+                    changed = true;
                 }
-                ui.end_row();
             });
+            ui.end_row();
+
+            ui.label("Nature");
+            // 25 values, no useful ids: same picker as everything else, with
+            // the numbers hidden (nature 7 means nothing; "Relaxed" does).
+            let nat = rec.nature();
+            if let Some(n) = self.combo(
+                ui,
+                "nature",
+                crate::tables::NATURE_IDS,
+                nat.raw() as u16,
+                &Opts::named().no_id().compact(),
+            ) {
+                rec.set_nature(crate::domain::Nature::from_raw(n as u8));
+                changed = true;
+            }
+            if !nat.is_known() {
+                // pid%25 XOR the modifier can exceed 24. Shown rather than
+                // clamped, because clamping would rewrite the mon.
+                ui.colored_label(
+                    egui::Color32::GOLD,
+                    format!(
+                        "nature value {} is outside 0..=24 - left exactly as stored",
+                        nat.raw()
+                    ),
+                );
+            }
+            ui.label("Shiny");
+            let mut sh = rec.shiny();
+            if ui.checkbox(&mut sh, "").changed() {
+                rec.set_shiny(sh);
+                changed = true;
+            }
+            // Gender: `genderFlag` is only decisive for variable-ratio
+            // species (Rogue forces those to exactly 50% female, so the flag
+            // alone decides and no pid comparison happens). A fixed-gender
+            // species ignores the flag entirely, so the picker lists what the
+            // flag MEANS for this species instead of offering a Male/Female
+            // choice the game throws away -- that is why the old row that
+            // claimed Metagross (flag 7, MON_GENDERLESS) was "Female (7)"
+            // cannot happen through this list.
+            let sp = rec.species();
+            let gflag = rec.gender_flag();
+            let gender_opts = crate::lookup::gender_flag_options(sp, gflag.raw());
+            ui.label("Gender");
+            if let Some(g) = self.combo(
+                ui,
+                "gender",
+                &gender_opts,
+                gflag.raw() as u16,
+                &Opts::named().compact().with_hint("filter"),
+            ) {
+                let g = crate::domain::GenderFlag::from_raw(g as u8);
+                if g != rec.gender_flag() {
+                    rec.set_gender_flag(g);
+                    changed = true;
+                }
+            }
+            if let Some(g) = crate::lookup::gender_for_species(sp, gflag.raw()) {
+                // The word the game itself shows for this species and flag,
+                // spelled out next to the picker: the picker names what the
+                // flag MEANS, which is not always the same sentence.
+                ui.label(format!("the game shows this one as {}", g.label()));
+            }
+            if !gflag.is_expected() {
+                // Shown, never rewritten: a flag outside 0/1 means this save's
+                // struct layout is not what the editor assumed.
+                ui.colored_label(
+                    egui::Color32::GOLD,
+                    format!(
+                        "stored gender flag {} is not 0/1 - this save's struct layout does \
+                             not match what the editor assumed",
+                        gflag.raw()
+                    ),
+                );
+            }
+            // `abilityNum` is a slot index into the species' ability list, so
+            // it is meaningless without the species: the picker lists the
+            // abilities THIS species actually has, labelled by the ability
+            // name, and NUM_ABILITY_SLOTS (3 here: 2 normal + 1 hidden) so a
+            // hidden ability is reachable. An odd stored slot is still listed,
+            // so a save we are misreading shows up instead of being rewritten.
+            ui.label("Ability");
+            let slot = rec.ability_slot();
+            let abil_opts = crate::lookup::ability_slot_options(sp, slot.raw());
+            // Slot 0 is a real value (the first normal ability), so this
+            // namespace must not be treated as "0 = empty" - that is what made
+            // every slot-0 mon render as "-". The slot number is the stored
+            // value, not the thing being named, so it lives on hover.
+            if let Some(a) = self.combo(
+                ui,
+                "ability",
+                &abil_opts,
+                slot.raw() as u16,
+                &Opts::named()
+                    .compact()
+                    .with_hint("filter abilities")
+                    .positional()
+                    .no_id()
+                    .hover(format!(
+                        "stored abilityNum {} = slot {} of this species' ability list",
+                        slot.raw(),
+                        slot.raw()
+                    )),
+            ) {
+                let a = crate::domain::AbilitySlot::from_raw(a as u8);
+                if a != slot {
+                    rec.set_ability_slot(a);
+                    changed = true;
+                }
+            }
+            if let crate::domain::AbilitySlot::Unexpected(v) = slot {
+                // `ability_label` resolves the slot against this species, so
+                // the note says what the game would find there rather than
+                // just that the number is odd.
+                ui.colored_label(
+                    egui::Color32::GOLD,
+                    format!(
+                        "stored ability slot {v} is outside this species' list - left \
+                             exactly as stored ({})",
+                        crate::lookup::ability_label(sp, v)
+                    ),
+                );
+            }
+            ui.end_row();
+        });
 
         // StatIdx labels the six columns; both shapes pack them in struct order
         // (hp, atk, def, spe, spa, spd), so the label list cannot silently
         // disagree with the column it prints.
         ui.add_space(6.0);
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             ui.label("IVs");
             for st in crate::domain::StatIdx::ALL {
                 let nm = st.label();
@@ -572,64 +584,71 @@ impl Editor {
         let mut changed = false;
 
         ui.add_space(6.0);
-        egui::Grid::new("mongrid_extra")
-            .num_columns(4)
-            .spacing([12.0, 6.0])
-            .show(ui, |ui| {
-                ui.label("Held item");
-                if let Some(id) = self.combo(ui, "item", all_items(), m.held_item(), &Opts::item().with_none("(none)")) {
-                    m.set_held_item(id);
-                    changed = true;
-                }
-                ui.label("OT");
-                ui.label(m.ot_name());
-                ui.end_row();
+        // Not a Grid: a four-column grid whose widest cell is a 320px item picker
+        // wants more width than the panel has, and egui lets it take it - the
+        // overflow then dragged later labels' wrap width past the window. Rows of
+        // widgets reflow instead.
+        ui.horizontal_wrapped(|ui| {
+            ui.label("Held item");
+            if let Some(id) = self.combo(
+                ui,
+                "item",
+                all_items(),
+                m.held_item(),
+                &Opts::item().with_none("(none)"),
+            ) {
+                m.set_held_item(id);
+                changed = true;
+            }
+            ui.label("OT");
+            ui.label(m.ot_name());
+            ui.end_row();
 
-                // Level is derived from exp for every mon (box structs have no level
-                // byte at all). Editing level writes exp = level*300, exactly like the
-                // game does when it spawns a mon at a level.
-                let derived = m.level().unwrap_or(0);
-                ui.label("Level");
-                let mut lvl = derived;
-                if ui
-                    .add(egui::DragValue::new(&mut lvl).clamp_range(1..=MAX_LEVEL))
-                    .changed()
-                {
-                    m.set_level(lvl);
-                    changed = true;
+            // Level is derived from exp for every mon (box structs have no level
+            // byte at all). Editing level writes exp = level*300, exactly like the
+            // game does when it spawns a mon at a level.
+            let derived = m.level().unwrap_or(0);
+            ui.label("Level");
+            let mut lvl = derived;
+            if ui
+                .add(egui::DragValue::new(&mut lvl).clamp_range(1..=MAX_LEVEL))
+                .changed()
+            {
+                m.set_level(lvl);
+                changed = true;
+            }
+            if let Some(cached) = m.level_cached() {
+                if cached != derived {
+                    ui.colored_label(
+                        egui::Color32::from_rgb(220, 160, 60),
+                        format!(
+                            "cached byte {cached} != exp-derived {derived} (game uses {derived})"
+                        ),
+                    );
                 }
-                if let Some(cached) = m.level_cached() {
-                    if cached != derived {
-                        ui.colored_label(
-                            egui::Color32::from_rgb(220, 160, 60),
-                            format!(
-                                "cached byte {cached} != exp-derived {derived} (game uses {derived})"
-                            ),
-                        );
-                    }
-                }
-                ui.label("Experience");
-                let mut exp = m.exp();
-                if ui
-                    .add(egui::DragValue::new(&mut exp).clamp_range(0..=0x1FFFFF))
-                    .changed()
-                {
-                    m.set_exp(exp);
-                    changed = true;
-                }
-                ui.label("Friendship");
-                let mut fr = m.friendship();
-                if ui
-                    .add(egui::DragValue::new(&mut fr).clamp_range(0..=255))
-                    .changed()
-                {
-                    m.set_friendship(fr);
-                    changed = true;
-                }
-                ui.end_row();
-            });
+            }
+            ui.label("Experience");
+            let mut exp = m.exp();
+            if ui
+                .add(egui::DragValue::new(&mut exp).clamp_range(0..=0x1FFFFF))
+                .changed()
+            {
+                m.set_exp(exp);
+                changed = true;
+            }
+            ui.label("Friendship");
+            let mut fr = m.friendship();
+            if ui
+                .add(egui::DragValue::new(&mut fr).clamp_range(0..=255))
+                .changed()
+            {
+                m.set_friendship(fr);
+                changed = true;
+            }
+            ui.end_row();
+        });
 
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             ui.label("EVs");
             let names = ["HP", "Atk", "Def", "Spe", "SpA", "SpD"];
             for (i, nm) in names.iter().enumerate() {
@@ -659,176 +678,178 @@ impl Editor {
         );
         // Four slots laid out 2x2: as four stacked rows the moves alone took a third of
         // the mon panel and pushed everything below them past the fold.
-        for half in 0..2 {
-            if half == 1 {
+        // Two slots per row, as wrapping rows rather than a Grid. A Grid that
+        // wants more width than the panel has grows the ui and clips the tail of
+        // the row off the edge, so in a narrow window a move's PP widgets simply
+        // vanished with no scrollbar to reach them. Wrapping rows put the second
+        // slot under the first instead: still 2x2 at any normal window width.
+        for pair in [0usize..2, 2..4] {
+            if pair.start == 2 {
                 ui.add_space(4.0);
             }
-            egui::Grid::new(format!("moves{half}"))
-                .num_columns(5)
-                .spacing([8.0, 4.0])
-                .show(ui, |ui| {
-                    for s in half * 2..half * 2 + 2 {
-                        let id = m.moves()[s];
-                        if let Some(mid) = self.combo(
-                            ui,
-                            &format!("move{s}"),
-                            MOVES,
-                            id,
-                            &Opts::named().compact().with_hint("filter moves"),
-                        ) {
-                            m.set_move(s, mid);
-                            changed = true;
-                        }
-                        let base = crate::move_pp::base_pp(id);
-                        let ladder = crate::move_pp::pp_ladder(id);
-                        let tips: Vec<String> = ladder
-                            .iter()
-                            .map(|(u, p)| format!("{u} ups -> {p}"))
-                            .collect();
-                        let pp_now = m.pps()[s];
-                        let ups_now = m.pp_bonus(s);
-                        let cap_now = crate::move_pp::max_pp(id, ups_now);
-                        let mut pp = pp_now;
-                        if ui
-                            .add(
-                                egui::DragValue::new(&mut pp)
-                                    .clamp_range(0..=255)
-                                    .prefix("PP ")
-                                    .suffix(format!("/{cap_now}")),
-                            )
-                            .on_hover_text(format!(
-                                "current / cap. base {base}, {} PP up{}: the game computes \
-                                 {base} + {base}*20*{ups_now}/100 = {cap_now}",
-                                ups_now,
-                                if ups_now == 1 { "" } else { "s" }
-                            ))
-                            .changed()
-                        {
-                            m.set_pp(s, pp);
-                            changed = true;
-                        }
-                        // Per-slot PP Ups. The whole-byte setter used to mask with
-                        // `& 3`, which wiped the other three slots' ups.
-                        let mut ups = ups_now as usize;
-                        if ui
-                            .add(
-                                egui::DragValue::new(&mut ups)
-                                    .clamp_range(0..=3)
-                                    .prefix("ups "),
-                            )
-                            .on_hover_text(tips.join("\n"))
-                            .changed()
-                        {
-                            // The game adds the cap delta to CURRENT PP when an item
-                            // raises the field (src/pokemon.c:3643-3645 for the PP Up,
-                            // :3920-3922 for PP Max), so an edit follows it instead of
-                            // leaving the mon sitting at 0/24. Lowering ups clamps to the
-                            // smaller cap.
-                            let next = ups as u8;
-                            m.set_pp(
-                                s,
-                                crate::move_pp::bump_current_pp(pp_now, id, ups_now, next),
-                            );
-                            m.set_pp_bonus(s, next);
-                            changed = true;
-                        }
-                        if ui
-                            .button("max PP")
-                            .on_hover_text("fill current PP up to the cap for the current ups")
-                            .clicked()
-                        {
-                            m.set_pp(s, crate::move_pp::max_pp(id, m.pp_bonus(s)));
-                            changed = true;
-                        }
-                        // The PP picker: the PP-Up steps the game knows, each shown with
-                        // the PP it unlocks, plus a free-form entry (the request asked
-                        // for both). This is an `Area` popup rather than a ComboBox, so
-                        // its text field can actually be clicked - the bug that made
-                        // ComboBox popups vanish the moment you touched their field.
-                        let trig = ui
-                            .small_button("PP…")
-                            .on_hover_text("PP ladder (0-3 PP Ups) and custom PP entry");
-                        let opening = trig.clicked();
-                        let custom_id = egui::Id::new(format!("pp_custom{s}"));
-                        let mut custom = ui
-                            .ctx()
-                            .data(|d| d.get_temp::<String>(custom_id))
-                            .unwrap_or_default();
-                        let picked = crate::area_popup::anchored(
-                            ui,
-                            &format!("pp_pop{s}"),
-                            &trig,
-                            opening,
-                            |ui| {
-                                let mut out: Option<(Option<u8>, u8)> = None;
-                                ui.strong(format!("PP - base {base}"));
-                                if base == 0 && id != 0 {
-                                    // An id the game tree has no move entry for. Saying so
-                                    // beats showing a ladder of zeroes, which reads as
-                                    // "this move has no PP" rather than "I don't know".
-                                    ui.label("no PP entry for this move id in the game tree");
-                                } else if !crate::move_pp::vitamins_apply(id) {
-                                    // src/pokemon.c:3638 (`temp1 > 4`) and :3914
-                                    // (`temp2 >= 5`): both items are refused under 5 PP, so
-                                    // offering PP Ups here would promise a change the game
-                                    // will not make (this is how Sketch / Sheer Cold sit).
-                                    ui.label("max PP under 5: the game refuses PP Up and PP Max");
-                                } else {
-                                    for (ups, val) in ladder.iter() {
-                                        let lbl = format!(
-                                            "{} PP up{} (cap {val})",
-                                            ups,
-                                            if *ups == 1 { "" } else { "s" }
-                                        );
-                                        let cur = m.pp_bonus(s) == *ups;
-                                        if ui.selectable_label(cur, lbl).clicked() {
-                                            // Same rule as the spinner: change the field, and
-                                            // let the cap delta move current PP (the item's own
-                                            // effect, src/pokemon.c:3643-3645).
-                                            out = Some((
-                                                Some(*ups),
-                                                crate::move_pp::bump_current_pp(
-                                                    pp_now, id, ups_now, *ups,
-                                                ),
-                                            ));
-                                        }
-                                    }
-                                }
-                                ui.separator();
-                                let te = egui::TextEdit::singleline(&mut custom)
-                                    .desired_width(90.0)
-                                    .hint_text("custom PP");
-                                // Focus on the opening frame only, so typing works at
-                                // once without stealing the caret back every frame.
-                                let resp = ui.add(te);
-                                if opening {
-                                    resp.request_focus();
-                                }
-                                let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
-                                if (resp.lost_focus() && enter) || ui.button("set").clicked() {
-                                    if let Ok(v) = custom.trim().parse::<u8>() {
-                                        out = Some((None, v));
-                                    }
-                                }
-                                out
-                            },
-                        );
-                        if let Some(Some((ups, pp))) = picked {
-                            if let Some(u) = ups {
-                                m.set_pp_bonus(s, u as u8);
-                            }
-                            m.set_pp(s, pp);
-                            changed = true;
-                            custom = String::new();
-                        }
-                        ui.ctx().data_mut(|d| d.insert_temp(custom_id, custom));
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing = egui::vec2(8.0, 4.0);
+                for s in pair {
+                    let id = m.moves()[s];
+                    if let Some(mid) = self.combo(
+                        ui,
+                        &format!("move{s}"),
+                        MOVES,
+                        id,
+                        &Opts::named().compact().with_hint("filter moves"),
+                    ) {
+                        m.set_move(s, mid);
+                        changed = true;
                     }
-                    ui.end_row();
-                });
+                    let base = crate::move_pp::base_pp(id);
+                    let ladder = crate::move_pp::pp_ladder(id);
+                    let tips: Vec<String> = ladder
+                        .iter()
+                        .map(|(u, p)| format!("{u} ups -> {p}"))
+                        .collect();
+                    let pp_now = m.pps()[s];
+                    let ups_now = m.pp_bonus(s);
+                    let cap_now = crate::move_pp::max_pp(id, ups_now);
+                    let mut pp = pp_now;
+                    if ui
+                        .add(
+                            egui::DragValue::new(&mut pp)
+                                .clamp_range(0..=255)
+                                .prefix("PP ")
+                                .suffix(format!("/{cap_now}")),
+                        )
+                        .on_hover_text(format!(
+                            "current / cap. base {base}, {} PP up{}: the game computes \
+                                 {base} + {base}*20*{ups_now}/100 = {cap_now}",
+                            ups_now,
+                            if ups_now == 1 { "" } else { "s" }
+                        ))
+                        .changed()
+                    {
+                        m.set_pp(s, pp);
+                        changed = true;
+                    }
+                    // Per-slot PP Ups. The whole-byte setter used to mask with
+                    // `& 3`, which wiped the other three slots' ups.
+                    let mut ups = ups_now as usize;
+                    if ui
+                        .add(
+                            egui::DragValue::new(&mut ups)
+                                .clamp_range(0..=3)
+                                .prefix("ups "),
+                        )
+                        .on_hover_text(tips.join("\n"))
+                        .changed()
+                    {
+                        // The game adds the cap delta to CURRENT PP when an item
+                        // raises the field (src/pokemon.c:3643-3645 for the PP Up,
+                        // :3920-3922 for PP Max), so an edit follows it instead of
+                        // leaving the mon sitting at 0/24. Lowering ups clamps to the
+                        // smaller cap.
+                        let next = ups as u8;
+                        m.set_pp(
+                            s,
+                            crate::move_pp::bump_current_pp(pp_now, id, ups_now, next),
+                        );
+                        m.set_pp_bonus(s, next);
+                        changed = true;
+                    }
+                    if ui
+                        .button("max PP")
+                        .on_hover_text("fill current PP up to the cap for the current ups")
+                        .clicked()
+                    {
+                        m.set_pp(s, crate::move_pp::max_pp(id, m.pp_bonus(s)));
+                        changed = true;
+                    }
+                    // The PP picker: the PP-Up steps the game knows, each shown with
+                    // the PP it unlocks, plus a free-form entry (the request asked
+                    // for both). This is an `Area` popup rather than a ComboBox, so
+                    // its text field can actually be clicked - the bug that made
+                    // ComboBox popups vanish the moment you touched their field.
+                    let trig = ui
+                        .small_button("PP…")
+                        .on_hover_text("PP ladder (0-3 PP Ups) and custom PP entry");
+                    let opening = trig.clicked();
+                    let custom_id = egui::Id::new(format!("pp_custom{s}"));
+                    let mut custom = ui
+                        .ctx()
+                        .data(|d| d.get_temp::<String>(custom_id))
+                        .unwrap_or_default();
+                    let picked = crate::area_popup::anchored(
+                        ui,
+                        &format!("pp_pop{s}"),
+                        &trig,
+                        opening,
+                        |ui| {
+                            let mut out: Option<(Option<u8>, u8)> = None;
+                            ui.strong(format!("PP - base {base}"));
+                            if base == 0 && id != 0 {
+                                // An id the game tree has no move entry for. Saying so
+                                // beats showing a ladder of zeroes, which reads as
+                                // "this move has no PP" rather than "I don't know".
+                                ui.label("no PP entry for this move id in the game tree");
+                            } else if !crate::move_pp::vitamins_apply(id) {
+                                // src/pokemon.c:3638 (`temp1 > 4`) and :3914
+                                // (`temp2 >= 5`): both items are refused under 5 PP, so
+                                // offering PP Ups here would promise a change the game
+                                // will not make (this is how Sketch / Sheer Cold sit).
+                                ui.label("max PP under 5: the game refuses PP Up and PP Max");
+                            } else {
+                                for (ups, val) in ladder.iter() {
+                                    let lbl = format!(
+                                        "{} PP up{} (cap {val})",
+                                        ups,
+                                        if *ups == 1 { "" } else { "s" }
+                                    );
+                                    let cur = m.pp_bonus(s) == *ups;
+                                    if ui.selectable_label(cur, lbl).clicked() {
+                                        // Same rule as the spinner: change the field, and
+                                        // let the cap delta move current PP (the item's own
+                                        // effect, src/pokemon.c:3643-3645).
+                                        out = Some((
+                                            Some(*ups),
+                                            crate::move_pp::bump_current_pp(
+                                                pp_now, id, ups_now, *ups,
+                                            ),
+                                        ));
+                                    }
+                                }
+                            }
+                            ui.separator();
+                            let te = egui::TextEdit::singleline(&mut custom)
+                                .desired_width(90.0)
+                                .hint_text("custom PP");
+                            // Focus on the opening frame only, so typing works at
+                            // once without stealing the caret back every frame.
+                            let resp = ui.add(te);
+                            if opening {
+                                resp.request_focus();
+                            }
+                            let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
+                            if (resp.lost_focus() && enter) || ui.button("set").clicked() {
+                                if let Ok(v) = custom.trim().parse::<u8>() {
+                                    out = Some((None, v));
+                                }
+                            }
+                            out
+                        },
+                    );
+                    if let Some(Some((ups, pp))) = picked {
+                        if let Some(u) = ups {
+                            m.set_pp_bonus(s, u as u8);
+                        }
+                        m.set_pp(s, pp);
+                        changed = true;
+                        custom = String::new();
+                    }
+                    ui.ctx().data_mut(|d| d.insert_temp(custom_id, custom));
+                }
+            });
         }
 
         ui.add_space(6.0);
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             // Met level / met location are both stored (substruct 3): met level
             // is 7 bits alongside other flags, met location is a byte id.
             let mut ml = m.met_level() as i32;
@@ -891,7 +912,7 @@ impl Editor {
 
         if let Some((hp, max, st)) = m.cached_stats() {
             ui.add_space(4.0);
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 ui.label(format!("stats {hp}/{max}"));
                 let labels = ["Atk", "Def", "Spe", "SpA", "SpD"];
                 for (i, lb) in labels.iter().enumerate() {
@@ -912,7 +933,7 @@ impl Editor {
             // Gen 3 party stats are *cached in the save*: an IV/EV/level change
             // does nothing in-game until the mon is recalculated by battle or
             // level-up. This button does what the game would do, immediately.
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 if ui
                     .button("recalculate stats from IV/EV/level/nature")
                     .clicked()

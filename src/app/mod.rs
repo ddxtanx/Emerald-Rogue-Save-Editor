@@ -542,12 +542,14 @@ impl Editor {
         self.apply_mon_row_click(&r, sel);
     }
 
-    /// The ONE ScrollArea config for content that can be wider than its
-    /// panel. `both()` + `auto_shrink([false, false])`: a vertical-only area
-    /// has no horizontal scroll range at all, which was the report "I cannot
-    /// scroll to the right in any menu even if the content is overflowing".
-    fn wide_scroll_area() -> egui::ScrollArea {
-        egui::ScrollArea::both().auto_shrink([false, false])
+    /// The scrollable body of every tab: vertical only. Wide rows wrap to the
+    /// panel width instead of panning sideways, because a row that needs a scroll
+    /// right hides its tail - at the default window width the Mon tab's field row
+    /// did exactly that to the Ability picker. Content that cannot wrap at all (the
+    /// six-column decoration table) carries its own local scroller, and the hub
+    /// canvas shrinks its cells to fit the width it is given.
+    fn wrap_scroll_area() -> egui::ScrollArea {
+        egui::ScrollArea::vertical().auto_shrink([false, false])
     }
 
     /// Escape closes the mon popup -- but ONLY when no dropdown/anchored
@@ -783,7 +785,7 @@ impl Editor {
                 // the fields no longer fit, which was the reported complaint.
                 // It pans BOTH ways: a wide mon editor must be reachable in
                 // full, not clipped at the right edge (scroll-to-the-right bug).
-                Self::wide_scroll_area().show(ui, |ui| {
+                Self::wrap_scroll_area().show(ui, |ui| {
                     // Walk the roster from inside the popup. The PKHeX workflow
                     // is "open once, step through mons", not "close, find the
                     // next row, reopen" - and the walk follows the exact order
@@ -934,7 +936,7 @@ impl eframe::App for Editor {
                 .default_width(320.0)
                 .min_width(260.0)
                 .show(ctx, |ui| {
-                    Self::wide_scroll_area().show(ui, |ui| {
+                    Self::wrap_scroll_area().show(ui, |ui| {
                         if let Some(note) = &self.mon_note {
                             ui.colored_label(egui::Color32::GOLD, note);
                         }
@@ -955,10 +957,11 @@ impl eframe::App for Editor {
                 return;
             }
             // Everything in the centre is scrollable, including the Rogue tab
-            // with a dozen collapsing sections open at once. The areas pan
-            // both ways: wide content (the Mon tab's move/IV rows, the Rogue
-            // grids) must stay reachable (scroll-to-the-right bug).
-            Self::wide_scroll_area().show(ui, |ui| match self.tab {
+            // with a dozen collapsing sections open at once. Vertically only:
+            // the Mon tab's field rows and IV/EV rows, the item toolbars and the
+            // hub rows all wrap to the panel width, so nothing waits off-screen
+            // to the right.
+            Self::wrap_scroll_area().show(ui, |ui| match self.tab {
                 Tab::Mon => {
                     if self.selected_rec().is_none() {
                         ui.heading("No Pokemon selected");
@@ -1360,68 +1363,117 @@ mod tests {
         assert!(app.mon_popup, "the same Escape left the window open");
     }
 
-    /// User report 5: "I cannot scroll to the right in any menu even if the
-    /// content is overflowing past the right." The shared wide area must give
-    /// a REAL horizontal scroll range, verified functionally: setting a
-    /// horizontal offset actually moves wide content to the left (the popup
-    /// pager row and the tab pages use this same helper).
+    /// The window wraps instead of panning sideways (Garrett's call after the
+    /// Ability picker turned out to sit off-screen at the default width): the body
+    /// area has no horizontal scroll range, and wide widget rows reflow to the
+    /// panel width instead of extending past it.
     #[test]
-    fn the_wide_area_can_scroll_right_so_wide_content_reaches_the_right() {
+    fn the_body_area_wraps_and_offers_no_horizontal_pan() {
         let ctx = egui::Context::default();
-        let mut first_x = f32::NAN;
-        let mut second_x = f32::NAN;
-        let mut out = (0.0f32, 0.0f32, 0.0f32, egui::Vec2::ZERO);
-        for pass in 0..2 {
-            let input = egui::RawInput {
-                screen_rect: Some(egui::Rect::from_min_size(
-                    egui::Pos2::ZERO,
-                    egui::vec2(1200.0, 900.0),
-                )),
-                focused: true,
-                events: vec![egui::Event::PointerMoved(egui::Pos2::new(5.0, 5.0))],
-                ..Default::default()
-            };
-            // The frame drives the scroll widget; the assertion below reads the
-            // area's own output, not this frame's shapes.
-            let _ = ctx.run(input, |ctx| {
-                egui::CentralPanel::default().show(ctx, |ui| {
-                    let mut area = Editor::wide_scroll_area()
-                        .max_width(500.0)
-                        .max_height(200.0);
-                    if pass == 1 {
-                        area = area.horizontal_scroll_offset(100.0);
-                    }
-                    let out2 = area.show(ui, |ui| {
-                        let r = ui.add_sized([1500.0, 800.0], egui::Button::new("wide mon editor"));
-                        if pass == 0 {
-                            first_x = r.rect.min.x;
-                        } else {
-                            second_x = r.rect.min.x;
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(700.0, 600.0),
+            )),
+            focused: true,
+            ..Default::default()
+        };
+        ctx.run(input, |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                let out = Editor::wrap_scroll_area().show(ui, |ui| {
+                    ui.horizontal_wrapped(|ui| {
+                        for i in 0..40 {
+                            ui.button(format!("field {i}"));
                         }
                     });
-                    out = (
-                        out2.state.offset.x,
-                        out2.state.offset.y,
-                        out2.state.offset.x,
-                        out2.content_size,
-                    );
                 });
+                assert_eq!(
+                    out.state.offset.x, 0.0,
+                    "the body area must not offer a horizontal pan"
+                );
+                assert!(
+                    out.content_size.x <= 700.0,
+                    "40 buttons must reflow inside the panel, not widen it: {}",
+                    out.content_size.x
+                );
             });
+        });
+    }
+
+    #[test]
+    fn the_mon_editor_fits_a_narrow_window_instead_of_parking_fields_offscreen() {
+        let Some(mut app) = editor_with_save() else {
+            return;
+        };
+        let pick = {
+            let sf = app.file.as_ref().unwrap();
+            (0..ACTIVE_BOXES)
+                .flat_map(|b| (0..BOX_SLOTS).map(move |s| (b, s)))
+                .map(|(b, s)| (b, s, sf.box_mon(b, s)))
+                .find(|(_, _, m)| m.species() != 0)
+                .expect("this save has box mons")
+        };
+        let (bx, slot, _) = pick;
+        app.sel = Some(Sel::Box(bx, slot));
+        app.tab = Tab::Mon;
+        let ctx = egui::Context::default();
+        // Squeezed on purpose: at this width the move rows cannot fit two slots
+        // side by side, so this is where a non-wrapping layout would start clipping.
+        let wide = 620.0_f32;
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(wide, 2400.0),
+            )),
+            focused: true,
+            ..Default::default()
+        };
+        let mut out = None;
+        for _ in 0..3 {
+            out = Some(ctx.run(input.clone(), |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    app.mon_editor_ui(ui);
+                });
+            }));
         }
+        let out = out.unwrap();
+        // Every glyph run the editor painted must END inside the window. Anything
+        // that does not is content the user can only reach by scrolling sideways -
+        // which is exactly what wrapping is meant to remove.
+        let mut galleys: Vec<(String, f32)> = Vec::new();
+        fn walk(shape: &egui::Shape, out: &mut Vec<(String, f32)>) {
+            match shape {
+                egui::Shape::Vec(v) => {
+                    for s in v {
+                        walk(s, out);
+                    }
+                }
+                egui::Shape::Text(t) => {
+                    out.push((t.galley.text().to_string(), t.galley.rect.max.x));
+                }
+                _ => {}
+            }
+        }
+        for cs in &out.shapes {
+            walk(&cs.shape, &mut galleys);
+        }
+        let painted = galleys
+            .iter()
+            .map(|(t, _)| t.as_str())
+            .collect::<Vec<&str>>()
+            .join("|");
         assert!(
-            out.3.x > 1400.0,
-            "content must keep its natural width inside the area"
+            painted.contains("Ability"),
+            "the Ability field must be painted at a 900px width, got:\n{painted}"
         );
+        let offscreen: Vec<(String, f32)> = galleys
+            .into_iter()
+            .filter(|(_, max_x)| *max_x > wide + 1.0)
+            .collect();
         assert!(
-            out.0 > 0.0,
-            "horizontal scroll range is zero: the both-way area did not accept a \
-             horizontal offset (x-offset {} after asking for 100)",
-            out.0
-        );
-        assert!(
-            second_x < first_x - 90.0,
-            "the wide content must actually pan left when panned right \
-             (x went {first_x} -> {second_x})"
+            offscreen.is_empty(),
+            "no text may sit past the window edge (wrap, do not scroll): {:?}",
+            offscreen.iter().take(6).collect::<Vec<_>>()
         );
     }
 
@@ -1773,11 +1825,9 @@ mod tests {
                 walk_pp_rows(&cs.shape, &mut pts);
             }
         }
-        // `Grid` centers each cell inside its column, so the x of a cell's PP
-        // widget moves by the width of that row's move name (~24 px). Columns are
-        // therefore separated by clustering on the gap, not on an exact value:
-        // within-column spread is tens of pixels, the gap between the two move
-        // columns is hundreds. Rows sit ~26 px apart.
+        // Each slot's PP widget sits after that slot's move picker, so the two
+        // slots on a row are hundreds of pixels apart while the two rows are ~26 px
+        // apart. Cluster on the gap rather than an exact value.
         let cluster = |mut vals: Vec<f32>, gap: f32| -> Vec<(f32, f32)> {
             vals.sort_by(|a, b| a.partial_cmp(b).unwrap());
             let mut out: Vec<(f32, f32)> = Vec::new();

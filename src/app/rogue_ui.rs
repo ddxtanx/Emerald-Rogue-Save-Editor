@@ -200,7 +200,7 @@ impl Editor {
             ui.ctx().data_mut(|d| d.insert_temp(filt_id, filt.clone()));
             let f = filt.to_lowercase();
             let mut edits: Vec<(usize, u16, u8)> = Vec::new();
-            Self::wide_scroll_area().max_height(340.0).show(ui, |ui| {
+            Self::wrap_scroll_area().max_height(340.0).show(ui, |ui| {
                 for i in 0..n {
                     let (flags, hc) = snap[i];
                     let name = qn.get(i).copied().unwrap_or("?");
@@ -607,7 +607,11 @@ impl Editor {
                         .collect()
                 };
                 let mut edits: Vec<(usize, u8, u8, crate::domain::DecorVariant, bool)> = Vec::new();
-                Self::wide_scroll_area()
+                // The one region that keeps a sideways scrollbar: a six-column
+                // table of prop rows cannot wrap without redesigning the table, so
+                // it pans inside its own frame rather than making the page scroll.
+                egui::ScrollArea::both()
+                    .auto_shrink([false, false])
                     .max_height(240.0)
                     .show(ui, |ui| {
                         egui::Grid::new("hubdecor")

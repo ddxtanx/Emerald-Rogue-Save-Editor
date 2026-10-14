@@ -133,8 +133,11 @@ impl super::Editor {
 
         let cols = VIEW_MAX - VIEW_MIN + 1;
         let rows = VIEW_MAX - VIEW_MIN + 1;
+        // The map never asks for sideways room: the cell size adapts to the
+        // panel width, so the whole grid is visible at any window width.
+        let cell = CELL.min(ui.available_width() / cols as f32);
         let (_grid_rect, resp) = ui.allocate_exact_size(
-            Vec2::new(cols as f32 * CELL, rows as f32 * CELL),
+            Vec2::new(cols as f32 * cell, rows as f32 * cell),
             egui::Sense::click_and_drag(),
         );
         let origin = resp.rect.min;
@@ -146,28 +149,28 @@ impl super::Editor {
 
         // Grid.
         for c in 0..=cols {
-            let x = origin.x + c as f32 * CELL;
+            let x = origin.x + c as f32 * cell;
             painter.line_segment(
                 [
                     Pos2::new(x, origin.y),
-                    Pos2::new(x, origin.y + rows as f32 * CELL),
+                    Pos2::new(x, origin.y + rows as f32 * cell),
                 ],
                 egui::Stroke::new(0.6_f32, Color32::from_gray(55)),
             );
         }
         for r in 0..=rows {
-            let y = origin.y + r as f32 * CELL;
+            let y = origin.y + r as f32 * cell;
             painter.line_segment(
                 [
                     Pos2::new(origin.x, y),
-                    Pos2::new(origin.x + cols as f32 * CELL, y),
+                    Pos2::new(origin.x + cols as f32 * cell, y),
                 ],
                 egui::Stroke::new(0.6_f32, Color32::from_gray(55)),
             );
         }
         // The (0,0) tile is the game's anchor; mark it so a move is not guessed blind.
         {
-            let r0 = tile_rect(origin, CELL, VIEW_MIN, VIEW_MIN, 0, 0);
+            let r0 = tile_rect(origin, cell, VIEW_MIN, VIEW_MIN, 0, 0);
             painter.rect_stroke(
                 r0.shrink(1.5),
                 0.0,
@@ -182,7 +185,7 @@ impl super::Editor {
                 continue;
             }
             let (x, y) = coords.get(i).copied().unwrap_or((0, 0));
-            let r = tile_rect(origin, CELL, VIEW_MIN, VIEW_MIN, x as i32, y as i32);
+            let r = tile_rect(origin, cell, VIEW_MIN, VIEW_MIN, x as i32, y as i32);
             painter.rect_filled(r.shrink(2.0), 3.0, area_color(i).linear_multiply(0.75));
             let selected = sel.area == Some(i);
             if selected {
@@ -204,7 +207,7 @@ impl super::Editor {
         // Click: select a building, or move the selected one to the clicked tile.
         let click_tile = if resp.clicked() {
             resp.interact_pointer_pos()
-                .and_then(|p| tile_at(p, origin, CELL, VIEW_MIN, VIEW_MIN, cols, rows))
+                .and_then(|p| tile_at(p, origin, cell, VIEW_MIN, VIEW_MIN, cols, rows))
         } else {
             None
         };
@@ -232,7 +235,7 @@ impl super::Editor {
         if resp.drag_started() {
             if let Some(p) = resp
                 .interact_pointer_pos()
-                .and_then(|p| tile_at(p, origin, CELL, VIEW_MIN, VIEW_MIN, cols, rows))
+                .and_then(|p| tile_at(p, origin, cell, VIEW_MIN, VIEW_MIN, cols, rows))
             {
                 if let Some(i) = (0..HUB_AREAS.len()).find(|i| {
                     built.get(*i).copied().unwrap_or(false)
@@ -250,7 +253,7 @@ impl super::Editor {
             if let (Some(mv), Some(p)) = (
                 sel.area,
                 resp.interact_pointer_pos()
-                    .and_then(|p| tile_at(p, origin, CELL, VIEW_MIN, VIEW_MIN, cols, rows)),
+                    .and_then(|p| tile_at(p, origin, cell, VIEW_MIN, VIEW_MIN, cols, rows)),
             ) {
                 if coords.get(mv).copied().map(|(x, y)| (x as i32, y as i32)) != Some(p) {
                     coord_edits.push((mv, p.0 as i8, p.1 as i8));
@@ -261,7 +264,7 @@ impl super::Editor {
         // Hover tooltip: what is under the pointer, and what a click there would do.
         if let Some(hp) = resp
             .hover_pos()
-            .and_then(|p| tile_at(p, origin, CELL, VIEW_MIN, VIEW_MIN, cols, rows))
+            .and_then(|p| tile_at(p, origin, cell, VIEW_MIN, VIEW_MIN, cols, rows))
         {
             let what = (0..HUB_AREAS.len()).find(|i| {
                 built.get(*i).copied().unwrap_or(false)
@@ -300,7 +303,7 @@ impl super::Editor {
         // Selected-area controls: build/unbuild are deliberately separate from moving.
         if let Some(i) = sel.area {
             ui.add_space(6.0);
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 ui.strong(HUB_AREAS[i]);
                 let (x, y) = coords.get(i).copied().unwrap_or((0, 0));
                 ui.label(format!("at ({x},{y})"));
@@ -440,7 +443,7 @@ impl super::Editor {
                 INTERIOR,
             ),
         ];
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             ui.label("prop to place");
             if let Some(v) = self.combo(
                 ui,
@@ -507,6 +510,9 @@ impl super::Editor {
                 place.y0,
                 place.y1
             ));
+            // Cells shrink to the width on offer rather than pushing the page
+            // sideways: the body area scrolls vertically only.
+            let cell = cell.min(ui.available_width() / span as f32);
             let (_grid_rect, resp) = ui.allocate_exact_size(
                 Vec2::new(span as f32 * cell, span as f32 * cell),
                 egui::Sense::click(),

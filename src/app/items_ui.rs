@@ -104,7 +104,7 @@ impl Editor {
         // same stash toggle for both directions.
         let mut do_add = false;
         let mut do_remove = false;
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             ui.label("add to bag:");
             if let Some(id) = self.combo(
                 ui,
