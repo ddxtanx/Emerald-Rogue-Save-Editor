@@ -567,6 +567,9 @@ fn icon_rows_paint_the_name_beside_the_icon_inside_the_frame() {
         walk(&cs.shape, &mut names, &mut sprites);
     }
 
+    // Captured before the loop below consumes `names`.
+    let all_text: Vec<String> = names.iter().map(|(t, _, _)| t.clone()).collect();
+
     let mut checked = 0;
     for (text, x, y) in names {
         let Some((id, name)) = table.iter().find(|(_, n)| text.contains(n)) else {
@@ -597,5 +600,11 @@ fn icon_rows_paint_the_name_beside_the_icon_inside_the_frame() {
     assert!(
         checked >= 9,
         "ball rows must show their names as options; only {checked} name galleys were painted"
+    );
+    // The synthetic "(no ball)" row must not wear the fallback letter badge: that
+    // would read like yet another real option's art.
+    assert!(
+        !all_text.iter().any(|t| t.trim() == "nb"),
+        "the (no ball) row must carry no badge; painted: {all_text:?}"
     );
 }

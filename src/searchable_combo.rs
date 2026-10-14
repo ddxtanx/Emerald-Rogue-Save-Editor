@@ -530,7 +530,12 @@ fn body(
                         ui.visuals().widgets.hovered.weak_bg_fill,
                     );
                 }
-                if opts.icons != IconKind::None {
+                // The synthetic "none" row carries no stored id, so it gets neither
+                // a sprite nor the letter-badge fallback: a badge there reads like
+                // another real option's art (it showed "nb" for "(no ball)").
+                let show_icon = opts.icons != IconKind::None
+                    && !(opts.zero_is_none && id == 0 && opts.none_label.is_some());
+                if show_icon {
                     let icon_rect = Rect::from_center_size(
                         rect.left_center() + egui::vec2(4.0 + ICON_SIZE * 0.5, 0.0),
                         Vec2::splat(ICON_SIZE.min(row_height - 1.0)),
@@ -550,10 +555,10 @@ fn body(
                 // icon): the same `icon_pad` reservation the trigger button uses, so
                 // the sprite never lands on top of the name it is meant to label.
                 let text_x = rect.left()
-                    + if opts.icons == IconKind::None {
-                        4.0
-                    } else {
+                    + if show_icon {
                         4.0 + ICON_SIZE + 6.0
+                    } else {
+                        4.0
                     };
                 let galley =
                     ui.painter()
