@@ -500,7 +500,7 @@ pub(crate) fn recalculate_cached_stats(m: &mut Mon) -> Result<u32, String> {
         // species.h, the data does not), versus a gap in the editor's generated
         // table, which is a bug and should read like one.
         let sp = m.species();
-        if crate::basestats::SPECIES_WITHOUT_GAME_DATA.contains(&sp) {
+        if crate::basestats::species_without_game_data().contains(&sp) {
             return Err(format!(
                 "species {sp} ({}) has no entry in the game's own species_info table, so its \
                  base stats are not defined by the game either",
@@ -655,7 +655,7 @@ mod tests {
     fn an_id_the_game_declares_without_data_says_so_rather_than_blaming_the_table() {
         let sp = 1481; // "Mimikyu Totem" in the editor's name table
         assert!(
-            crate::basestats::SPECIES_WITHOUT_GAME_DATA.contains(&sp),
+            crate::basestats::species_without_game_data().contains(&sp),
             "expected {sp} to be declared-without-data"
         );
         let mut m = Mon::blank(0x1234_5678, "Garrett", sp, 30);

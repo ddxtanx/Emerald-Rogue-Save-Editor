@@ -1,7 +1,7 @@
 //! Move PP: the game's base values (generated table in `move_pp_data.rs`) plus
 //! the game's own PP-Up arithmetic, transcribed rather than approximated.
 
-use crate::move_pp_data::MOVE_PP;
+use crate::move_pp_data::move_pp_table;
 
 /// PP Ups are 2 bits per move slot (`gPPUpGetMask`, `src/pokemon.c:424`) and the
 /// items never push the field past 3: the PP Up branch requires the stored value
@@ -11,10 +11,11 @@ pub const MAX_PP_UPS: u8 = 3;
 
 /// Base max PP as the game's move table stores it (0 for the empty slot).
 pub fn base_pp(move_id: u16) -> u8 {
-    MOVE_PP
+    let table = move_pp_table();
+    table
         .binary_search_by(|(id, _)| id.cmp(&move_id))
         .ok()
-        .map(|i| MOVE_PP[i].1)
+        .map(|i| table[i].1)
         .unwrap_or(0)
 }
 
@@ -185,7 +186,7 @@ mod tests {
         // Every base PP in this tree is a multiple of 5, so the older
         // `base + base/5*ups` happened to agree here; the game's own expression is
         // used so the cap cannot drift if a base ever stops being one.
-        for (id, base) in crate::move_pp_data::MOVE_PP {
+        for (id, base) in crate::move_pp_data::move_pp_table() {
             let base = *base as u32;
             if base >= 5 {
                 assert_eq!(
@@ -248,7 +249,7 @@ mod tests {
         assert_eq!(bump_current_pp(3, 428, 2, 0), 3);
     }
 
-    /// The reported PP bug, at its root: `MOVE_PP` used to be generated from the
+    /// The reported PP bug, at its root: the PP table used to be generated from the
     /// 2.2.07 tree, whose move table stopped at id 376, so Zen Headbutt (428) and
     /// every other newer move rendered as `PP - base 0` with a ladder of zeroes.
     /// Every move the picker offers must have a base PP.
@@ -267,9 +268,9 @@ mod tests {
             &missing[..missing.len().min(6)]
         );
         assert!(
-            crate::move_pp_data::MOVE_PP.len() >= 800,
+            crate::move_pp_data::move_pp_table().len() >= 800,
             "the PP table looks truncated: {} entries",
-            crate::move_pp_data::MOVE_PP.len()
+            crate::move_pp_data::move_pp_table().len()
         );
     }
 }

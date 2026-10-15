@@ -164,9 +164,24 @@ impl Editor {
                 // sector checksums are bad the save is already damaged, and the
                 // editor should say so before anyone edits it.
                 let intact = sf.slot_valid(sf.active_slot);
+                // A problem in the editor's OWN embedded tables has to be visible
+                // here, not later disguised as "this species has no stats": the
+                // base-stat table once silently lost 201 species and every symptom
+                // looked like a property of the save.
+                let mut table_problems = crate::basestats::parse_problems().to_vec();
+                table_problems.extend_from_slice(crate::move_pp_data::parse_problems());
                 self.status = format!(
-                    "Opened {ps} (active save slot {n}, sector checksums {})",
-                    if intact { "OK" } else { "MISMATCH" }
+                    "Opened {ps} (active save slot {n}, sector checksums {}){}",
+                    if intact { "OK" } else { "MISMATCH" },
+                    if table_problems.is_empty() {
+                        String::new()
+                    } else {
+                        format!(
+                            "; {} problem(s) in the editor's built-in tables, first: {}",
+                            table_problems.len(),
+                            table_problems[0]
+                        )
+                    }
                 );
                 self.sel = Some(Sel::Party(0));
                 self.path = Some(ps);

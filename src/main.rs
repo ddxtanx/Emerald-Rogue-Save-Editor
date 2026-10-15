@@ -21,6 +21,7 @@ mod abilities;
 mod app;
 mod area_popup;
 mod basestats;
+mod csv;
 mod deco_variants;
 mod domain;
 mod form_tables;

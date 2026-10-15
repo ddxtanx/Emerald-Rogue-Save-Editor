@@ -361,7 +361,7 @@ mod tests {
     /// and the generator only followed bare `NAME` indirection. The table looked
     /// complete, and the editor answered "no base stats in table" for mons that
     /// have base stats. So: every species id the editor can NAME must either have
-    /// stats or be on the generated `SPECIES_WITHOUT_GAME_DATA` list (constants the
+    /// stats or be on the generated declared-without-data list (constants the
     /// tree declares with no species_info entry -- placeholder/unimplemented forms).
     #[test]
     fn every_named_species_either_has_stats_or_is_declared_without_game_data() {
@@ -371,7 +371,7 @@ mod tests {
             .chain(tables_extra::SPECIES_EXTRA.iter())
         {
             if crate::basestats::base_stats(*id).is_none()
-                && !crate::basestats::SPECIES_WITHOUT_GAME_DATA.contains(id)
+                && !crate::basestats::species_without_game_data().contains(id)
             {
                 gaps.push((*id, *name));
             }
@@ -400,7 +400,7 @@ mod tests {
             (1417, "Ogerpon (Wellspring Mask)"),
         ] {
             assert!(
-                !crate::basestats::SPECIES_WITHOUT_GAME_DATA.contains(&id),
+                !crate::basestats::species_without_game_data().contains(&id),
                 "{name} ({id}) must have base stats"
             );
             assert!(

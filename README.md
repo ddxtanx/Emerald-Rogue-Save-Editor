@@ -191,7 +191,10 @@ box 0 ("BOX1"): 15 mons, first = Litwick checksum OK
 ```
 src/main.rs        save model, sector/checksum machinery, mon decode/encode, GUI + CLI
 src/tables.rs      species / moves / items / natures tables (generated from game headers)
-src/basestats.rs   per-species base stats (generated from game species_info)
+data/*.csv         game data tables (base stats, base PP, declared-without-data ids),
+                   generated from the game tree and embedded with `include_str!`;
+                   parsed once at start-up, so the binary still needs no data files
+src/csv.rs         the small reader those tables are parsed through
 tools/             reverse-engineering and table-generation helpers (Python)
 docs/FORMAT.md     the reverse-engineered save layout, with offsets and sources
 docs/screenshot.png
@@ -216,7 +219,14 @@ SAV_OUT=save-out-of-adventure.sav SAV_IN=save-in-adventure.sav python3 tools/dif
 
 - `gen_species_names.py` — species id → name for the whole Rogue species space (Gen 1–9, Mega, Gigantamax,
   regional/alt forms, and Rogue's own fake forms — ~1400 ids, not the ~386 of vanilla Emerald)
-- `gen_basestats.py`, `gen_rogue_items.py` — base-stat and Rogue-item tables
+- `gen_basestats_v2.py` — base stats for every species the game defines them for, into
+  `data/basestats.csv`, plus `data/species_without_game_data.csv` for the ids the game *declares* in
+  `species.h` but never gives a `species_info` entry to. The test suite asserts every species id the
+  editor can name is in one list or the other, because a generator that silently loses a family is
+  indistinguishable from "this Pokémon has no stats" until a user hits it (201 species, including
+  Xerneas and Alcremie, went missing exactly that way). Entry forms it has to follow: brace blocks,
+  `= MACRO_NAME,` indirection, and `= MACRO(args),` function-like macros that nest into more macros
+- `gen_rogue_items.py` — Rogue's own item ids and their pockets
 - `gen_movepp.py` — base PP for every move id, from `src/data/battle_moves.h`. The editor's PP caps come
   from this table: generated from the wrong tree it silently reports 0 PP for every move past the old
   tree's highest id, which is what made the PP popup show `PP - base 0` for Zen Headbutt
@@ -267,7 +277,7 @@ Two rules earned the hard way, both pinned by tests:
 
 The editor code in this repository is MIT-licensed (see [LICENSE](LICENSE)).
 
-The tables in `src/tables.rs` and `src/basestats.rs` are generated from headers in
+The tables in `src/tables.rs` and `data/*.csv` are generated from headers in
 [Pokabbie/pokeemerald-rogue](https://github.com/Pokabbie/pokeemerald-rogue) (`expansion` branch), which is itself based
 on [pret/pokeemerald](https://github.com/pret/pokeemerald) and
 [rh-hideout/pokeemerald-expansion](https://github.com/rh-hideout/pokeemerald-rogue). Underlying Pokémon names, species,
