@@ -46,6 +46,14 @@ Pokémon- and sector-level checksum so the game accepts the result.
   party, bag, daycare, money, and play time — so you can fix the state that the game is not currently showing.
 - **Roster editing**: add a blank/level-100 mon to the party or a box, delete the selected mon, and move mons
   between party and boxes (delete keeps a one-slot undo)
+- **Add a copy** (in the mon editor, on any full record): one click puts a copy of the mon you are editing into
+  the **party**, the **box** you are looking at, a free **daycare** slot, or an empty **Safari Zone** roster entry.
+  The party copy grows to the 104-byte layout and gets its cached stat block computed; the daycare copy goes to
+  the daycare this save is currently showing (the stashed hub-state roster is left alone, and the status line
+  names which one was written); the Safari Zone copy becomes a 20-byte spawn entry and keeps only the fields that
+  record stores - species, IVs, nature, ability, gender, ball, shiny, nickname - at spawn **priority 100**, above
+  the game's own spawn values, so a hand-added entry is not buried. A full container refuses and says why,
+  without touching a byte; a spawn entry is refused as a copy *source* rather than having missing fields invented
 - **Searchable pickers** for species, items, and moves: type to filter, arrows to move, Enter to pick.
   They stay open when you click the search field, auto-focus on open, and list every entry by default
 - **Sprite art**: species and item icons in the roster, picker rows and item lists, from public

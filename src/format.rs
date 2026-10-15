@@ -68,6 +68,10 @@ pub(crate) const ROGUE_CAP: usize = 4 * 30 * 80; // 4 leftover boxes
 pub(crate) const ROGUE_SECRET: u16 = 27615;
 pub(crate) const DAYCARE_ELEMSZ: usize = 84; // 80B BoxPokemon facade + 4 (v2.2.0 build)
 pub(crate) const SAFARISZ: usize = 20; // struct RogueSafariMon (STATIC_ASSERT == 20)
+/// Spawn priority a hand-added Safari Zone entry gets (the row edits this u8).
+/// 100 sits above the values the game's own spawn tree uses, so a mon the user
+/// adds by hand is not buried under the defaults.
+pub(crate) const SAFARI_ADD_PRIORITY: u8 = 100;
 pub(crate) const STASH_PARTY: usize = 6;
 pub(crate) const STASH_BAG_CAP: usize = 450;
 pub(crate) const STASH_DAYCARE: usize = 3;

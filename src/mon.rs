@@ -359,6 +359,17 @@ impl Mon {
             self.raw[84] = self.level().unwrap_or(0);
         }
     }
+    /// The same record sized for the party: a box record is the first 80 bytes of a
+    /// 104-byte party record, and the 24-byte live-stat tail is zeroed for the
+    /// caller to fill - normally straight after, via `recalculate_cached_stats`.
+    /// Returns `self` untouched when it is already party-sized.
+    pub fn party_sized(mut self) -> Mon {
+        if self.raw.len() < MONSZ {
+            self.raw.resize(MONSZ, 0);
+        }
+        self
+    }
+
     pub fn cached_stats(&self) -> Option<(u16, u16, [u16; 5])> {
         if self.raw.len() != MONSZ {
             return None;
@@ -460,6 +471,44 @@ pub(crate) fn nature_split(nat: usize, stat: usize) -> u32 {
 /// Game stat formula (src/pokemon.c CalStat), integer division at each step.
 /// `stat` is 0=HP..5=SpDef. Note index 3 is Speed and 4/5 are SpA/SpD in our
 /// ordering, matching how the cached stat block is laid out.
+/// Recompute the cached stat block the way the game's `CalculateMonStats` does.
+/// Gen 3 caches stats in the save, so an IV / EV / level change stays invisible
+/// in-game until this runs - which is what the editor's "recalculate stats"
+/// button needs, and any copy that lands in the party. `Err` names why it cannot
+/// be done: an out-of-range nature has no row in the 25-entry modifier table, and
+/// an unknown species has no base-stat row.
+pub(crate) fn recalculate_cached_stats(m: &mut Mon) -> Result<u32, String> {
+    // The stat block lives at bytes 86..98, which only exist in a 104-byte party
+    // record. Writing it into an 80-byte box record would silently do nothing, so
+    // refuse out loud instead. Box stats are not stored at all: the game computes
+    // them when the mon leaves the box.
+    if m.raw.len() != MONSZ {
+        return Err(format!(
+            "this record is {} bytes and stores no stat block",
+            m.raw.len()
+        ));
+    }
+    let lvl = m.level().unwrap_or(0) as u32;
+    let nat = m.nature();
+    if !nat.is_known() {
+        return Err(format!("nature value {} is outside 0..=24", nat.raw()));
+    }
+    let Some(bs) = crate::basestats::base_stats(m.species()) else {
+        return Err(format!(
+            "no base stats in table for species {}",
+            m.species()
+        ));
+    };
+    let (evs, ivs) = (m.evs(), m.ivs());
+    let ni = nat.raw() as usize;
+    m.set_cached_hp(calc_stat(bs[0] as u32, ivs[0] as u32, evs[0] as u32, lvl, ni, 0) as u16);
+    for i in 1..6 {
+        let v = calc_stat(bs[i] as u32, ivs[i] as u32, evs[i] as u32, lvl, ni, i);
+        m.set_cached_stat(i - 1, v as u16);
+    }
+    Ok(lvl)
+}
+
 pub(crate) fn calc_stat(base: u32, iv: u32, ev: u32, lvl: u32, nat: usize, stat: usize) -> u32 {
     let ev4 = ev / 4;
     if stat == 0 {
@@ -521,6 +570,46 @@ mod tests {
     ///
     /// Deliberately synthetic rather than read from a real save: the regression
     /// pin must run on CI too, where no save is present.
+    /// A stat block only exists in a 104-byte party record. On an 80-byte box
+    /// record the writes would land nowhere, so the helper must say so rather
+    /// than report success - and `party_sized` is what makes a copy writable.
+    #[test]
+    fn stat_recalculation_refuses_a_box_record_and_works_once_sized_for_the_party() {
+        let made = Mon::blank(0x1234_5678, "Garrett", 59, 54); // Arcanine, L54
+        assert_eq!(made.raw.len(), 104, "a fresh record is party-sized");
+        // Box records reach the editor as the first 80 bytes (`from_bytes` on a
+        // BOXSZ slice), which is the shape whose stat writes would go nowhere.
+        let mut boxed = Mon::from_bytes(&made.raw[..80]);
+        let err = recalculate_cached_stats(&mut boxed)
+            .expect_err("an 80-byte record has no stat block to write");
+        assert!(err.contains("stores no stat block"), "unhelpful: {err}");
+        assert_eq!(boxed.cached_stats(), None, "nothing may be written");
+
+        let mut party = boxed.clone().party_sized();
+        assert_eq!(party.raw.len(), 104, "grown to the party layout");
+        let lvl = recalculate_cached_stats(&mut party).expect("now it can compute");
+        assert_eq!(lvl, 54, "level comes from exp, which the box slice carries");
+        let (cur, max, st) = party.cached_stats().expect("stat block present");
+        assert_eq!(cur, max, "a freshly computed mon is at full HP");
+        assert!(
+            max > 0 && st.iter().all(|v| *v > 0),
+            "all stats non-zero: {st:?}"
+        );
+        // Cross-check against the game formula for a level-54 Arcanine (base 90 HP).
+        let bs = crate::basestats::base_stats(59).expect("Arcanine has base stats");
+        let ivs = party.ivs();
+        let evs = party.evs();
+        let expect_hp = calc_stat(
+            bs[0] as u32,
+            ivs[0] as u32,
+            evs[0] as u32,
+            54,
+            party.nature().raw() as usize,
+            0,
+        );
+        assert_eq!(max as u32, expect_hp, "HP must match the game formula");
+    }
+
     #[test]
     fn the_all_iv_write_matches_six_single_iv_writes() {
         let seed: [u8; 6] = [23, 10, 21, 31, 21, 8];

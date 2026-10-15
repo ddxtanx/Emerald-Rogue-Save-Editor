@@ -346,6 +346,12 @@ for v2.1.0-era saves and `+ 6` for older ones. The on-disk `saveVersion` equals
 `DAYS_PER_SEASON 2`, `SEASON_COUNT 4`; `RogueToD_GetSeason() = seasonCounter / DAYS_PER_SEASON`,
 and every write wraps `% (DAYS_PER_SEASON * SEASON_COUNT)` (i.e. % 8). Counter 4 = Autumn day 0.
 
+**An editor note on hand-added spawn entries.** Pushing a caught mon to the Safari Zone roster cannot copy the
+record: these 20 bytes hold species, the six IVs, nature, ability slot, gender, ball, shiny and a nickname, and
+nothing else - no level, EXP, EVs, moves, OT/PID or stats. The editor fills exactly those fields and sets
+`priorityCounter` to 100 (above the values the game's own spawn tree uses), so the entry it adds is actually
+rolled. Adding to a full roster is refused rather than overwriting a live entry.
+
 **struct RogueSafariMon (20 B)** — bitfields confirmed against a real v2.2.0 roster (all IVs ≤31,
 natures ≤24, shiny ∈{0,1}, priority 0..101) and pinned by a unit test:
 ```
@@ -376,7 +382,9 @@ struct RogueDaycarePokemon { struct RogueBoxPokemonFacade boxMonFacade; /*80B*/ 
 ```
 
 Rogue's daycare is `daycarePokemon[3]` inside the Rogue save block *and* mirrored in `sRunRestoreBlock`, so the
-in-run and out-of-run daycare are separate. Quest state is `RogueQuestState` bitfields
+in-run and out-of-run daycare are separate. That is why the editor's "add a copy to daycare" writes one roster
+and not both: it picks the one the save is currently showing (`stash.ok` tells it which) and says so in the
+status line - filling both would put the same mon into two states the game treats as different. Quest state is `RogueQuestState` bitfields
 (`stateFlags:16`, `highestCompleteDifficulty:3`, `highestCollectedRewardDifficulty:3`).
 
 ## 13. Hub map fields (v2.2.0)

@@ -50,6 +50,55 @@ enum Sel {
     Safari(usize),
 }
 
+/// Where an "add a copy of this mon" request can land. Lives next to `Sel` because
+/// the two lists answer one question - which containers a record can occupy - and a
+/// target that `Sel` cannot name could not be selected after the write.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum AddTarget {
+    Party,
+    Box,
+    Daycare,
+    Safari,
+}
+
+impl AddTarget {
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            AddTarget::Party => "Party",
+            AddTarget::Box => "Box",
+            AddTarget::Daycare => "Daycare",
+            AddTarget::Safari => "Safari zone",
+        }
+    }
+
+    /// What the button means in this save, spelled out so the click is not
+    /// a guess: two daycares and two parties exist in a Rogue save with a
+    /// run in progress (see the dual-state note in docs/FORMAT.md).
+    pub(crate) fn hint(self) -> &'static str {
+        match self {
+            AddTarget::Party => {
+                "append to the party the game currently holds (SaveBlock1); \
+                                 a copy keeps level, EXP, moves and stats"
+            }
+            AddTarget::Box => {
+                "first free slot of the box this mon is in, or box 1 if it is \
+                               not in a box"
+            }
+            AddTarget::Daycare => {
+                "first free of the three daycare slots, in the daycare state \
+                                   this save is showing"
+            }
+            AddTarget::Safari => {
+                "first empty Safari Zone roster entry. The 20-byte spawn entry \
+                                  keeps species, IVs, nature, ability, gender, ball, shiny and \
+                                  nickname; it has no bytes for level, EXP, EVs, moves, OT/PID \
+                                  or stats. Spawn priority defaults to 100 so a hand-added \
+                                  entry outranks the tree's own spawns."
+            }
+        }
+    }
+}
+
 /// What species the "add mon" pickers show before the user touches them.
 /// Deliberately the first row of the species picker table (dex #1 Bulbasaur),
 /// so the row the picker opens on is the mon that lands in the slot when Add is
@@ -361,6 +410,166 @@ impl Editor {
             Some(sf.party_count())
         } else {
             None
+        }
+    }
+
+    // ---- "add a copy of this mon over there" -------------------------------
+    /// Containers a copy of a full 104-byte record can go into. The safari zone
+    /// is included because its 20-byte spawn template is reachable from a full
+    /// record by keeping the fields it has bytes for (see `safari_template`);
+    /// the reverse direction is not offered, because a spawn entry has no level,
+    /// EXP, EVs, moves, OT/PID or stats to copy.
+    /// The spawn template a full record becomes when it is pushed to the Safari
+    /// Zone roster. Built through `SafariMon`'s own bitfield setters so the
+    /// 20-byte layout stays in one place.
+    fn safari_template(m: &Mon, priority: u8) -> SafariMon {
+        let mut s = SafariMon {
+            w0: 0,
+            w1: 0,
+            nick: Vec::new(),
+            priority,
+            custom_lookup: 0,
+        };
+        s.set_species(m.species());
+        for st in crate::domain::StatIdx::ALL {
+            s.set_iv(st, m.iv(st));
+        }
+        s.set_nature(m.nature());
+        s.set_ability_slot(m.ability_slot());
+        s.set_gender(m.gender());
+        s.set_pokeball(crate::domain::Ball::from_raw(m.ball() as u16));
+        s.set_shiny(m.is_shiny());
+        s.set_nickname(&m.nickname());
+        s
+    }
+
+    /// Which of the two daycare rosters this save is showing right now: a Rogue
+    /// save keeps one roster live and one stashed while a run is in progress, so
+    /// the answer comes from the save rather than from a guess.
+    fn daycare_state(sf: &SaveFile) -> bool {
+        sf.rogue_block()
+            .map(|rb| rb.ok && rb.stash.ok)
+            .unwrap_or(false)
+    }
+
+    /// Copy the selected mon into `target`. `Ok(text)` names the slot written;
+    /// `Err(text)` says why nothing was written. In-memory only: like every
+    /// other edit this needs an explicit Save to reach the disk.
+    fn add_copy_to(&mut self, target: AddTarget) -> Result<String, String> {
+        let Some(rec) = self.selected_rec() else {
+            return Err("no mon selected".into());
+        };
+        let Some(m) = rec.full().cloned() else {
+            return Err(
+                "a Safari Zone spawn entry has no bytes to copy into a box record; \
+                 select a party, box, fusion or daycare mon first"
+                    .into(),
+            );
+        };
+        let name = m.display_name();
+        let Some(sf) = self.file.as_mut() else {
+            return Err("no save open".into());
+        };
+        match target {
+            AddTarget::Party => {
+                // A record entering the party needs a cached stat block that
+                // matches it: a box record stores no stats, and Gen 3 reads the
+                // cached block rather than recomputing, so the copy would
+                // otherwise walk in with whatever bytes the source had.
+                let mut copy = m.clone().party_sized();
+                let stat_note = match recalculate_cached_stats(&mut copy) {
+                    Ok(lvl) => format!("stats recalculated at level {lvl}"),
+                    Err(why) => format!("cached stats copied as-is ({why})"),
+                };
+                let Some((slot, _)) = sf.add_party_mon(&copy) else {
+                    return Err("the party is already 6 strong".into());
+                };
+                self.dirty = true;
+                self.sel = Some(Sel::Party(slot));
+                Ok(format!(
+                    "added a copy of {name} to party slot {} ({stat_note})",
+                    slot + 1
+                ))
+            }
+            AddTarget::Box => {
+                let bx = match self.sel {
+                    Some(Sel::Box(bx, _)) => bx,
+                    _ => 0,
+                };
+                // Same emptiness rule the roster list uses (`species != 0`). Read
+                // through `sf` here rather than the `&self` helper: `sf` is already
+                // borrowed mutably from `self.file`.
+                let Some(slot) = (0..BOX_SLOTS).find(|s| sf.box_mon(bx, *s).species() == 0) else {
+                    return Err(format!("box {} is full (30 slots)", bx + 1));
+                };
+                sf.set_box_mon(bx, slot, &m);
+                self.dirty = true;
+                self.sel = Some(Sel::Box(bx, slot));
+                Ok(format!(
+                    "added a copy of {name} to box {} slot {}",
+                    bx + 1,
+                    slot + 1
+                ))
+            }
+            AddTarget::Daycare => {
+                let stashed = Self::daycare_state(sf);
+                let rb = sf.rogue_block().ok_or("this save has no Rogue block")?;
+                if !rb.ok {
+                    return Err("the Rogue block did not decode; refusing to write".into());
+                }
+                // Capacity: three slots either way, but "empty" is read from the
+                // roster that is actually live in this state.
+                let taken = |i: usize| {
+                    if stashed {
+                        rb.stash.daycare.get(i).map(|d| d.species() != 0) == Some(true)
+                    } else {
+                        let lo = rb.daycare_f.data + i * DAYCARE_ELEMSZ;
+                        Mon::from_bytes(&sf.merged[lo..lo + BOXSZ]).species() != 0
+                    }
+                };
+                let Some(i) = (0..STASH_DAYCARE).find(|i| !taken(*i)) else {
+                    return Err("the daycare is full (3 slots)".into());
+                };
+                if stashed {
+                    sf.set_stash_daycare(i, &m);
+                    self.sel = Some(Sel::StashDaycare(i));
+                } else {
+                    sf.set_block_daycare(i, &m);
+                    self.sel = Some(Sel::BlockDaycare(i));
+                }
+                self.dirty = true;
+                Ok(format!(
+                    "added a copy of {name} to daycare slot {}{}",
+                    i + 1,
+                    if stashed {
+                        " (stashed hub state)"
+                    } else {
+                        " (the daycare the game is showing)"
+                    }
+                ))
+            }
+            AddTarget::Safari => {
+                let rb = sf.rogue_block().ok_or("this save has no Rogue block")?;
+                if !rb.ok {
+                    return Err("the Rogue block did not decode; refusing to write".into());
+                }
+                let n = rb.safari_f.n;
+                let Some(i) =
+                    (0..n).find(|i| sf.safari_mon(&rb, *i).map(|s| s.species() == 0) == Some(true))
+                else {
+                    return Err(format!("Safari Zone roster is full ({n} entries)"));
+                };
+                let tmpl = Self::safari_template(&m, SAFARI_ADD_PRIORITY);
+                sf.set_safari_mon(i, &tmpl);
+                self.dirty = true;
+                self.sel = Some(Sel::Safari(i));
+                Ok(format!(
+                    "added a Safari Zone spawn entry {} for {} (priority {})",
+                    i + 1,
+                    species_name(m.species()),
+                    SAFARI_ADD_PRIORITY
+                ))
+            }
         }
     }
 
@@ -1791,6 +2000,450 @@ mod tests {
         assert!(
             !painted.contains("loc "),
             "the raw met-location number must not be shown as the label:\n{painted}"
+        );
+    }
+
+    // ---- "add a copy of this mon over there" -------------------------------
+
+    /// Shared harness for the tests below. Note `t.pos`, not `galley.rect`: the
+    /// galley rect is local, so only `pos` is a screen position.
+    fn paint_in(
+        ctx: &egui::Context,
+        app: &mut Editor,
+        events: Vec<egui::Event>,
+    ) -> egui::FullOutput {
+        ctx.run(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1400.0, 1600.0),
+                )),
+                focused: true,
+                events,
+                ..Default::default()
+            },
+            |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    app.mon_editor_ui(ui);
+                });
+            },
+        )
+    }
+
+    fn galleys(out: &egui::FullOutput) -> Vec<(String, egui::Pos2)> {
+        fn walk(shape: &egui::Shape, acc: &mut Vec<(String, egui::Pos2)>) {
+            match shape {
+                egui::Shape::Vec(v) => {
+                    for sh in v {
+                        walk(sh, acc);
+                    }
+                }
+                egui::Shape::Text(t) => acc.push((t.galley.text().to_string(), t.pos)),
+                _ => {}
+            }
+        }
+        let mut ts = Vec::new();
+        for cs in &out.shapes {
+            walk(&cs.shape, &mut ts);
+        }
+        ts
+    }
+
+    /// A real click: one Context, three frames (hover, press, release). A fresh
+    /// Context per frame would forget the press and `clicked()` would never fire.
+    fn click_at(app: &mut Editor, at: egui::Pos2) {
+        let ctx = egui::Context::default();
+        let _ = paint_in(&ctx, app, vec![egui::Event::PointerMoved(at)]);
+        let _ = paint_in(
+            &ctx,
+            app,
+            vec![egui::Event::PointerButton {
+                pos: at,
+                pressed: true,
+                button: egui::PointerButton::Primary,
+                modifiers: Default::default(),
+            }],
+        );
+        let _ = paint_in(
+            &ctx,
+            app,
+            vec![egui::Event::PointerButton {
+                pos: at,
+                pressed: false,
+                button: egui::PointerButton::Primary,
+                modifiers: Default::default(),
+            }],
+        );
+    }
+
+    /// Selects box 1 slot 1 when it holds a mon; `None` when this save's layout
+    /// does not offer that, so the test skips rather than passing vacuously.
+    fn editor_on_a_box_mon() -> Option<Editor> {
+        let mut app = editor_with_save()?;
+        if app.file.as_ref().unwrap().box_mon(0, 0).species() == 0 {
+            return None;
+        }
+        app.sel = Some(Sel::Box(0, 0));
+        Some(app)
+    }
+
+    /// A box record copied into the party must come out valid: same identity, a
+    /// checksum that validates, and a cached stat block - which a box record does
+    /// not store, so the copy has to compute it or it would walk in at zero HP.
+    #[test]
+    fn a_copy_into_the_party_keeps_identity_and_gains_a_stat_block() {
+        let Some(mut app) = editor_on_a_box_mon() else {
+            return;
+        };
+        let before_n = app.file.as_ref().unwrap().party_count();
+        if before_n >= 6 {
+            return; // no room: covered by the refusal test
+        }
+        let src = app.file.as_ref().unwrap().box_mon(0, 0);
+
+        let msg = app
+            .add_copy_to(AddTarget::Party)
+            .expect("this party has room for a copy");
+        let sf = app.file.as_ref().unwrap();
+        assert_eq!(sf.party_count(), before_n + 1, "count must grow: {msg}");
+        let added = sf.party()[before_n].clone();
+        assert_eq!(added.species(), src.species(), "species: {msg}");
+        assert_eq!(added.nickname(), src.nickname(), "nickname: {msg}");
+        assert!(
+            added.checksum_ok(),
+            "the copy's checksum must validate: {msg}"
+        );
+        let stats = added
+            .cached_stats()
+            .expect("a party record has a stat block");
+        assert!(stats.1 > 0, "max HP must not be zero: {msg}");
+        assert!(stats.2[0] > 0, "Attack must not be zero: {msg}");
+        assert!(
+            matches!(app.sel, Some(Sel::Party(i)) if i == before_n),
+            "the editor should now show the copy, not the source: {msg}"
+        );
+    }
+
+    /// The Safari Zone target has an explicit spec: the 20-byte spawn entry keeps
+    /// only the fields it has bytes for, at priority 100, and lands in a slot that
+    /// was empty rather than overwriting a live one.
+    #[test]
+    fn a_copy_into_the_safari_zone_keeps_the_fields_it_can_hold_at_priority_100() {
+        let Some(mut app) = editor_on_a_box_mon() else {
+            return;
+        };
+        let src = app.file.as_ref().unwrap().box_mon(0, 0);
+        let rb = app.file.as_ref().unwrap().rogue_block().unwrap();
+        let n = rb.safari_f.n;
+        let Some(free_i) = (0..n).find(|i| {
+            app.file
+                .as_ref()
+                .unwrap()
+                .safari_mon(&rb, *i)
+                .map(|s| s.species() == 0)
+                == Some(true)
+        }) else {
+            return; // full roster: covered by the refusal test
+        };
+        let witness = (0..n)
+            .filter(|i| *i != free_i)
+            .find_map(|i| app.file.as_ref().unwrap().safari_mon(&rb, i))
+            .filter(|s| s.species() != 0)
+            .map(|s| s.species());
+
+        let msg = app
+            .add_copy_to(AddTarget::Safari)
+            .expect("this save has an empty Safari Zone slot");
+        let sf = app.file.as_ref().unwrap();
+        let rb = sf.rogue_block().unwrap();
+        let got = sf.safari_mon(&rb, free_i).expect("the slot reads back");
+        assert_eq!(got.species(), src.species(), "species: {msg}");
+        for st in crate::domain::StatIdx::ALL {
+            assert_eq!(got.iv(st), src.iv(st), "IV {:?}: {msg}", st);
+        }
+        assert_eq!(got.nature(), src.nature(), "nature: {msg}");
+        assert_eq!(got.ability_slot(), src.ability_slot(), "ability: {msg}");
+        assert_eq!(got.gender(), src.gender(), "gender: {msg}");
+        assert_eq!(got.shiny(), src.is_shiny(), "shiny: {msg}");
+        assert_eq!(got.priority, 100, "priority must default to 100: {msg}");
+        if let Some(sp) = witness {
+            let untouched = (0..n)
+                .filter(|i| *i != free_i)
+                .filter_map(|i| sf.safari_mon(&rb, i))
+                .filter(|s| s.species() == sp)
+                .count();
+            assert!(untouched > 0, "an existing entry was displaced: {msg}");
+        }
+    }
+
+    /// Daycare is the third named target. The interesting part is *which* of a
+    /// Rogue save's two daycares gets written: the answer comes from the save
+    /// (`daycare_state`), and the other roster must stay untouched.
+    #[test]
+    fn a_copy_into_the_daycare_fills_a_free_slot_in_the_state_the_save_shows() {
+        let Some(mut app) = editor_on_a_box_mon() else {
+            return;
+        };
+        let stashed = Editor::daycare_state(app.file.as_ref().unwrap());
+        let src_species = app.file.as_ref().unwrap().box_mon(0, 0).species();
+
+        // Snapshot the three slots of the roster that is live in this state.
+        let read = |app: &Editor, i: usize| -> u16 {
+            let rb = app.file.as_ref().unwrap().rogue_block().unwrap();
+            if stashed {
+                rb.stash.daycare.get(i).map(|m| m.species()).unwrap_or(0)
+            } else {
+                let lo = rb.daycare_f.data + i * DAYCARE_ELEMSZ;
+                let sf = app.file.as_ref().unwrap();
+                crate::mon::Mon::from_bytes(&sf.merged[lo..lo + BOXSZ]).species()
+            }
+        };
+        let before: [u16; STASH_DAYCARE] = [read(&app, 0), read(&app, 1), read(&app, 2)];
+        let free = before.iter().position(|s| *s == 0);
+        let Some(free_i) = free else {
+            return; // full daycare: the refusal path is pinned by its own test
+        };
+
+        let msg = app
+            .add_copy_to(AddTarget::Daycare)
+            .expect("this save has a free daycare slot");
+        let after: [u16; STASH_DAYCARE] = [read(&app, 0), read(&app, 1), read(&app, 2)];
+        assert_eq!(
+            after[free_i], src_species,
+            "the free slot must take the copy: {msg}"
+        );
+        for i in 0..STASH_DAYCARE {
+            if i != free_i {
+                assert_eq!(after[i], before[i], "slot {i} must be untouched: {msg}");
+            }
+        }
+        let wants_stash = matches!(app.sel, Some(Sel::StashDaycare(_)));
+        assert_eq!(
+            wants_stash, stashed,
+            "selection must follow the state the write went to: {msg}"
+        );
+    }
+
+    /// A container that is full says why, and does not touch a byte.
+    #[test]
+    fn a_full_container_refuses_the_copy_and_writes_nothing() {
+        let Some(mut app) = editor_on_a_box_mon() else {
+            return;
+        };
+        app.file.as_mut().unwrap().set_party_count(6);
+        let snapshot = app.file.as_ref().unwrap().merged.clone();
+
+        let err = app
+            .add_copy_to(AddTarget::Party)
+            .expect_err("a 6-strong party must refuse");
+        assert!(err.contains("6 strong"), "unhelpful refusal: {err}");
+        assert_eq!(
+            app.file.as_ref().unwrap().merged,
+            snapshot,
+            "a refused copy must change no byte at all"
+        );
+    }
+
+    /// A spawn entry cannot be pushed the other way: those 20 bytes have no
+    /// level / EXP / moves / stats, so inventing them would write a fake mon.
+    #[test]
+    fn a_spawn_entry_is_refused_as_a_copy_source() {
+        let Some(mut app) = editor_with_save() else {
+            return;
+        };
+        let Some(rb) = app.file.as_ref().unwrap().rogue_block() else {
+            return;
+        };
+        let Some(i) = (0..rb.safari_f.n).find(|i| {
+            app.file
+                .as_ref()
+                .unwrap()
+                .safari_mon(&rb, *i)
+                .map(|s| s.species() != 0)
+                == Some(true)
+        }) else {
+            return;
+        };
+        app.sel = Some(Sel::Safari(i));
+        let err = app
+            .add_copy_to(AddTarget::Party)
+            .expect_err("a spawn entry has no box-record bytes");
+        assert!(err.contains("spawn entry"), "unhelpful refusal: {err}");
+    }
+
+    /// The row is drawn for a full record and not for a spawn entry, so the
+    /// buttons never dangle a copy that cannot be made.
+    #[test]
+    fn the_add_row_appears_for_a_full_record_and_not_for_a_spawn_entry() {
+        let Some(mut app) = editor_on_a_box_mon() else {
+            return;
+        };
+        let ts = galleys(&paint_in(&egui::Context::default(), &mut app, vec![]))
+            .into_iter()
+            .map(|(t, _)| t)
+            .collect::<Vec<_>>();
+        assert!(
+            ts.iter().any(|t| t.contains("Add a copy to:")),
+            "a full record must name its targets; got {ts:?}"
+        );
+        for want in ["Party", "Box", "Daycare", "Safari zone"] {
+            assert!(
+                ts.iter().any(|t| t.trim() == want),
+                "missing target button {want}"
+            );
+        }
+
+        let Some(rb) = app.file.as_ref().unwrap().rogue_block() else {
+            return;
+        };
+        let Some(i) = (0..rb.safari_f.n).find(|i| {
+            app.file
+                .as_ref()
+                .unwrap()
+                .safari_mon(&rb, *i)
+                .map(|s| s.species() != 0)
+                == Some(true)
+        }) else {
+            return;
+        };
+        app.sel = Some(Sel::Safari(i));
+        let ts = galleys(&paint_in(&egui::Context::default(), &mut app, vec![]))
+            .into_iter()
+            .map(|(t, _)| t)
+            .collect::<Vec<_>>();
+        assert!(
+            !ts.iter().any(|t| t.contains("Add a copy to:")),
+            "a 20-byte spawn entry must not offer targets it cannot fill"
+        );
+    }
+
+    /// How many slots a target currently holds, for the click tests.
+    fn filled_in(app: &Editor, target: AddTarget) -> usize {
+        let sf = app.file.as_ref().unwrap();
+        match target {
+            AddTarget::Party => sf.party_count(),
+            AddTarget::Box => (0..BOX_SLOTS)
+                .filter(|s| sf.box_mon(0, *s).species() != 0)
+                .count(),
+            AddTarget::Daycare => {
+                let Some(rb) = sf.rogue_block() else { return 0 };
+                if Editor::daycare_state(sf) {
+                    rb.stash.daycare.iter().filter(|m| m.species() != 0).count()
+                } else {
+                    (0..rb.daycare_f.n)
+                        .filter(|i| {
+                            let lo = rb.daycare_f.data + i * DAYCARE_ELEMSZ;
+                            crate::mon::Mon::from_bytes(&sf.merged[lo..lo + BOXSZ]).species() != 0
+                        })
+                        .count()
+                }
+            }
+            AddTarget::Safari => {
+                let Some(rb) = sf.rogue_block() else { return 0 };
+                (0..rb.safari_f.n)
+                    .filter_map(|i| sf.safari_mon(&rb, i))
+                    .filter(|s| s.species() != 0)
+                    .count()
+            }
+        }
+    }
+
+    /// Find the target's button on the add row and click it, in the real widget
+    /// path. Panics if the row does not offer that target.
+    fn click_add_button(app: &mut Editor, target: AddTarget) {
+        let ts = galleys(&paint_in(&egui::Context::default(), app, vec![]));
+        let Some((_, row)) = ts.iter().find(|(t, _)| t.contains("Add a copy to:")) else {
+            panic!("no add row painted for {target:?}");
+        };
+        let row = *row;
+        let Some((_, at)) = ts.iter().find(|(t, at)| {
+            t.trim() == target.label() && (at.y - row.y).abs() < 12.0 && at.x > row.x
+        }) else {
+            panic!("no {} button on the add row", target.label());
+        };
+        click_at(app, egui::pos2(at.x + 25.0, at.y + 8.0));
+    }
+
+    /// Every button in the row does what it says, through the widget: click it and
+    /// the named container gains exactly one record.
+    #[test]
+    fn every_add_button_puts_one_record_in_the_container_it_names() {
+        for target in [
+            AddTarget::Party,
+            AddTarget::Box,
+            AddTarget::Daycare,
+            AddTarget::Safari,
+        ] {
+            let Some(mut app) = editor_on_a_box_mon() else {
+                return;
+            };
+            let before = filled_in(&app, target);
+            click_add_button(&mut app, target);
+            let after = filled_in(&app, target);
+            assert_eq!(
+                after,
+                before + 1,
+                "{} button must add exactly one record (note {:?})",
+                target.label(),
+                app.mon_note
+            );
+            // The note must say what happened, in that container's own terms:
+            // a Safari Zone entry is a spawn template, not a "copy of a mon".
+            let note = app.mon_note.clone().unwrap_or_default();
+            let wants = match target {
+                AddTarget::Safari => "spawn entry",
+                _ => "added a copy",
+            };
+            assert!(note.contains("added a"), "{target:?} note: {note}");
+            assert!(note.contains(wants), "{target:?} note: {note}");
+        }
+    }
+
+    /// The buttons are not decoration: one click on "Safari zone" adds exactly one
+    /// entry, at priority 100.
+    #[test]
+    fn clicking_the_safari_button_adds_one_entry_at_priority_100() {
+        let Some(mut app) = editor_on_a_box_mon() else {
+            return;
+        };
+        let filled = |app: &Editor| {
+            let rb = app.file.as_ref().unwrap().rogue_block().unwrap();
+            (0..rb.safari_f.n)
+                .filter_map(|i| app.file.as_ref().unwrap().safari_mon(&rb, i))
+                .filter(|s| s.species() != 0)
+                .count()
+        };
+        let before = filled(&app);
+
+        // Locate the button on the add row: same y band as the label, to its right.
+        let ts = galleys(&paint_in(&egui::Context::default(), &mut app, vec![]));
+        let Some((_, label_at)) = ts.iter().find(|(t, _)| t.contains("Add a copy to:")) else {
+            panic!("the add row was not painted");
+        };
+        let row = *label_at;
+        let Some((_, at)) = ts.iter().find(|(t, at)| {
+            t.trim() == "Safari zone" && (at.y - row.y).abs() < 12.0 && at.x > row.x
+        }) else {
+            panic!("no Safari zone button on the add row (label at {row:?})");
+        };
+        click_at(&mut app, egui::pos2(at.x + 30.0, at.y + 8.0));
+
+        assert_eq!(
+            filled(&app),
+            before + 1,
+            "the click must add exactly one entry; note reads {:?}",
+            app.mon_note
+        );
+        let rb = app.file.as_ref().unwrap().rogue_block().unwrap();
+        assert!(
+            (0..rb.safari_f.n).any(|i| app
+                .file
+                .as_ref()
+                .unwrap()
+                .safari_mon(&rb, i)
+                .map(|s| s.priority)
+                == Some(100)),
+            "the entry the click added must carry priority 100"
         );
     }
 

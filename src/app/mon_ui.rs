@@ -9,7 +9,6 @@
 //! a widget with nowhere to write would rewrite a neighbouring field.
 
 use super::*;
-use crate::basestats::base_stats;
 use crate::searchable_combo::Opts;
 use crate::tables::MOVES;
 
@@ -327,6 +326,38 @@ impl Editor {
                 s.species(),
                 species_name(s.species())
             ));
+        }
+
+        // Add a copy of this record to another container, from the pane where it
+        // is being edited: the request was to add "from the editor pane" to the
+        // party / boxes / daycare / Safari Zone, so the buttons live here and not
+        // only in the roster's add rows. Full records only - a 20-byte spawn
+        // entry has no bytes to copy into a box record, and the Safari Zone
+        // target already owns that shape.
+        if rec.full().is_some() {
+            ui.horizontal_wrapped(|ui| {
+                ui.label("Add a copy to:");
+                for t in [
+                    super::AddTarget::Party,
+                    super::AddTarget::Box,
+                    super::AddTarget::Daycare,
+                    super::AddTarget::Safari,
+                ] {
+                    let hover = format!(
+                        "{}\n\nThe copy takes what is stored (each field edit commits as you \
+                         make it). Nothing reaches the disk until you press Save.",
+                        t.hint()
+                    );
+                    if ui.button(t.label()).on_hover_text(hover).clicked() {
+                        match self.add_copy_to(t) {
+                            Ok(msg) => self.mon_note = Some(msg),
+                            Err(why) => {
+                                self.mon_note = Some(format!("cannot add to {}: {why}", t.label()));
+                            }
+                        }
+                    }
+                }
+            });
         }
         ui.separator();
 
@@ -938,48 +969,15 @@ impl Editor {
                     .button("recalculate stats from IV/EV/level/nature")
                     .clicked()
                 {
-                    let lvl = m.level().unwrap_or(0) as u32;
-                    let nat = m.nature();
-                    // The nature modifier table has 25 rows; an out-of-range
-                    // nature has no row, so recalculation cannot be done
-                    // correctly and is refused rather than guessed at.
-                    let nat_idx = if nat.is_known() {
-                        Some(nat.raw() as usize)
-                    } else {
-                        None
-                    };
-                    match (nat_idx, base_stats(m.species())) {
-                        (None, _) => {
-                            self.mon_note = Some(format!(
-                                "nature value {} is outside 0..=24 - stats NOT recalculated",
-                                nat.raw()
-                            ));
-                        }
-                        (Some(_), None) => {
-                            self.mon_note = Some(format!(
-                                "no base stats in table for species {} - stats NOT recalculated",
-                                m.species()
-                            ));
-                        }
-                        (Some(nat), Some(bs)) => {
-                            let evs = m.evs();
-                            let ivs = m.ivs();
-                            let hp =
-                                calc_stat(bs[0] as u32, ivs[0] as u32, evs[0] as u32, lvl, nat, 0);
-                            m.set_cached_hp(hp as u16);
-                            for i in 1..6 {
-                                let v = calc_stat(
-                                    bs[i] as u32,
-                                    ivs[i] as u32,
-                                    evs[i] as u32,
-                                    lvl,
-                                    nat,
-                                    i,
-                                );
-                                m.set_cached_stat(i - 1, v as u16);
-                            }
+                    // One implementation, shared with the "add a copy to the
+                    // party" path, so the button and a fresh copy cannot drift.
+                    match recalculate_cached_stats(m) {
+                        Ok(lvl) => {
                             self.mon_note = Some(format!("stats recalculated at level {lvl}"));
                             changed = true;
+                        }
+                        Err(why) => {
+                            self.mon_note = Some(format!("{why} - stats NOT recalculated"));
                         }
                     }
                 }
