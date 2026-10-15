@@ -81,6 +81,13 @@ pub fn weather_name(id: u16) -> &'static str {{
         .unwrap_or("no such weather id in weather.h")
 }}
 """
+    # The table this script used to emit is CSV now (data/weather_names.csv), parsed at start-up by
+    # src/weather_names.rs; re-running this generator would replace that loader with literals
+    # and break every accessor. Add a CSV emitter before removing this stop.
+    raise SystemExit(
+        "SUPERSEDED: WEATHER_NAMES now lives in data/weather_names.csv.\n"
+        "Edit that file, or port this generator to write it, before re-running."
+    )
 open('src/weather_names.rs', 'w').write(out)
 print(f'weather_names: {len(by_id)} ids, {len(ids)} consts, {len(aliases)} aliases')
 for probe in (0, 3, 5, 6, 9, 16):

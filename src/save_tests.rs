@@ -6,7 +6,7 @@ use crate::game_data::*;
 use crate::item_pockets;
 use crate::mon::*;
 use crate::savefile::*;
-use crate::tables::NATURE_IDS;
+use crate::tables;
 
 mod tests {
     use super::*;
@@ -95,7 +95,7 @@ mod tests {
     #[test]
     fn nature_table_index3_is_adamant() {
         // A real trap when back-solving: index 3 is Adamant (boosts Atk), not Calm.
-        assert_eq!(NATURE_IDS[3], (3, "Adamant"));
+        assert_eq!(tables::natures()[3], (3, "Adamant"));
         assert_eq!(nature_split(3, 1), 110); // Atk boosted
         assert_eq!(nature_split(3, 4), 90); // SpA lowered
         assert_eq!(nature_split(3, 0), 100); // HP never changes
@@ -558,9 +558,9 @@ mod tests {
     /// once, or a later lookup silently shadows an earlier entry.
     #[test]
     fn species_extra_stays_disjoint_sorted_and_duplicate_free() {
-        let ex = crate::tables_extra::SPECIES_EXTRA;
+        let ex = crate::tables_extra::species_extra();
         let base: std::collections::HashSet<u16> =
-            crate::tables::SPECIES.iter().map(|(id, _)| *id).collect();
+            crate::tables::species().iter().map(|(id, _)| *id).collect();
         let mut prev = 0u16;
         for (id, name) in ex {
             assert!(*id > 905, "form table holds base-dex id {id}");

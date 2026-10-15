@@ -172,7 +172,7 @@ impl Editor {
         ui.collapsing("Quests", |ui| {
             let n = rb.quests_f.n;
             let base = rb.quests_f.data;
-            let qn = tables_extra::QUEST_NAMES;
+            let qn = tables_extra::quest_names();
             // snapshot current values so the UI never borrows the file while editing it
             let snap: Vec<(u16, u8)> = {
                 let sf = self.file.as_ref().unwrap();

@@ -11,7 +11,7 @@
 
 use super::*;
 use crate::searchable_combo::Opts;
-use crate::tables::MOVES;
+use crate::tables;
 
 /// One part of the mon editor, so a record shape can name (or refuse) it.
 /// Hiding a section is a correctness statement, not cosmetics: an editor widget
@@ -457,7 +457,7 @@ impl Editor {
             if let Some(n) = self.combo(
                 ui,
                 "nature",
-                crate::tables::NATURE_IDS,
+                crate::tables::natures(),
                 nat.raw() as u16,
                 &Opts::named().no_id().compact(),
             ) {
@@ -720,7 +720,7 @@ impl Editor {
                     if let Some(mid) = self.combo(
                         ui,
                         &format!("move{s}"),
-                        MOVES,
+                        tables::moves(),
                         id,
                         &Opts::named().compact().with_hint("filter moves"),
                     ) {

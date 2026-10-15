@@ -101,11 +101,15 @@ impl AddTarget {
 }
 
 /// What species the "add mon" pickers show before the user touches them.
-/// Deliberately the first row of the species picker table (dex #1 Bulbasaur),
-/// so the row the picker opens on is the mon that lands in the slot when Add is
-/// pressed. `all_species()` sorts by id, so this is `tables::SPECIES[0]`, the
-/// same entry the picker lists first.
-const DEFAULT_ADD_SPECIES: u16 = crate::tables::SPECIES[0].0;
+/// Deliberately the first row of the species picker table (dex #1 Bulbasaur), so
+/// the row the picker opens on is the mon that lands in the slot when Add is
+/// pressed.
+///
+/// It is a literal because the name tables are parsed on first use, so there is no
+/// const to read; `the_default_species_for_the_add_controls_is_the_pickers_first`
+/// asserts this still equals `tables::species()[0].0`, which is what keeps the two
+/// from drifting apart.
+const DEFAULT_ADD_SPECIES: u16 = 1;
 
 pub(crate) struct Editor {
     file: Option<SaveFile>,
@@ -171,6 +175,9 @@ impl Editor {
                 // save.
                 let mut table_problems = crate::basestats::parse_problems().to_vec();
                 table_problems.extend_from_slice(crate::move_pp_data::parse_problems());
+                // Every id/label table reports through one registry, so a new one
+                // is heard from without touching this line again.
+                table_problems.extend(crate::csv::problems());
                 self.status = format!(
                     "Opened {ps} (active save slot {n}, sector checksums {}){}",
                     if intact { "OK" } else { "MISMATCH" },
@@ -1258,7 +1265,7 @@ mod tests {
         let table = all_species();
         assert_eq!(
             table[0],
-            crate::tables::SPECIES[0],
+            crate::tables::species()[0],
             "the picker's first row is the first species-table entry"
         );
         assert_eq!(

@@ -13,7 +13,7 @@
 //! Both helpers below mirror the game's functions rather than inventing a
 //! policy, because the point of the editor is to show what the game will show.
 
-use crate::abilities::ABILITY_NAMES;
+use crate::abilities::ability_names;
 use crate::species_meta::SPECIES_META;
 
 /// `MON_MALE` / `MON_FEMALE` / `MON_GENDERLESS` (include/constants/pokemon.h).
@@ -65,7 +65,7 @@ pub fn species_meta(sp: u16) -> Option<(u8, [u16; 3])> {
 }
 
 pub fn ability_name(id: u16) -> Option<&'static str> {
-    ABILITY_NAMES
+    ability_names()
         .iter()
         .find(|(i, _)| *i == id)
         .map(|(_, n)| *n)

@@ -1,0 +1,24 @@
+# Extracted from the Rust table by tools/rust_tables_to_csv.py; regenerate
+# with the matching tools/gen_*.py. Do not hand-edit game values.
+
+id,name
+0,None
+1,Sunny Clouds
+2,Sunny
+3,Rain
+4,Snow
+5,Rain Thunderstorm
+6,Fog Horizontal (Psychic Terrain)
+7,Volcanic Ash
+8,Sandstorm
+9,Fog Diagonal (Misty Terrain)
+10,Underwater
+11,Shade
+12,Drought
+13,Downpour
+14,Underwater Bubbles
+15,Abnormal
+16,Leaves (Grassy Terrain)
+20,Route119 Cycle
+21,Route123 Cycle
+22,Default

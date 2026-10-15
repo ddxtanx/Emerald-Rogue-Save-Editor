@@ -295,6 +295,13 @@ def main():
         print(f"dry run: would write {len(new_block)} chars to {OUT}")
         return
     with open(OUT, "w", encoding="utf-8") as f:
+    # The table this script used to emit is CSV now (data/species_names_extra.csv), parsed at start-up by
+    # src/tables_extra.rs; re-running this generator would replace that loader with literals
+    # and break every accessor. Add a CSV emitter before removing this stop.
+    raise SystemExit(
+        "SUPERSEDED: SPECIES_EXTRA now lives in data/species_names_extra.csv.\n"
+        "Edit that file, or port this generator to write it, before re-running."
+    )
         f.write(updated)
     print(f"wrote {OUT}")
 

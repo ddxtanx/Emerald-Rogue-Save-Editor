@@ -73,7 +73,7 @@ pub fn bump_current_pp(cur: u8, move_id: u16, from_ups: u8, to_ups: u8) -> u8 {
 pub fn apply_max_pp(m: &mut crate::mon::Mon, slot: usize) -> String {
     let id = m.moves()[slot];
     let ups = m.pp_bonus(slot);
-    let name = crate::game_data::title_lookup(crate::tables::MOVES, id);
+    let name = crate::game_data::title_lookup(crate::tables::moves(), id);
     if !vitamins_apply(id) {
         let cap = max_pp(id, ups);
         m.set_pp(slot, cap);
@@ -258,7 +258,7 @@ mod tests {
     /// Every move the picker offers must have a base PP.
     #[test]
     fn every_move_the_ui_offers_has_a_base_pp() {
-        let missing: Vec<(u16, &str)> = crate::tables::MOVES
+        let missing: Vec<(u16, &str)> = crate::tables::moves()
             .iter()
             .filter(|(id, _)| *id != 0)
             .filter(|(id, _)| base_pp(*id) == 0)

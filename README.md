@@ -191,9 +191,12 @@ box 0 ("BOX1"): 15 mons, first = Litwick checksum OK
 ```
 src/main.rs        save model, sector/checksum machinery, mon decode/encode, GUI + CLI
 src/tables.rs      species / moves / items / natures tables (generated from game headers)
-data/*.csv         game data tables (base stats, base PP, declared-without-data ids),
-                   generated from the game tree and embedded with `include_str!`;
-                   parsed once at start-up, so the binary still needs no data files
+data/*.csv         every game-data table (base stats, base PP, species / move / item /
+                   ability / weather / quest names, natures), embedded with `include_str!`
+                   and parsed once at start-up, so the binary still needs no data files;
+                   the readers are `src/csv.rs` (dialect: header, `#` comments, quoted
+                   fields where the game's own string contains a comma) and one small
+                   accessor per table
 src/csv.rs         the small reader those tables are parsed through
 tools/             reverse-engineering and table-generation helpers (Python)
 docs/FORMAT.md     the reverse-engineered save layout, with offsets and sources
@@ -248,6 +251,13 @@ SAV_OUT=save-out-of-adventure.sav SAV_IN=save-in-adventure.sav python3 tools/dif
 
 - `gen_species_names.py` — species id → name for the whole Rogue species space (Gen 1–9, Mega, Gigantamax,
   regional/alt forms, and Rogue's own fake forms — ~1400 ids, not the ~386 of vanilla Emerald)
+- **The name-table generators are deliberately stopped.** `gen_weather_names.py`,
+  `gen_species_meta.py`, `gen_tables_v2.py`, `gen_species_extra.py` and `gen_rogue_items.py`
+  still emit Rust literals for tables that now live in `data/*.csv`; each raises
+  `SystemExit("SUPERSEDED: ...")` instead of overwriting the loader that reads the CSV. Port
+  them to write CSV before removing the stop. `tools/rust_tables_to_csv.py` is the one-time
+  extraction that moved the rows out of the old literals and is the provenance record for the
+  values (it asserts sortedness, uniqueness and that no label needs quoting it cannot emit)
 - `gen_basestats_v2.py` — base stats for every species the game defines them for, into
   `data/basestats.csv`, plus `data/species_without_game_data.csv` for the ids the game *declares* in
   `species.h` but never gives a `species_info` entry to. The test suite asserts every species id the

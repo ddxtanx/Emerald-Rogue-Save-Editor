@@ -201,6 +201,13 @@ with open(OUT, "w") as f:
     f.write("// Do not edit; regenerate instead.\n")
     f.write("// Supplemental tables: species form ids > 905, Rogue custom items,\n")
     f.write("// quest slot names.\n\n")
+    # The table this script used to emit is CSV now (data/species_names_extra.csv, data/item_names_extra.csv and data/quest_names.csv), parsed at start-up by
+    # src/tables_extra.rs; re-running this generator would replace that loader with literals
+    # and break every accessor. Add a CSV emitter before removing this stop.
+    raise SystemExit(
+        "SUPERSEDED: SPECIES_EXTRA / ITEMS_EXTRA / QUEST_NAMES now lives in data/species_names_extra.csv, data/item_names_extra.csv and data/quest_names.csv.\n"
+        "Edit that file, or port this generator to write it, before re-running."
+    )
     f.write("pub const SPECIES_EXTRA: &[(u16, &str)] = &[\n")
     for k in sorted(species_extra):
         f.write(f'    ({k}, "{ruststr(species_extra[k])}"),\n')

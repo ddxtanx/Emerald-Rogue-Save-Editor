@@ -57,8 +57,8 @@ pub(crate) fn all_species() -> &'static [(u16, &'static str)] {
     use std::sync::OnceLock;
     static T: OnceLock<Vec<(u16, &'static str)>> = OnceLock::new();
     T.get_or_init(|| {
-        let mut v: Vec<(u16, &'static str)> = tables::SPECIES.iter().copied().collect::<Vec<_>>();
-        v.extend(tables_extra::SPECIES_EXTRA.iter().copied());
+        let mut v: Vec<(u16, &'static str)> = tables::species().iter().copied().collect::<Vec<_>>();
+        v.extend(tables_extra::species_extra().iter().copied());
         v.sort_by_key(|(id, _)| *id);
         v
     })
@@ -69,8 +69,8 @@ pub(crate) fn all_items() -> &'static [(u16, &'static str)] {
     use std::sync::OnceLock;
     static T: OnceLock<Vec<(u16, &'static str)>> = OnceLock::new();
     T.get_or_init(|| {
-        let mut v: Vec<(u16, &'static str)> = tables::ITEMS.iter().copied().collect::<Vec<_>>();
-        v.extend(tables_extra::ITEMS_EXTRA.iter().copied());
+        let mut v: Vec<(u16, &'static str)> = tables::items().iter().copied().collect::<Vec<_>>();
+        v.extend(tables_extra::items_extra().iter().copied());
         v.sort_by_key(|(id, _)| *id);
         v
     })
@@ -232,8 +232,8 @@ pub(crate) fn title_lookup<'a>(table: &'a [(u16, &'a str)], id: u16) -> &'a str 
 /// species lookup that also covers Rogue form ids (>905): megas, gigantamax,
 /// fake forms
 pub(crate) fn species_name(id: u16) -> &'static str {
-    match title_lookup(tables::SPECIES, id) {
-        "??????" => title_lookup(tables_extra::SPECIES_EXTRA, id),
+    match title_lookup(tables::species(), id) {
+        "??????" => title_lookup(tables_extra::species_extra(), id),
         n => n,
     }
 }
@@ -308,8 +308,8 @@ pub(crate) fn species_picker_table() -> &'static [(u16, &'static str)] {
 
 /// item lookup that also covers Rogue custom items (827+)
 pub(crate) fn item_name(id: u16) -> &'static str {
-    match title_lookup(tables::ITEMS, id) {
-        "??????" => title_lookup(tables_extra::ITEMS_EXTRA, id),
+    match title_lookup(tables::items(), id) {
+        "??????" => title_lookup(tables_extra::items_extra(), id),
         n => n,
     }
 }
@@ -372,9 +372,9 @@ mod tests {
     #[test]
     fn every_named_species_either_has_stats_or_is_declared_without_game_data() {
         let mut gaps = Vec::new();
-        for (id, name) in tables::SPECIES
+        for (id, name) in tables::species()
             .iter()
-            .chain(tables_extra::SPECIES_EXTRA.iter())
+            .chain(tables_extra::species_extra().iter())
         {
             if crate::basestats::base_stats(*id).is_none()
                 && !crate::basestats::species_without_game_data().contains(id)

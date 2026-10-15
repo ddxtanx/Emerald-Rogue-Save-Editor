@@ -326,7 +326,7 @@ impl Nature {
     }
     /// Display name from the shared nature table (keyed on the raw value).
     pub fn name(self) -> &'static str {
-        crate::tables::NATURE_IDS
+        crate::tables::natures()
             .iter()
             .find(|(id, _)| *id == self.raw() as u16)
             .map(|(_, n)| *n)
@@ -352,7 +352,7 @@ impl Domain for Nature {
         Nature::is_known(self)
     }
     fn table_len() -> usize {
-        crate::tables::NATURE_IDS.len()
+        crate::tables::natures().len()
     }
 }
 
@@ -702,10 +702,10 @@ mod tests {
         assert_eq!(Nature::from_raw(3), Nature::Adamant);
         assert_eq!(Nature::Sassy.name(), "Sassy");
         // 25 table rows, 25 named variants, in the same order.
-        assert_eq!(values::<Nature>().len(), crate::tables::NATURE_IDS.len());
+        assert_eq!(values::<Nature>().len(), crate::tables::natures().len());
         for n in (0..=24u8).map(Nature::from_raw) {
             assert_eq!(
-                crate::tables::NATURE_IDS[n.raw() as usize],
+                crate::tables::natures()[n.raw() as usize],
                 (n.raw() as u16, n.name()),
                 "nature table and Nature enum drifted at {}",
                 n.raw()

@@ -1,0 +1,91 @@
+# Extracted from the Rust table by tools/rust_tables_to_csv.py; regenerate
+# with the matching tools/gen_*.py. Do not hand-edit game values.
+
+id,name
+827,Link Cable
+828,Quest Book
+829,Healing Flask
+830,Poké Whistle
+831,Gold Whistle
+832,C-Gear
+833,Pokégear
+834,Build Parts
+835,Alola Artefact
+836,Galar Artefact
+837,Hisui Artefact
+838,Small Coin Case
+839,Large Coin Case
+840,Golden Seed
+841,Battle Checker
+847,Normal {POKEBLOCK}
+848,Fight. {POKEBLOCK}
+849,Flying {POKEBLOCK}
+850,Poison {POKEBLOCK}
+851,Ground {POKEBLOCK}
+852,Rock {POKEBLOCK}
+853,Bug {POKEBLOCK}
+854,Ghost {POKEBLOCK}
+855,Steel {POKEBLOCK}
+856,Fire {POKEBLOCK}
+857,Water {POKEBLOCK}
+858,Grass {POKEBLOCK}
+859,Elec. {POKEBLOCK}
+860,Psychic {POKEBLOCK}
+861,Ice {POKEBLOCK}
+862,Dragon {POKEBLOCK}
+863,Dark {POKEBLOCK}
+864,Fairy {POKEBLOCK}
+865,Shiny {POKEBLOCK}
+866,HP {POKEBLOCK}
+867,Atk {POKEBLOCK}
+868,Def {POKEBLOCK}
+869,Speed {POKEBLOCK}
+870,Sp.Atk {POKEBLOCK}
+871,Sp.Def {POKEBLOCK}
+873,DEBUG H MINT
+874,DEBUG A MINT
+1028,Clefablite
+1029,Victreebelite
+1030,Starminite
+1031,Dragoninite
+1032,Meganiumite
+1033,Feraligite
+1034,Skarmorite
+1035,Froslassite
+1036,Emboarite
+1037,Excadrite
+1038,Scolipite
+1039,Scraftinite
+1040,Eelektrossite
+1041,Chandelurite
+1042,Chesnaughtite
+1043,Delphoxite
+1044,Greninjite
+1045,Pyroarite
+1046,Floettite
+1047,Malamarite
+1048,Barbaracite
+1049,Dragalgite
+1050,Hawluchanite
+1051,Zygardite
+1052,Drampanite
+1053,Falinksite
+1054,Heatranite
+1055,Darkranite
+1056,Zeraorite
+1057,Raichunite X
+1058,Raichunite Y
+1059,Chimechite
+1060,Absolite Z
+1061,Staraptite
+1062,Garchompite Z
+1063,Lucarionite Z
+1064,Golurkite
+1065,Meowsticite
+1066,Crabominite
+1067,Golisopite
+1068,Magearnite
+1069,Scovillainite
+1070,Baxcalibrite
+1071,Tatsugirinite
+1072,Glimmoranite

@@ -1,0 +1,236 @@
+# Extracted from the Rust table by tools/rust_tables_to_csv.py; regenerate
+# with the matching tools/gen_*.py. Do not hand-edit game values.
+
+index,name
+0,To Adventure!
+1,Gym Badge 1
+2,Gym Badge 2
+3,Gym Badge 3
+4,Gym Badge 4
+5,Gym Badge 5
+6,Gym Badge 6
+7,Gym Badge 7
+8,Gym Badge 8
+9,Elite Master
+10,Champion
+11,Welcome Home
+12,Post Game?
+13,One Last Quest…
+14,The Final Run.
+15,Collector
+16,Collector +
+17,Collector S
+18,Collector X
+19,Care Tactics
+20,Smart Tactics
+21,Mr. Randoman
+22,Shopping Spree
+23,Big Saver
+24,True Legend
+25,Shiny a Day
+26,Hidden Grotto
+27,"Poké Ball, Go!"
+28,Enticing {POKEBLOCK}
+29,Elo Climb
+30,All Skill
+31,Fateful Encounter
+32,Blasting Off
+33,Mankey's Paw
+34,Blessing's Favour
+35,Not Today!
+36,Double Trouble
+37,Taste the Rainbow
+38,Long Haul
+39,Battle Gimmick
+40,Regional Style
+41,Kanto Style
+42,Johto Style
+43,Hoenn Style
+44,Sinnoh Style
+45,Unova Style
+46,Kalos Style
+47,Alola Style
+48,Galar Style
+49,Paldea Style
+50,Orre Style
+51,Type Master
+52,Normal Master
+53,Fighting Master
+54,Flying Master
+55,Poison Master
+56,Ground Master
+57,Rock Master
+58,Bug Master
+59,Ghost Master
+60,Steel Master
+61,Fire Master
+62,Water Master
+63,Grass Master
+64,Electric Master
+65,Psychic Master
+66,Ice Master
+67,Dragon Master
+68,Dark Master
+69,Fairy Master
+70,Mega Evolution
+71,Z-Moves
+72,Dynamax
+73,Terastallization
+74,Gimmick Overflow
+75,True Tactics
+76,Chaos Novice
+77,Chaos Master
+78,Roguelocke
+79,Can't Pick!?
+80,Diversity
+81,Apotheosis
+82,Aesthetics
+83,I am Speed
+84,Cursed Body
+85,Limited Capture
+86,BST Crown
+87,Pro-Building
+88,Insane Mode
+89,Iron Mono
+90,Iron Kaizo
+91,Rocket Triumph
+92,Aqua Triumph
+93,Magma Triumph
+94,Galactic Triumph
+95,Bulbasaur Mastery
+96,Charmander Mastery
+97,Squirtle Mastery
+98,Caterpie Mastery
+99,Weedle Mastery
+100,Pidgey Mastery
+101,Pichu Mastery
+102,Meowth Mastery
+103,Abra Mastery
+104,Machop Mastery
+105,Slowpoke Mastery
+106,Gastly Mastery
+107,Onix Mastery
+108,Krabby Mastery
+109,Kangaskhan Mastery
+110,Pinsir Mastery
+111,Scyther Mastery
+112,Magikarp Mastery
+113,Lapras Mastery
+114,Eevee Mastery
+115,Aerodactyl Mastery
+116,Snorlax Mastery
+117,Mewtwo Mastery
+118,Mew Mastery
+119,Mareep Mastery
+120,Heracross Mastery
+121,Houndour Mastery
+122,Larvitar Mastery
+123,Treecko Mastery
+124,Torchic Mastery
+125,Mudkip Mastery
+126,Ralts Mastery
+127,Sableye Mastery
+128,Mawile Mastery
+129,Aron Mastery
+130,Meditite Mastery
+131,Electrike Mastery
+132,Carvanha Mastery
+133,Numel Mastery
+134,Swablu Mastery
+135,Shuppet Mastery
+136,Absol Mastery
+137,Snorunt Mastery
+138,Bagon Mastery
+139,Beldum Mastery
+140,Lati Mastery
+141,Latias Mastery
+142,Latios Mastery
+143,Kyogre Mastery
+144,Groudon Mastery
+145,Deoxys Mastery
+146,Buneary Mastery
+147,Gible Mastery
+148,Riolu Mastery
+149,Snover Mastery
+150,Rotom Mastery
+151,Dialga Mastery
+152,Palkia Mastery
+153,Giratina Mastery
+154,Shaymin Mastery
+155,Arceus Mastery
+156,Audino Mastery
+157,Trubbish Mastery
+158,Genie Mastery
+159,Genesect Mastery
+160,Froakie Mastery
+161,Zygarde Mastery
+162,Diancie Mastery
+163,Hoopa Mastery
+164,Rowlet Mastery
+165,Litten Mastery
+166,Popplio Mastery
+167,Rockruff Mastery
+168,Mimikyu Mastery
+169,Silvally Mastery
+170,Jangmo O Mastery
+171,Tapu Mastery
+172,Cosmog Mastery
+173,Necrozma Mastery
+174,Magearna Mastery
+175,Marshadow Mastery
+176,Meltan Mastery
+177,Grookey Mastery
+178,Scorbunny Mastery
+179,Sobble Mastery
+180,Rookidee Mastery
+181,Blipbug Mastery
+182,Chewtle Mastery
+183,Rolycoly Mastery
+184,Applin Mastery
+185,Silicobra Mastery
+186,Toxel Mastery
+187,Sizzlipede Mastery
+188,Hatenna Mastery
+189,Impidimp Mastery
+190,Milcery Mastery
+191,Cufant Mastery
+192,Duraludon Mastery
+193,Zacian Mastery
+194,Zamazenta Mastery
+195,Kubfu Mastery
+196,Ogerpon Mastery
+197,Terapagos Mastery
+198,Plasma Triumph
+199,Flare Triumph
+200,Z-A Royale
+201,Cleffa Mastery
+202,Bellsprout Mastery
+203,Staryu Mastery
+204,Dratini Mastery
+205,Chikorita Mastery
+206,Totodile Mastery
+207,Skarmory Mastery
+208,Tepig Mastery
+209,Drilbur Mastery
+210,Litwick Mastery
+211,Golett Mastery
+212,Chespin Mastery
+213,Fennekin Mastery
+214,Hawlucha Mastery
+215,Flabebe Mastery
+216,Drampa Mastery
+217,Chingling Mastery
+218,Espurr Mastery
+219,Crabrawler Mastery
+220,Capsakid Mastery
+221,Glimmet Mastery
+222,New Frontier
+223,Starly Mastery
+224,Venipede Mastery
+225,Scraggy Mastery
+226,Tynamo Mastery
+227,Litleo Mastery
+228,Inkay Mastery
+229,Binacle Mastery
+230,Skrelp Mastery
+231,Falinks Mastery
