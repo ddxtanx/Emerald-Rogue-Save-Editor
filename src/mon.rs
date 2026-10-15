@@ -518,23 +518,25 @@ mod tests {
     /// User report: "31 all" does not set every IV to 31. This isolates WHERE it
     /// goes wrong: the one-word write (`set_all_ivs`) against six masked single
     /// writes (`set_iv_at`), and then the seal + re-read the editor performs.
+    ///
+    /// Deliberately synthetic rather than read from a real save: the regression
+    /// pin must run on CI too, where no save is present.
     #[test]
     fn the_all_iv_write_matches_six_single_iv_writes() {
-        let sf = crate::savefile::SaveFile::open("/workspace/hermes/er2.sav").unwrap();
-        let mut base = None;
-        'scan: for b in 0..10usize {
-            for s in 0..30usize {
-                let m = sf.box_mon(b, s);
-                if m.species() != 0
-                    && m.ivs().iter().any(|&v| v != 31)
-                    && m.ivs().iter().any(|&v| v != 0)
-                {
-                    base = Some(m);
-                    break 'scan;
-                }
+        let seed: [u8; 6] = [23, 10, 21, 31, 21, 8];
+        let make = || {
+            let mut m = Mon::from_bytes(&vec![0u8; 80]);
+            m.set_species(59);
+            for (i, v) in seed.iter().enumerate() {
+                m.set_iv_at(i, *v);
             }
-        }
-        let base = base.expect("this save has a box mon with mixed IVs");
+            // The word also holds the is-egg bit above the six fields; an
+            // all-IV write must not clobber it.
+            m.set_is_egg(true);
+            m
+        };
+        let base = make();
+        assert_eq!(base.ivs(), seed, "the seed record must decode as written");
         eprintln!(
             "before: ivs={:?} word=0x{:08X} egg={}",
             base.ivs(),
@@ -569,8 +571,10 @@ mod tests {
         assert_eq!(
             le32(&a.t[3], 4),
             le32(&b.t[3], 4),
-            "one-word and six-field writes must agree (upper bits preserved)"
+            "one-word and six-field writes must produce the same word"
         );
+        assert!(a.is_egg(), "an all-IV write must preserve the egg bit");
         assert_eq!(c.ivs(), [31; 6], "seal() must not disturb the IV word");
+        assert!(c.is_egg(), "seal() must not disturb the egg bit");
     }
 }
