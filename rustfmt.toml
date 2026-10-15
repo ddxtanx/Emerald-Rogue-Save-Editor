@@ -1,0 +1,10 @@
+# The Rust style guide (doc.rust-lang.org/style-guide) is the default style, and
+# rustfmt implements it per *style edition*. Pinning the 2024 style edition here is
+# what makes `cargo fmt --check` in CI mean "matches the current guide" rather than
+# "matches whatever rustfmt defaulted to when this file was written".
+#
+# The language `edition` in Cargo.toml stays at 2021: edition 2024 also changes
+# semantics (match disjointness, `impl Trait` capture, reserved `gen`), and this is
+# a formatting decision, not a language one. If those semantics are ever wanted,
+# bump `edition` and this line with it.
+style_edition = "2024"

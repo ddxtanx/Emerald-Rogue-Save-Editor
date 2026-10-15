@@ -1,12 +1,12 @@
 //! The eframe application: layout, tab dispatch, selection model, roster
-//! management (add / delete / move mons), and file open/save plumbing.
-//! Per-tab UIs live in the sibling modules as `impl Editor` blocks.
+//! management (add / delete / move mons), and file open/save plumbing. Per-tab
+//! UIs live in the sibling modules as `impl Editor` blocks.
 //!
-//! Layout notes, both from explicit requests:
-//!   * There is no "Party"/"Boxes" tab. The roster is always in the left panel,
+//! Layout notes, both from explicit requests: * There is no "Party"/"Boxes"
+//! tab. The roster is always in the left panel,
 //!     so a tab that showed the same thing did nothing; selecting a mon instead
 //!     opens a PKHeX-style popup editor window.
-//!   * Every id picklist (species, item, ball, move, quest, decoration variant)
+//! * Every id picklist (species, item, ball, move, quest, decoration variant)
 //!     goes through `crate::searchable_combo`, which is the only place that
 //!     knows how to keep a popup open while you type in its search field.
 
@@ -44,15 +44,16 @@ enum Sel {
     StashParty(usize),   // hub-state party, stashed in the Rogue block while adventuring
     BlockDaycare(usize), // daycare as the game currently sees it
     StashDaycare(usize), // daycare stashed for the hub state
-    /// One Rogue-block safari-zone spawn entry. NOT a 104-byte box record: it
-    /// is a 20-byte `SafariMon` template, so the Mon tab reaches it through
-    /// `MonRec` (see app::mon_ui) and writes it back with `set_safari_mon`.
+    /// One Rogue-block safari-zone spawn entry. NOT a 104-byte box record: it is a
+    /// 20-byte `SafariMon` template, so the Mon tab reaches it through `MonRec`
+    /// (see app::mon_ui) and writes it back with `set_safari_mon`.
     Safari(usize),
 }
 
-/// Where an "add a copy of this mon" request can land. Lives next to `Sel` because
-/// the two lists answer one question - which containers a record can occupy - and a
-/// target that `Sel` cannot name could not be selected after the write.
+/// Where an "add a copy of this mon" request can land. Lives next to `Sel`
+/// because the two lists answer one question - which containers a record can
+/// occupy - and a target that `Sel` cannot name could not be selected after the
+/// write.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum AddTarget {
     Party,
@@ -71,9 +72,9 @@ impl AddTarget {
         }
     }
 
-    /// What the button means in this save, spelled out so the click is not
-    /// a guess: two daycares and two parties exist in a Rogue save with a
-    /// run in progress (see the dual-state note in docs/FORMAT.md).
+    /// What the button means in this save, spelled out so the click is not a guess:
+    /// two daycares and two parties exist in a Rogue save with a run in progress
+    /// (see the dual-state note in docs/FORMAT.md).
     pub(crate) fn hint(self) -> &'static str {
         match self {
             AddTarget::Party => {
@@ -124,11 +125,11 @@ pub(crate) struct Editor {
     add_box_species: [u16; ACTIVE_BOXES],
     // the PKHeX-style mon editor window
     mon_popup: bool,
-    // PP picker popup (per move slot, opened from the mon editor)
-    // icon textures + on-disk art
+    // PP picker popup (per move slot, opened from the mon editor) icon textures +
+    // on-disk art
     icons: IconStore,
-    // one-line feedback from mon-editor actions that cannot self-correct
-    // (e.g. "no base stats in table for this species")
+    // one-line feedback from mon-editor actions that cannot self-correct (e.g. "no
+    // base stats in table for this species")
     mon_note: Option<String>,
 }
 
@@ -160,14 +161,14 @@ impl Editor {
         match SaveFile::open(&ps) {
             Ok(sf) => {
                 let n = sf.active_slot / SLOT_SECTORS + 1;
-                // The backup slot is only a fallback: if the active slot's
-                // sector checksums are bad the save is already damaged, and the
-                // editor should say so before anyone edits it.
+                // The backup slot is only a fallback: if the active slot's sector checksums are
+                // bad the save is already damaged, and the editor should say so before anyone
+                // edits it.
                 let intact = sf.slot_valid(sf.active_slot);
-                // A problem in the editor's OWN embedded tables has to be visible
-                // here, not later disguised as "this species has no stats": the
-                // base-stat table once silently lost 201 species and every symptom
-                // looked like a property of the save.
+                // A problem in the editor's OWN embedded tables has to be visible here, not
+                // later disguised as "this species has no stats": the base-stat table once
+                // silently lost 201 species and every symptom looked like a property of the
+                // save.
                 let mut table_problems = crate::basestats::parse_problems().to_vec();
                 table_problems.extend_from_slice(crate::move_pp_data::parse_problems());
                 self.status = format!(
@@ -214,7 +215,8 @@ impl Editor {
         };
         let Some(path) = path else { return };
         let Some(sf) = self.file.as_mut() else { return };
-        // seal every visible mon back into merged first (edits already flow through set_*)
+        // seal every visible mon back into merged first (edits already flow through
+        // set_*)
         match sf.save(&path) {
             Ok(()) => {
                 self.status = format!("Saved {path} (checksums recomputed)");
@@ -225,10 +227,10 @@ impl Editor {
         }
     }
 
-    // ---- searchable picklists ---------------------------------------------
-    // The single entry point for every dropdown in the editor. All of them get
-    // the same behaviour: search field keeps the popup open, auto-focus, up/down +
-    // Enter, and icons where the id namespace has art.
+    // ---- searchable picklists --------------------------------------------- The
+    // single entry point for every dropdown in the editor. All of them get the same
+    // behaviour: search field keeps the popup open, auto-focus, up/down + Enter,
+    // and icons where the id namespace has art.
     fn combo(
         &self,
         ui: &mut egui::Ui,
@@ -288,9 +290,9 @@ impl Editor {
     }
 
     /// The selected record, whatever its shape: a `Mon` (party / box / fusion /
-    /// daycare / stashed hub state) or a Rogue-block `SafariMon` spawn entry.
-    /// Both the Mon tab and the popup render through this, so there is exactly
-    /// one mon editor implementation.
+    /// daycare / stashed hub state) or a Rogue-block `SafariMon` spawn entry. Both
+    /// the Mon tab and the popup render through this, so there is exactly one mon
+    /// editor implementation.
     fn selected_rec(&self) -> Option<MonRec> {
         if let Some(Sel::Safari(i)) = self.sel {
             let sf = self.file.as_ref()?;
@@ -301,10 +303,10 @@ impl Editor {
     }
 
     /// Write a possibly-edited record back. A safari selection goes through
-    /// `SaveFile::set_safari_mon` -- the exact commit path the Rogue tab's
-    /// inline roster rows used before the editor was shared -- so the 20-byte
-    /// layout and `SafariMon`'s bitfield accessors remain the only way these
-    /// fields reach the save. Everything else keeps `apply_mon` unchanged.
+    /// `SaveFile::set_safari_mon` -- the exact commit path the Rogue tab's inline
+    /// roster rows used before the editor was shared -- so the 20-byte layout and
+    /// `SafariMon`'s bitfield accessors remain the only way these fields reach the
+    /// save. Everything else keeps `apply_mon` unchanged.
     fn apply_rec(&mut self, rec: &MonRec) {
         match (self.sel.clone(), rec) {
             (Some(Sel::Safari(i)), MonRec::Safari(s)) => {
@@ -315,9 +317,8 @@ impl Editor {
             }
             (Some(sel), MonRec::Full(m)) => {
                 if matches!(sel, Sel::Safari(_)) {
-                    // Cannot happen (a safari selection can only yield a
-                    // SafariMon), and must not: 104-byte fields have nowhere to
-                    // go inside the 20-byte spawn entry.
+                    // Cannot happen (a safari selection can only yield a SafariMon), and must not:
+                    // 104-byte fields have nowhere to go inside the 20-byte spawn entry.
                     self.status = "Safari entries hold no box-record fields.".into();
                 } else {
                     self.apply_mon(m.clone());
@@ -353,8 +354,8 @@ impl Editor {
     }
 
     /// The order the roster panel draws mons: party, then non-empty fusion slots,
-    /// then each box's non-empty slots. The popup's prev/next walk THIS list, so "next"
-    /// always lands on a mon the user can see, in the order they see it.
+    /// then each box's non-empty slots. The popup's prev/next walk THIS list, so
+    /// "next" always lands on a mon the user can see, in the order they see it.
     fn roster_order(&self) -> Vec<Sel> {
         let Some(sf) = self.file.as_ref() else {
             return Vec::new();
@@ -429,14 +430,13 @@ impl Editor {
     }
 
     // ---- "add a copy of this mon over there" -------------------------------
-    /// Containers a copy of a full 104-byte record can go into. The safari zone
-    /// is included because its 20-byte spawn template is reachable from a full
-    /// record by keeping the fields it has bytes for (see `safari_template`);
-    /// the reverse direction is not offered, because a spawn entry has no level,
-    /// EXP, EVs, moves, OT/PID or stats to copy.
-    /// The spawn template a full record becomes when it is pushed to the Safari
-    /// Zone roster. Built through `SafariMon`'s own bitfield setters so the
-    /// 20-byte layout stays in one place.
+    /// Containers a copy of a full 104-byte record can go into. The safari zone is
+    /// included because its 20-byte spawn template is reachable from a full record
+    /// by keeping the fields it has bytes for (see `safari_template`); the reverse
+    /// direction is not offered, because a spawn entry has no level, EXP, EVs,
+    /// moves, OT/PID or stats to copy. The spawn template a full record becomes
+    /// when it is pushed to the Safari Zone roster. Built through `SafariMon`'s own
+    /// bitfield setters so the 20-byte layout stays in one place.
     fn safari_template(m: &Mon, priority: u8) -> SafariMon {
         let mut s = SafariMon {
             w0: 0,
@@ -468,8 +468,8 @@ impl Editor {
     }
 
     /// Copy the selected mon into `target`. `Ok(text)` names the slot written;
-    /// `Err(text)` says why nothing was written. In-memory only: like every
-    /// other edit this needs an explicit Save to reach the disk.
+    /// `Err(text)` says why nothing was written. In-memory only: like every other
+    /// edit this needs an explicit Save to reach the disk.
     fn add_copy_to(&mut self, target: AddTarget) -> Result<String, String> {
         let Some(rec) = self.selected_rec() else {
             return Err("no mon selected".into());
@@ -487,10 +487,10 @@ impl Editor {
         };
         match target {
             AddTarget::Party => {
-                // A record entering the party needs a cached stat block that
-                // matches it: a box record stores no stats, and Gen 3 reads the
-                // cached block rather than recomputing, so the copy would
-                // otherwise walk in with whatever bytes the source had.
+                // A record entering the party needs a cached stat block that matches it: a box
+                // record stores no stats, and Gen 3 reads the cached block rather than
+                // recomputing, so the copy would otherwise walk in with whatever bytes the
+                // source had.
                 let mut copy = m.clone().party_sized();
                 let stat_note = match recalculate_cached_stats(&mut copy) {
                     Ok(lvl) => format!("stats recalculated at level {lvl}"),
@@ -511,9 +511,9 @@ impl Editor {
                     Some(Sel::Box(bx, _)) => bx,
                     _ => 0,
                 };
-                // Same emptiness rule the roster list uses (`species != 0`). Read
-                // through `sf` here rather than the `&self` helper: `sf` is already
-                // borrowed mutably from `self.file`.
+                // Same emptiness rule the roster list uses (`species != 0`). Read through `sf`
+                // here rather than the `&self` helper: `sf` is already borrowed mutably from
+                // `self.file`.
                 let Some(slot) = (0..BOX_SLOTS).find(|s| sf.box_mon(bx, *s).species() == 0) else {
                     return Err(format!("box {} is full (30 slots)", bx + 1));
                 };
@@ -532,8 +532,8 @@ impl Editor {
                 if !rb.ok {
                     return Err("the Rogue block did not decode; refusing to write".into());
                 }
-                // Capacity: three slots either way, but "empty" is read from the
-                // roster that is actually live in this state.
+                // Capacity: three slots either way, but "empty" is read from the roster that is
+                // actually live in this state.
                 let taken = |i: usize| {
                     if stashed {
                         rb.stash.daycare.get(i).map(|d| d.species() != 0) == Some(true)
@@ -635,12 +635,12 @@ impl Editor {
         );
     }
 
-    /// Clear the selected mon's slot. Party slots are closed up so the party
-    /// never has a gap in the middle (the game reads `partyCount` + 6 slots).
+    /// Clear the selected mon's slot. Party slots are closed up so the party never
+    /// has a gap in the middle (the game reads `partyCount` + 6 slots).
     fn delete_selected(&mut self) {
         let Some(sel) = self.sel.clone() else { return };
-        // Remember where this sat in roster order BEFORE the mutation, so the
-        // selection can land on its neighbour afterwards (see the end).
+        // Remember where this sat in roster order BEFORE the mutation, so the selection
+        // can land on its neighbour afterwards (see the end).
         let before = self.roster_order();
         let pos = before.iter().position(|s| *s == sel).unwrap_or(0);
         let Some(sf) = self.file.as_mut() else { return };
@@ -668,21 +668,21 @@ impl Editor {
             }
         }
         // A delete should not throw the user out of the editor window: land the
-        // selection on whatever now occupies the same place in roster order (the
-        // next mon in that box, or the previous one if the end was removed) and
-        // leave the popup open. It closes only when nothing is left to show.
+        // selection on whatever now occupies the same place in roster order (the next
+        // mon in that box, or the previous one if the end was removed) and leave the
+        // popup open. It closes only when nothing is left to show.
         let after = self.roster_order();
         self.sel = after.get(pos.min(after.len().saturating_sub(1))).cloned();
         self.mon_popup = self.sel.is_some();
     }
 
-    /// Party <-> box transfer. Moving to the PC closes up the party slot;
-    /// moving to the party needs a free party slot and an empty target isn't
-    /// needed (the box slot is cleared).
+    /// Party <-> box transfer. Moving to the PC closes up the party slot; moving to
+    /// the party needs a free party slot and an empty target isn't needed (the box
+    /// slot is cleared).
     fn move_between_party_and_box(&mut self) {
         let Some(sel) = self.sel.clone() else { return };
-        // Resolve destinations BEFORE the save is mutably borrowed: the
-        // "find a free slot" helpers take &self.
+        // Resolve destinations BEFORE the save is mutably borrowed: the "find a free
+        // slot" helpers take &self.
         let dest_box =
             (0..ACTIVE_BOXES).find_map(|bx| self.first_empty_box_slot(bx).map(|s| (bx, s)));
         let dest_party = self.first_empty_party_slot();
@@ -715,9 +715,9 @@ impl Editor {
                     self.status = "Party is full (6).".into();
                     return;
                 };
-                // The box copy is 80 B (BoxPokemon); the party copy is 104 B
-                // (Pokemon) with a cached-stat block the game recomputes on
-                // load. Pad the tail with zeros: CalculateMonStats overwrites it.
+                // The box copy is 80 B (BoxPokemon); the party copy is 104 B (Pokemon) with a
+                // cached-stat block the game recomputes on load. Pad the tail with zeros:
+                // CalculateMonStats overwrites it.
                 let mut raw = m.raw.clone();
                 raw.resize(MONSZ, 0);
                 let pm = Mon::from_bytes(&raw);
@@ -739,8 +739,8 @@ impl Editor {
     }
 
     // ---- shared mon-row behaviour ------------------------------------------
-    /// The ONE place that decides what clicking a mon row does, so every mon
-    /// list (roster, daycare, stashed hub state...) behaves identically:
+    /// The ONE place that decides what clicking a mon row does, so every mon list
+    /// (roster, daycare, stashed hub state...) behaves identically:
     ///   * single click  = select the mon and switch to the Mon tab, so the
     ///     editor appears in-window (a click that "does nothing" was reported);
     ///   * double click  = also open the popup editor, exactly like the old
@@ -757,30 +757,29 @@ impl Editor {
         }
     }
 
-    /// A selectable mon row with the shared click/double-click behaviour
-    /// above. Every mon list that is not the roster draws its rows through
-    /// this helper.
+    /// A selectable mon row with the shared click/double-click behaviour above.
+    /// Every mon list that is not the roster draws its rows through this helper.
     fn mon_row(&mut self, ui: &mut egui::Ui, sel: Sel, text: impl Into<egui::WidgetText>) {
         let selected = self.sel.as_ref() == Some(&sel);
         let r = ui.selectable_label(selected, text);
         self.apply_mon_row_click(&r, sel);
     }
 
-    /// The scrollable body of every tab: vertical only. Wide rows wrap to the
-    /// panel width instead of panning sideways, because a row that needs a scroll
-    /// right hides its tail - at the default window width the Mon tab's field row
-    /// did exactly that to the Ability picker. Content that cannot wrap at all (the
+    /// The scrollable body of every tab: vertical only. Wide rows wrap to the panel
+    /// width instead of panning sideways, because a row that needs a scroll right
+    /// hides its tail - at the default window width the Mon tab's field row did
+    /// exactly that to the Ability picker. Content that cannot wrap at all (the
     /// six-column decoration table) carries its own local scroller, and the hub
     /// canvas shrinks its cells to fit the width it is given.
     fn wrap_scroll_area() -> egui::ScrollArea {
         egui::ScrollArea::vertical().auto_shrink([false, false])
     }
 
-    /// Escape closes the mon popup -- but ONLY when no dropdown/anchored
-    /// popup is open, so one Escape never closes both the mon window and a
-    /// picker at once. Must run BEFORE the panels draw: a searchable combo
-    /// closes itself in the same frame it sees Escape, so checking after the
-    /// panels would find its popup already gone and close the window too.
+    /// Escape closes the mon popup -- but ONLY when no dropdown/anchored popup is
+    /// open, so one Escape never closes both the mon window and a picker at once.
+    /// Must run BEFORE the panels draw: a searchable combo closes itself in the
+    /// same frame it sees Escape, so checking after the panels would find its popup
+    /// already gone and close the window too.
     fn handle_mon_escape(&mut self, ctx: &egui::Context) {
         if !self.mon_popup {
             return;
@@ -800,9 +799,9 @@ impl Editor {
 
     // ---- roster panel ------------------------------------------------------
     fn roster_ui(&mut self, ui: &mut egui::Ui) {
-        // Snapshot everything the panel draws. The save must not stay borrowed
-        // across the row helpers (edit / move / delete), which need `&mut self`:
-        // with the old shared borrow held, egui rows could not mutate anything.
+        // Snapshot everything the panel draws. The save must not stay borrowed across
+        // the row helpers (edit / move / delete), which need `&mut self`: with the old
+        // shared borrow held, egui rows could not mutate anything.
         let (party, fusions, boxes) = match self.file.as_ref() {
             None => return,
             Some(sf) => {
@@ -871,9 +870,8 @@ impl Editor {
             ui.add_space(8.0);
             ui.horizontal(|ui| {
                 ui.strong(format!("Box {}", bx + 1));
-                // BOX_NAME_LEN is 9 bytes: 8 characters plus the 0xFF
-                // terminator, and the charset is the Gen 3 one, so the field is
-                // clamped to 8 characters here.
+                // BOX_NAME_LEN is 9 bytes: 8 characters plus the 0xFF terminator, and the
+                // charset is the Gen 3 one, so the field is clamped to 8 characters here.
                 let mut nm = name.clone();
                 if ui
                     .add(
@@ -918,15 +916,15 @@ impl Editor {
         }
     }
 
-    /// One roster row: icon, level/gender, nickname, and the row actions
-    /// (edit popup, move party<->box, delete). Double-click opens the editor.
+    /// One roster row: icon, level/gender, nickname, and the row actions (edit
+    /// popup, move party<->box, delete). Double-click opens the editor.
     fn roster_row(&mut self, ui: &mut egui::Ui, sel: Sel, m: &Mon, slot_no: usize) {
         let selected = self.sel.as_ref() == Some(&sel);
         let sp = m.species();
         let name = m.nickname();
         let name = if name.is_empty() {
-            // Base name only: a form mon's roster row should read
-            // "Darmanitan", not "Darmanitan Standard Mode".
+            // Base name only: a form mon's roster row should read "Darmanitan", not
+            // "Darmanitan Standard Mode".
             species_base_name(sp).to_string()
         } else {
             name
@@ -937,9 +935,9 @@ impl Editor {
             .unwrap_or('?');
         let shiny = if m.is_shiny() { "★" } else { "" };
 
-        // `icons` is borrowed for the whole row, so the row may not touch the
-        // rest of self: the closure returns the responses, and the shared
-        // click/double-click semantics are applied by apply_mon_row_click.
+        // `icons` is borrowed for the whole row, so the row may not touch the rest of
+        // self: the closure returns the responses, and the shared click/double-click
+        // semantics are applied by apply_mon_row_click.
         let (row, edit, mv, del) = {
             let icons = &self.icons;
             ui.horizontal(|ui| {
@@ -947,9 +945,9 @@ impl Editor {
                 icons::draw_icon(ui, icons, &ctx, IconKind::Pokemon, sp, &name, 22.0);
                 let label = format!("{slot_no:>2}. {name} L{lvl} {g}{shiny}");
                 let r = ui.selectable_label(selected, label);
-                // Plain ASCII labels: egui 0.27's bundled fonts are subsetted and
-                // have no pencil / cross / arrow glyphs, so the old icons drew as
-                // empty tofu boxes. The tooltips carry the full meaning.
+                // Plain ASCII labels: egui 0.27's bundled fonts are subsetted and have no
+                // pencil / cross / arrow glyphs, so the old icons drew as empty tofu boxes. The
+                // tooltips carry the full meaning.
                 let edit = ui.small_button("edit").on_hover_text("edit in popup");
                 let mv: Option<egui::Response> = match &sel {
                     Sel::Party(_) => Some(
@@ -974,8 +972,8 @@ impl Editor {
             .inner
         };
 
-        // Single click: select + Mon tab. Double click: also open the popup
-        // (identical state to the old roster double-click path).
+        // Single click: select + Mon tab. Double click: also open the popup (identical
+        // state to the old roster double-click path).
         self.apply_mon_row_click(&row, sel.clone());
         if edit.clicked() {
             self.sel = Some(sel.clone());
@@ -1005,15 +1003,14 @@ impl Editor {
             .max_width(900.0)
             .resizable(true)
             .show(ctx, |ui| {
-                // The window content is scrollable: with every dropdown open
-                // the fields no longer fit, which was the reported complaint.
-                // It pans BOTH ways: a wide mon editor must be reachable in
-                // full, not clipped at the right edge (scroll-to-the-right bug).
+                // The window content is scrollable: with every dropdown open the fields no
+                // longer fit, which was the reported complaint. It pans BOTH ways: a wide mon
+                // editor must be reachable in full, not clipped at the right edge
+                // (scroll-to-the-right bug).
                 Self::wrap_scroll_area().show(ui, |ui| {
-                    // Walk the roster from inside the popup. The PKHeX workflow
-                    // is "open once, step through mons", not "close, find the
-                    // next row, reopen" - and the walk follows the exact order
-                    // the left panel draws, so what is next is what is on screen.
+                    // Walk the roster from inside the popup. The PKHeX workflow is "open once, step
+                    // through mons", not "close, find the next row, reopen" - and the walk follows
+                    // the exact order the left panel draws, so what is next is what is on screen.
                     let order = self.roster_order();
                     let idx = self
                         .sel
@@ -1022,10 +1019,10 @@ impl Editor {
                     let has_prev = matches!(idx, Some(i) if i > 0);
                     let has_next = matches!(idx, Some(i) if i + 1 < order.len());
                     let can_move = matches!(self.sel, Some(Sel::Party(..)) | Some(Sel::Box(..)));
-                    // `delete_selected` only clears roster slots; for Rogue-block
-                    // selections (daycare, stashed state, safari entries) there is
-                    // no slot to close, so the button is not offered rather than
-                    // pressing into a path that cannot delete anything.
+                    // `delete_selected` only clears roster slots; for Rogue-block selections
+                    // (daycare, stashed state, safari entries) there is no slot to close, so the
+                    // button is not offered rather than pressing into a path that cannot delete
+                    // anything.
                     let can_delete = matches!(
                         self.sel,
                         Some(Sel::Party(..)) | Some(Sel::Box(..)) | Some(Sel::Fusion(..))
@@ -1060,15 +1057,14 @@ impl Editor {
                             self.delete_selected();
                         }
                         if ui.button("31 IVs / max PP").clicked() {
-                            // IVs exist in both record shapes; PP only in the box
-                            // record. One commit path either way (`apply_rec`).
+                            // IVs exist in both record shapes; PP only in the box record. One
+                            // commit path either way (`apply_rec`).
                             if let Some(mut rec) = self.selected_rec() {
                                 rec.set_all_ivs(31);
                                 if let Some(m) = rec.full_mut() {
-                                    // Same call as the per-slot "max PP" button: raise
-                                    // the PP-Up field to the most it can hold (3) and
-                                    // fill PP to that cap, skipping the moves the game
-                                    // refuses PP Ups on.
+                                    // Same call as the per-slot "max PP" button: raise the PP-Up
+                                    // field to the most it can hold (3) and fill PP to that cap,
+                                    // skipping the moves the game refuses PP Ups on.
                                     let mut raised = 0;
                                     let mut gated = 0;
                                     for s in 0..4 {
@@ -1092,10 +1088,9 @@ impl Editor {
                             }
                         }
                     });
-                    // Editor warnings ("no base stats in the table for this
-                    // species", "not enough room in that box") used to appear
-                    // only in the left panel - far from the field that raised
-                    // them, and invisible if that panel was scrolled away.
+                    // Editor warnings ("no base stats in the table for this species", "not enough
+                    // room in that box") used to appear only in the left panel - far from the field
+                    // that raised them, and invisible if that panel was scrolled away.
                     if let Some(note) = self.mon_note.clone() {
                         ui.colored_label(egui::Color32::GOLD, note);
                     }
@@ -1109,9 +1104,9 @@ impl Editor {
 
 impl eframe::App for Editor {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // First thing: Esc may close the mon popup. It must run before any
-        // panel/picker draws so a combo popup that also handles Escape this
-        // frame is still visible to `any_popup_open()` (one Esc = one close).
+        // First thing: Esc may close the mon popup. It must run before any panel/picker
+        // draws so a combo popup that also handles Escape this frame is still visible
+        // to `any_popup_open()` (one Esc = one close).
         self.handle_mon_escape(ctx);
         egui::TopBottomPanel::top("top").show(ctx, |ui| {
             ui.horizontal(|ui| {
@@ -1146,10 +1141,9 @@ impl eframe::App for Editor {
             });
             if self.file.is_some() {
                 ui.horizontal(|ui| {
-                    // No Party/Boxes tab: the roster is always in the left panel.
-                    // The Mon tab shows the selected mon's editor in-window
-                    // (clicking a mon row switches to it; double-click still
-                    // opens the popup).
+                    // No Party/Boxes tab: the roster is always in the left panel. The Mon tab shows
+                    // the selected mon's editor in-window (clicking a mon row switches to it;
+                    // double-click still opens the popup).
                     ui.selectable_value(&mut self.tab, Tab::Mon, "Mon");
                     ui.selectable_value(&mut self.tab, Tab::Items, "Items");
                     ui.selectable_value(&mut self.tab, Tab::Trainer, "Trainer");
@@ -1194,11 +1188,10 @@ impl eframe::App for Editor {
                 ui.weak(self.icons.status());
                 return;
             }
-            // Everything in the centre is scrollable, including the Rogue tab
-            // with a dozen collapsing sections open at once. Vertically only:
-            // the Mon tab's field rows and IV/EV rows, the item toolbars and the
-            // hub rows all wrap to the panel width, so nothing waits off-screen
-            // to the right.
+            // Everything in the centre is scrollable, including the Rogue tab with a dozen
+            // collapsing sections open at once. Vertically only: the Mon tab's field rows
+            // and IV/EV rows, the item toolbars and the hub rows all wrap to the panel
+            // width, so nothing waits off-screen to the right.
             Self::wrap_scroll_area().show(ui, |ui| match self.tab {
                 Tab::Mon => {
                     if self.selected_rec().is_none() {
@@ -1229,9 +1222,9 @@ impl eframe::App for Editor {
 mod tests {
     use super::*;
 
-    /// These tests walk the real roster of a real save: the popup's prev/next buttons
-    /// promise that "next" is the next mon the user can see, and that promise is
-    /// only worth what the ordering code actually produces.
+    /// These tests walk the real roster of a real save: the popup's prev/next
+    /// buttons promise that "next" is the next mon the user can see, and that
+    /// promise is only worth what the ordering code actually produces.
     fn editor_with_save() -> Option<Editor> {
         let p =
             std::env::var("ER_TEST_SAVE").unwrap_or_else(|_| "/workspace/hermes/er2.sav".into());
@@ -1256,10 +1249,10 @@ mod tests {
         }
     }
 
-    /// The add-mon pickers must open on the species that lands in the slot when
-    /// Add is pressed. The default used to be id 4 -- Charmander, not the
-    /// "Squirtle-line id" its comment claimed -- so the picker showed
-    /// "4 - Charmander" while users expected the first row of the list.
+    /// The add-mon pickers must open on the species that lands in the slot when Add
+    /// is pressed. The default used to be id 4 -- Charmander, not the
+    /// "Squirtle-line id" its comment claimed -- so the picker showed "4 -
+    /// Charmander" while users expected the first row of the list.
     #[test]
     fn the_default_add_species_is_the_first_row_of_the_species_picker() {
         let table = all_species();
@@ -1286,9 +1279,9 @@ mod tests {
     }
 
     /// The Rogue tab is the largest surface of typed-domain widgets (season row,
-    /// home styles, Lab config toggles and ranges, safari roster). Two things
-    /// must hold: it must not panic on a real save, and rendering it must not
-    /// touch the file - opening a save is not consent to write it.
+    /// home styles, Lab config toggles and ranges, safari roster). Two things must
+    /// hold: it must not panic on a real save, and rendering it must not touch the
+    /// file - opening a save is not consent to write it.
     #[test]
     fn rogue_tab_renders_against_a_real_save_without_writing_it() {
         use egui::{Event, RawInput};
@@ -1299,8 +1292,8 @@ mod tests {
         let before = std::fs::read(&path).unwrap();
 
         let ctx = egui::Context::default();
-        // Widen the window so nothing is squeezed out, and drive a pointer so
-        // hover code paths run.
+        // Widen the window so nothing is squeezed out, and drive a pointer so hover
+        // code paths run.
         for _ in 0..4 {
             let input = RawInput {
                 screen_rect: Some(egui::Rect::from_min_max(
@@ -1397,9 +1390,9 @@ mod tests {
     // ---- UI behaviour: shared row clicks, Escape, two-way scrolling ---------
     //
     // Same headless pattern as searchable_combo/tests.rs: a real egui Context
-    // driven by synthetic frames. Press and release ride separate frames the
-    // way a real mouse delivers them; the first frame only warms the layout
-    // (a widget cannot be clicked in the frame it first appears).
+    // driven by synthetic frames. Press and release ride separate frames the way a
+    // real mouse delivers them; the first frame only warms the layout (a widget
+    // cannot be clicked in the frame it first appears).
 
     fn move_to(p: egui::Pos2) -> Vec<egui::Event> {
         vec![egui::Event::PointerMoved(p)]
@@ -1455,8 +1448,8 @@ mod tests {
             events,
             ..Default::default()
         };
-        // `Context::run` returns a FullOutput; these frames only exist to drive
-        // input, and the assertions ask egui about memory, not about shapes.
+        // `Context::run` returns a FullOutput; these frames only exist to drive input,
+        // and the assertions ask egui about memory, not about shapes.
         let _ = ctx.run(input, |ctx| {
             egui::Area::new(egui::Id::new("root"))
                 .fixed_pos(egui::Pos2::new(100.0, 100.0))
@@ -1470,9 +1463,9 @@ mod tests {
         app.mon_row(ui, Sel::BlockDaycare(0), "slot 0: Daycare Teston");
     }
 
-    /// User report 2: "Singly clicking any pokemon also does nothing." A
-    /// single click on a mon row must select it AND switch to the Mon tab,
-    /// showing the editor inside the window (no popup).
+    /// User report 2: "Singly clicking any pokemon also does nothing." A single
+    /// click on a mon row must select it AND switch to the Mon tab, showing the
+    /// editor inside the window (no popup).
     #[test]
     fn a_single_click_on_a_mon_row_opens_the_in_window_editor() {
         let ctx = egui::Context::default();
@@ -1488,8 +1481,8 @@ mod tests {
     }
 
     /// User report 1: "when double tapping pokemon in the daycare, no editor
-    /// opens." The daycare rows run through the same helper as the roster,
-    /// and a double click on any of them opens the popup editor.
+    /// opens." The daycare rows run through the same helper as the roster, and a
+    /// double click on any of them opens the popup editor.
     #[test]
     fn a_double_click_on_a_mon_row_opens_the_popup_editor() {
         let ctx = egui::Context::default();
@@ -1523,10 +1516,10 @@ mod tests {
         assert!(!app.mon_popup, "Escape closes the mon popup");
     }
 
-    /// One Escape = one close. With a searchable picker open, the Escape
-    /// dismisses the PICKER (its own rule) and must leave the mon window up;
-    /// `handle_mon_escape` runs first in the frame (as update() does) and
-    /// must see the still-open popup memory.
+    /// One Escape = one close. With a searchable picker open, the Escape dismisses
+    /// the PICKER (its own rule) and must leave the mon window up;
+    /// `handle_mon_escape` runs first in the frame (as update() does) and must see
+    /// the still-open popup memory.
     #[test]
     fn escape_closes_the_picker_but_never_the_mon_window_too() {
         let ctx = egui::Context::default();
@@ -1548,8 +1541,8 @@ mod tests {
             ctx.memory(|m| m.any_popup_open()),
             "the picker popup opened (it is an egui-memory popup)"
         );
-        // Escape frame: handle runs first (combo still open -> window stays),
-        // then the combo's own dismissal closes the picker.
+        // Escape frame: handle runs first (combo still open -> window stays), then the
+        // combo's own dismissal closes the picker.
         run_frame(&ctx, &mut app, key(egui::Key::Escape), &mut draw);
         assert!(
             !ctx.memory(|m| m.any_popup_open()),
@@ -1561,16 +1554,16 @@ mod tests {
         );
     }
 
-    /// The PP ladder pickers are `area_popup`s (not egui-memory popups), so
-    /// the Escape guard has to see them too: Escape closes the PP popup
-    /// first, the window second.
+    /// The PP ladder pickers are `area_popup`s (not egui-memory popups), so the
+    /// Escape guard has to see them too: Escape closes the PP popup first, the
+    /// window second.
     #[test]
     fn escape_closes_an_open_pp_picker_before_it_would_close_the_window() {
         let ctx = egui::Context::default();
         let mut app = Editor::default();
         app.mon_popup = true;
-        // The PP trigger's rect is layout-dependent, so record it from the first
-        // frame and drive the click from the recorded rect (never a guess).
+        // The PP trigger's rect is layout-dependent, so record it from the first frame
+        // and drive the click from the recorded rect (never a guess).
         let btn_rect: std::cell::Cell<Option<egui::Rect>> = std::cell::Cell::new(None);
         let mut draw = |app: &mut Editor, ui: &mut egui::Ui| {
             app.handle_mon_escape(ui.ctx());
@@ -1655,8 +1648,8 @@ mod tests {
         app.sel = Some(Sel::Box(bx, slot));
         app.tab = Tab::Mon;
         let ctx = egui::Context::default();
-        // Squeezed on purpose: at this width the move rows cannot fit two slots
-        // side by side, so this is where a non-wrapping layout would start clipping.
+        // Squeezed on purpose: at this width the move rows cannot fit two slots side by
+        // side, so this is where a non-wrapping layout would start clipping.
         let wide = 620.0_f32;
         let input = egui::RawInput {
             screen_rect: Some(egui::Rect::from_min_size(
@@ -1675,9 +1668,9 @@ mod tests {
             }));
         }
         let out = out.unwrap();
-        // Every glyph run the editor painted must END inside the window. Anything
-        // that does not is content the user can only reach by scrolling sideways -
-        // which is exactly what wrapping is meant to remove.
+        // Every glyph run the editor painted must END inside the window. Anything that
+        // does not is content the user can only reach by scrolling sideways - which is
+        // exactly what wrapping is meant to remove.
         let mut galleys: Vec<(String, f32)> = Vec::new();
         fn walk(shape: &egui::Shape, out: &mut Vec<(String, f32)>) {
             match shape {
@@ -1687,8 +1680,8 @@ mod tests {
                     }
                 }
                 egui::Shape::Text(t) => {
-                    // Screen extent, not the galley's local rect: `t.pos` is the
-                    // paint origin and `galley.rect` starts at zero.
+                    // Screen extent, not the galley's local rect: `t.pos` is the paint origin and
+                    // `galley.rect` starts at zero.
                     out.push((t.galley.text().to_string(), t.pos.x + t.galley.rect.max.x));
                 }
                 _ => {}
@@ -1717,8 +1710,8 @@ mod tests {
         );
     }
 
-    /// The Mon tab must survive "nothing selected" with a clear message
-    /// instead of a panic, and must render the editor body when something is.
+    /// The Mon tab must survive "nothing selected" with a clear message instead of
+    /// a panic, and must render the editor body when something is.
     #[test]
     fn the_mon_tab_renders_selected_and_unselected_states() {
         let Some(mut app) = editor_with_save() else {
@@ -1759,11 +1752,11 @@ mod tests {
 
     // ---- the compact safari roster ---------------------------------------
     //
-    // The Rogue tab used to draw twelve inline widgets per spawn entry, which
-    // made a 60-row list unreadable. It is a clickable list now, and the fields
-    // live in the shared mon editor (app::mon_ui::MonRec), so what matters is
-    // (a) a click selects the entry and opens that editor, and (b) the row and
-    // the editor name the same species.
+    // The Rogue tab used to draw twelve inline widgets per spawn entry, which made
+    // a 60-row list unreadable. It is a clickable list now, and the fields live in
+    // the shared mon editor (app::mon_ui::MonRec), so what matters is (a) a click
+    // selects the entry and opens that editor, and (b) the row and the editor name
+    // the same species.
 
     /// A single click on a safari row must run the SAME click plumbing as the
     /// roster and daycare rows: select the entry, show the in-window editor.
@@ -1775,8 +1768,8 @@ mod tests {
         s.nick = vec![0u8; 10];
         s.set_species(252);
         assert_eq!(app.tab, Tab::Items);
-        // The row's own rect is recorded, never guessed at (same trick as the
-        // PP-picker test: layout-dependent positions must be measured).
+        // The row's own rect is recorded, never guessed at (same trick as the PP-picker
+        // test: layout-dependent positions must be measured).
         let row_rect: std::cell::Cell<Option<egui::Rect>> = std::cell::Cell::new(None);
         let mut draw = |app: &mut Editor, ui: &mut egui::Ui| {
             let r = app.safari_row(ui, 7, &s).0;
@@ -1795,9 +1788,9 @@ mod tests {
         assert!(!app.mon_popup, "a single click never opens the popup");
     }
 
-    /// The compact row and the editor it opens must agree out loud: both paint
-    /// the same species name, the editor says what a spawn entry has no bytes
-    /// for, and the box-record-only sections really are absent.
+    /// The compact row and the editor it opens must agree out loud: both paint the
+    /// same species name, the editor says what a spawn entry has no bytes for, and
+    /// the box-record-only sections really are absent.
     #[test]
     fn the_safari_row_and_the_shared_editor_paint_the_same_species_name() {
         let Some(mut app) = editor_with_save() else {
@@ -1830,12 +1823,12 @@ mod tests {
         };
 
         let ctx = egui::Context::default();
-        // egui's own testing switch: every collapsing section counts as open, so
-        // the roster body actually renders instead of waiting for a click.
+        // egui's own testing switch: every collapsing section counts as open, so the
+        // roster body actually renders instead of waiting for a click.
         ctx.memory_mut(|m| m.set_everything_is_visible(true));
-        // A panel tall enough to hold the whole Rogue tab: egui culls shapes
-        // outside the layer clip rect, so a short window would clip the roster
-        // rows out of the painted output and the test would prove nothing.
+        // A panel tall enough to hold the whole Rogue tab: egui culls shapes outside
+        // the layer clip rect, so a short window would clip the roster rows out of the
+        // painted output and the test would prove nothing.
         let input = egui::RawInput {
             screen_rect: Some(egui::Rect::from_min_size(
                 egui::Pos2::ZERO,
@@ -1846,9 +1839,9 @@ mod tests {
         };
 
         // 1. the Rogue tab: the compact row names the species, and the inline
-        //    field widgets that used to sit on every row are gone. Several
-        //    frames, because egui only paints a `Grid`/collapsed content from the
-        //    frame AFTER the one that measures it.
+        // field widgets that used to sit on every row are gone. Several frames, because
+        // egui only paints a `Grid`/collapsed content from the frame AFTER the one that
+        // measures it.
         let mut roster = String::new();
         for _ in 0..3 {
             let out = ctx.run(input.clone(), |ctx| {
@@ -2273,8 +2266,8 @@ mod tests {
         );
     }
 
-    /// A spawn entry cannot be pushed the other way: those 20 bytes have no
-    /// level / EXP / moves / stats, so inventing them would write a fake mon.
+    /// A spawn entry cannot be pushed the other way: those 20 bytes have no level /
+    /// EXP / moves / stats, so inventing them would write a fake mon.
     #[test]
     fn a_spawn_entry_is_refused_as_a_copy_source() {
         let Some(mut app) = editor_with_save() else {
@@ -2300,8 +2293,8 @@ mod tests {
         assert!(err.contains("spawn entry"), "unhelpful refusal: {err}");
     }
 
-    /// The row is drawn for a full record and not for a spawn entry, so the
-    /// buttons never dangle a copy that cannot be made.
+    /// The row is drawn for a full record and not for a spawn entry, so the buttons
+    /// never dangle a copy that cannot be made.
     #[test]
     fn the_add_row_appears_for_a_full_record_and_not_for_a_spawn_entry() {
         let Some(mut app) = editor_on_a_box_mon() else {
@@ -2359,9 +2352,9 @@ mod tests {
             let sf = app.file.as_mut().unwrap();
             let mut m = sf.party()[0].clone();
             m.set_species(716);
-            // `set_species` edits the decrypted substruct view; `set_party_mon`
-            // copies `raw`, so the change has to be sealed into raw first (the
-            // editor's own path does this via `MonRec::commit`).
+            // `set_species` edits the decrypted substruct view; `set_party_mon` copies
+            // `raw`, so the change has to be sealed into raw first (the editor's own path
+            // does this via `MonRec::commit`).
             m.seal();
             sf.set_party_mon(0, &m);
         }
@@ -2532,8 +2525,8 @@ mod tests {
                 target.label(),
                 app.mon_note
             );
-            // The note must say what happened, in that container's own terms:
-            // a Safari Zone entry is a spawn template, not a "copy of a mon".
+            // The note must say what happened, in that container's own terms: a Safari Zone
+            // entry is a spawn template, not a "copy of a mon".
             let note = app.mon_note.clone().unwrap_or_default();
             let wants = match target {
                 AddTarget::Safari => "spawn entry",
@@ -2630,8 +2623,8 @@ mod tests {
                     }
                 }
                 egui::Shape::Text(t) => {
-                    // `galley.rect` is LOCAL (origin at 0); `t.pos` is where it is
-                    // painted. Only the sum is a screen position.
+                    // `galley.rect` is LOCAL (origin at 0); `t.pos` is where it is painted. Only
+                    // the sum is a screen position.
                     let at = t.pos + t.galley.rect.min.to_vec2();
                     out.push((
                         t.galley.text().to_string(),
@@ -2649,8 +2642,8 @@ mod tests {
             })
         };
 
-        // Where is the button? It is painted as a galley saying "31 all"; the
-        // galley's center sits inside the button, so that is the click point.
+        // Where is the button? It is painted as a galley saying "31 all"; the galley's
+        // center sits inside the button, so that is the click point.
         let mut at: Option<egui::Pos2> = None;
         for _ in 0..3 {
             let out = paint(&mut app, vec![]);
@@ -2664,8 +2657,8 @@ mod tests {
         }
         let at = at.expect("the editor paints a '31 all' button for a box record");
 
-        // move / press / release on separate frames: egui registers click
-        // interest across frames and the state change lands on the release frame.
+        // move / press / release on separate frames: egui registers click interest
+        // across frames and the state change lands on the release frame.
         let _ = paint(&mut app, vec![egui::Event::PointerMoved(at)]);
         let _ = paint(
             &mut app,
@@ -2704,8 +2697,8 @@ mod tests {
         );
     }
 
-    /// The four move slots paint as 2x2, not four stacked rows. As rows they took
-    /// a third of the mon panel and pushed stats/met info past the fold, which is
+    /// The four move slots paint as 2x2, not four stacked rows. As rows they took a
+    /// third of the mon panel and pushed stats/met info past the fold, which is
     /// what the "2x2 moveset" request was about. The probe is the painted `PP`
     /// widget in each cell: four of them must sit on exactly two y bands.
     #[test]
@@ -2737,9 +2730,9 @@ mod tests {
                 walk_pp_rows(&cs.shape, &mut pts);
             }
         }
-        // Each slot's PP widget sits after that slot's move picker, so the two
-        // slots on a row are hundreds of pixels apart while the two rows are ~26 px
-        // apart. Cluster on the gap rather than an exact value.
+        // Each slot's PP widget sits after that slot's move picker, so the two slots on
+        // a row are hundreds of pixels apart while the two rows are ~26 px apart.
+        // Cluster on the gap rather than an exact value.
         let cluster = |mut vals: Vec<f32>, gap: f32| -> Vec<(f32, f32)> {
             vals.sort_by(|a, b| a.partial_cmp(b).unwrap());
             let mut out: Vec<(f32, f32)> = Vec::new();
@@ -2768,8 +2761,8 @@ mod tests {
             2,
             "the four move slots must sit in two rows (a 2x2 moveset); y positions: {pts:?}"
         );
-        // And not four slots piled into one half of the layout: each of the four
-        // cells holds exactly one slot.
+        // And not four slots piled into one half of the layout: each of the four cells
+        // holds exactly one slot.
         let cell_of = |p: &(f32, f32)| {
             let xi = xs
                 .iter()
@@ -2809,10 +2802,10 @@ mod tests {
         }
     }
 
-    /// The commit path must survive the refactor: an edit made through the
-    /// shared editor lands back in the Rogue block through `set_safari_mon`, the
-    /// setter the inline roster rows used, and only the fields that record shape
-    /// actually stores change. In memory only -- nothing here writes a file.
+    /// The commit path must survive the refactor: an edit made through the shared
+    /// editor lands back in the Rogue block through `set_safari_mon`, the setter
+    /// the inline roster rows used, and only the fields that record shape actually
+    /// stores change. In memory only -- nothing here writes a file.
     #[test]
     fn a_safari_edit_commits_through_set_safari_mon_without_touching_its_neighbours() {
         let Some(mut app) = editor_with_save() else {

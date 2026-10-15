@@ -1,19 +1,21 @@
 //! A deliberately small CSV reader for the game-data tables this editor ships.
 //!
-//! The tables are authored as CSV in `data/` because that is diffable, inspectable
-//! with ordinary tools, and editable without touching Rust. They are then embedded
-//! into the binary with `include_str!` and parsed once at startup, so the shipped
-//! `.exe` still has no data files to find, version-match, or fail to load. Parsing
-//! never happens against the filesystem.
+//! The tables are authored as CSV in `data/` because that is diffable,
+//! inspectable with ordinary tools, and editable without touching Rust. They
+//! are then embedded into the binary with `include_str!` and parsed once at
+//! startup, so the shipped `.exe` still has no data files to find,
+//! version-match, or fail to load. Parsing never happens against the
+//! filesystem.
 //!
 //! The dialect is the one these generated tables need, nothing more:
 //!
 //! * a header line, which is skipped;
 //! * blank lines and lines starting with `#` are comments;
-//! * comma-separated fields, trimmed, no quoting (no field in these tables needs
-//!   one, and a quoting rule nobody exercises is a place for bugs to live);
+//! * comma-separated fields, trimmed, no quoting (no field in these tables
+//!    needs
+//! one, and a quoting rule nobody exercises is a place for bugs to live);
 //! * a row whose field count differs from the header is reported as a problem
-//!   rather than guessed at.
+//! rather than guessed at.
 //!
 //! Callers get the rows plus the problems found; a table that failed to parse
 //! keeps working with whatever parsed, and the problems stay visible so a
@@ -32,15 +34,15 @@ pub(crate) struct Table<'a> {
 impl<'a> Table<'a> {
     /// Parse `source` (an `include_str!`-ed table) into rows.
     ///
-    /// `name` labels the problems, so a failure says which table it came from;
-    /// it is not borrowed by the result, only `source` is.
+    /// `name` labels the problems, so a failure says which table it came from; it
+    /// is not borrowed by the result, only `source` is.
     pub(crate) fn parse(name: &str, source: &'a str) -> Table<'a> {
         let mut rows = Vec::new();
         let mut problems = Vec::new();
         let mut width = 0usize;
         for (no, raw) in source.lines().enumerate() {
-            // Trimmed at both ends: a comment indented inside the file is still a
-            // comment, and every field is trimmed anyway.
+            // Trimmed at both ends: a comment indented inside the file is still a comment,
+            // and every field is trimmed anyway.
             let line = raw.trim();
             if line.is_empty() || line.starts_with('#') {
                 continue;
@@ -81,8 +83,8 @@ mod tests {
     }
 
     /// A short or long row is a problem to report, not a row to guess at: a
-    /// silently-partial table is what makes "no stats for this species" look like
-    /// a game limitation instead of a broken file.
+    /// silently-partial table is what makes "no stats for this species" look like a
+    /// game limitation instead of a broken file.
     #[test]
     fn a_misshapen_row_is_reported_and_skipped() {
         let t = Table::parse("t", "id,hp,atk\n1,10,20\n2,30\n3,40,50,60\n");

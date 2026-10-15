@@ -4,9 +4,10 @@
 //! opens, filter as you type, and return the id you pick.
 //!
 //! Press and release are delivered on *separate* frames, like a real mouse
-//! click. That matters: `show()` decides dismissal from `pointer.any_pressed()`,
-//! which is only true on the frame of the press, so a same-frame press+release
-//! would model a click that egui itself does not produce.
+//! click. That matters: `show()` decides dismissal from
+//! `pointer.any_pressed()`, which is only true on the frame of the press, so a
+//! same-frame press+release would model a click that egui itself does not
+//! produce.
 
 use super::*;
 use crate::icons::IconStore;
@@ -87,9 +88,9 @@ impl Harness {
         }
     }
 
-    /// One egui frame, with one warm-up frame up front: a widget cannot be
-    /// clicked in the same frame it is first laid out, exactly as in a running
-    /// app where the trigger has been on screen since before the click.
+    /// One egui frame, with one warm-up frame up front: a widget cannot be clicked
+    /// in the same frame it is first laid out, exactly as in a running app where
+    /// the trigger has been on screen since before the click.
     fn frame(&mut self, events: Vec<Event>) {
         if self.frames == 0 {
             self.frames += 1;
@@ -126,18 +127,18 @@ impl Harness {
         self.last = picked;
     }
 
-    /// A full click, three frames: hover, press, release - the way a real
-    /// pointer arrives. egui registers click interest only once the pointer has
-    /// been over the widget for a frame, so skipping the hover frame makes the
-    /// synthetic click land nowhere.
+    /// A full click, three frames: hover, press, release - the way a real pointer
+    /// arrives. egui registers click interest only once the pointer has been over
+    /// the widget for a frame, so skipping the hover frame makes the synthetic
+    /// click land nowhere.
     fn click(&mut self, pos: Pos2) {
         self.frame(move_to(pos));
         self.frame(press(pos));
         self.frame(release(pos));
     }
 
-    /// Ask egui directly rather than recomputing the widget's internal popup
-    /// id: the Area's child ui derives its id from a private child path, so a
+    /// Ask egui directly rather than recomputing the widget's internal popup id:
+    /// the Area's child ui derives its id from a private child path, so a
     /// hand-mirrored id would silently be wrong.
     fn popup_open(&self) -> bool {
         self.ctx.memory(|m| m.any_popup_open())
@@ -182,8 +183,8 @@ fn a_press_on_the_search_field_keeps_the_popup_open() {
     let mut h = Harness::new();
     h.click(BUTTON);
     assert!(h.popup_open());
-    // The exact interaction that egui's stock ComboBox kills: pressing inside
-    // the popup, on its own search field, must not count as "clicked elsewhere".
+    // The exact interaction that egui's stock ComboBox kills: pressing inside the
+    // popup, on its own search field, must not count as "clicked elsewhere".
     h.frame(press(FIELD));
     assert!(
         h.popup_open(),
@@ -194,9 +195,9 @@ fn a_press_on_the_search_field_keeps_the_popup_open() {
         h.popup_open(),
         "releasing on the search field must not either"
     );
-    // The caret stays claimed by the popup (the typing test below proves it):
-    // what this test guards is that the *dismissal* rule ignores presses that
-    // land inside the popup frame.
+    // The caret stays claimed by the popup (the typing test below proves it): what
+    // this test guards is that the *dismissal* rule ignores presses that land
+    // inside the popup frame.
 }
 
 #[test]
@@ -205,8 +206,8 @@ fn typing_filters_and_enter_picks_the_highlighted_row() {
     h.click(BUTTON);
     h.frame(type_str("great"));
     h.frame(key(Key::Enter));
-    // "great" matches exactly one row (id 4). Unfiltered, the top row is the
-    // "none" entry (id 0), so this also proves the keystrokes reached the field.
+    // "great" matches exactly one row (id 4). Unfiltered, the top row is the "none"
+    // entry (id 0), so this also proves the keystrokes reached the field.
     assert_eq!(h.last, Some(4), "Enter must pick the filtered row");
     assert!(!h.popup_open(), "picking a row closes the popup");
 }
@@ -269,8 +270,8 @@ fn arrow_keys_move_the_selection() {
 fn clicking_a_row_picks_it() {
     let mut h = Harness::new();
     h.click(BUTTON);
-    // Measured from the widget's own layout in this style: rows start at
-    // y=148 and are ~20px tall, so the second band (id 1) is centred ~170.
+    // Measured from the widget's own layout in this style: rows start at y=148 and
+    // are ~20px tall, so the second band (id 1) is centred ~170.
     let row = Pos2::new(200.0, 170.0);
     h.frame(move_to(row));
     h.frame(press(row));
@@ -296,9 +297,10 @@ fn reopening_resets_the_filter_so_the_full_list_shows_again() {
     assert_eq!(h.last, Some(0), "a reopened popup must show the full list");
 }
 
-/// The rows must actually ask the icon store for sprites: a decoded file on disk
-/// proves nothing if the painted row never resolves a texture, and a Rogue-only
-/// id with no public art must fall back to its badge without derailing the row.
+/// The rows must actually ask the icon store for sprites: a decoded file on
+/// disk proves nothing if the painted row never resolves a texture, and a
+/// Rogue-only id with no public art must fall back to its badge without
+/// derailing the row.
 #[test]
 fn rows_resolve_sprite_textures_and_badges() {
     if crate::icons::find_asset_root().is_none() {
@@ -310,8 +312,8 @@ fn rows_resolve_sprite_textures_and_badges() {
     h.table = vec![(25, "pikachu"), (1522, "rogue start")];
     h.click(BUTTON);
     assert!(h.popup_open());
-    // The list paints on the frame *after* the popup opens (egui cannot lay out
-    // an Area in the same frame it is requested), so idle one frame first.
+    // The list paints on the frame *after* the popup opens (egui cannot lay out an
+    // Area in the same frame it is requested), so idle one frame first.
     h.frame(vec![]);
     assert!(
         h.store.tally(IconKind::Pokemon).resolved >= 1,
@@ -323,9 +325,10 @@ fn rows_resolve_sprite_textures_and_badges() {
     );
 }
 
-/// User report: "the ball menu does not include the icons for the balls." A ball's
-/// stored id IS the ball's item id (pokeball:5 + `ItemIdToBallId`), so the ball picker
-/// must request the ITEM icon namespace; a name-only row hides which ball it is.
+/// User report: "the ball menu does not include the icons for the balls." A
+/// ball's stored id IS the ball's item id (pokeball:5 + `ItemIdToBallId`), so
+/// the ball picker must request the ITEM icon namespace; a name-only row hides
+/// which ball it is.
 #[test]
 fn ball_rows_request_the_item_icon_namespace() {
     if crate::icons::find_asset_root().is_none() {
@@ -353,11 +356,11 @@ fn ball_rows_request_the_item_icon_namespace() {
     );
 }
 
-/// A picker narrower than the row it floats over leaves that row sticking out on
-/// both sides, which reads as the pokemon next to the search bar being cut off.
-/// The popup has to span the line its trigger sits on.
-/// The sprite in a picker's own button used to be painted left of the button,
-/// which read as "this pokemon is cut off" for every picker at a panel edge.
+/// A picker narrower than the row it floats over leaves that row sticking out
+/// on both sides, which reads as the pokemon next to the search bar being cut
+/// off. The popup has to span the line its trigger sits on. The sprite in a
+/// picker's own button used to be painted left of the button, which read as
+/// "this pokemon is cut off" for every picker at a panel edge.
 #[test]
 fn trigger_icon_stays_inside_the_button() {
     let rect = Rect::from_min_size(Pos2::new(0.0, 0.0), Vec2::new(160.0, 24.0));
@@ -373,8 +376,8 @@ fn popup_spans_the_line_its_trigger_sits_on() {
     let ctx = egui::Context::default();
     let store = IconStore::default();
     let table = tiny_table();
-    // A compact picker: its own min_width is small, so only the line-width rule
-    // can make it wide enough to cover the row behind it.
+    // A compact picker: its own min_width is small, so only the line-width rule can
+    // make it wide enough to cover the row behind it.
     let opts = Opts::named().compact();
     let run = |events: Vec<Event>| {
         let input = RawInput {
@@ -419,12 +422,13 @@ fn popup_spans_the_line_its_trigger_sits_on() {
     );
 }
 
-/// Some id spaces number from 0 - ability slots, met-location sections - so id 0
-/// has to be labelled like any other value. The `id == 0` means-empty convention
-/// (right for species, items, moves, held item) is what made every mon with
-/// `abilityNum` 0 show its ability as "-". The visible end of this is covered by
-/// `the_mon_editor_names_the_met_location_and_the_ability_slot`; here the label
-/// resolver itself is pinned so the two conventions cannot bleed into each other.
+/// Some id spaces number from 0 - ability slots, met-location sections - so id
+/// 0 has to be labelled like any other value. The `id == 0` means-empty
+/// convention (right for species, items, moves, held item) is what made every
+/// mon with `abilityNum` 0 show its ability as "-". The visible end of this is
+/// covered by `the_mon_editor_names_the_met_location_and_the_ability_slot`;
+/// here the label resolver itself is pinned so the two conventions cannot bleed
+/// into each other.
 #[test]
 fn a_positional_namespace_labels_zero_instead_of_calling_it_empty() {
     let table: Vec<(u16, &'static str)> =
@@ -434,8 +438,8 @@ fn a_positional_namespace_labels_zero_instead_of_calling_it_empty() {
         "clear body",
         "id 0 of a positional namespace must resolve to its own name"
     );
-    // Pickers whose 0 really means "nothing here" keep the placeholder, and id 0
-    // is not offered as a row there (that path is exercised by `with_none`).
+    // Pickers whose 0 really means "nothing here" keep the placeholder, and id 0 is
+    // not offered as a row there (that path is exercised by `with_none`).
     assert_eq!(
         lookup(&table, 0, &Opts::named().with_none("none")),
         "none",
@@ -453,7 +457,8 @@ fn a_positional_namespace_labels_zero_instead_of_calling_it_empty() {
 /// The popup footer compares the rows on screen against the rows that could be
 /// shown. Running the app under Xvfb showed it printing "29 of 28 options" for
 /// the ball picker: that namespace offers a `none` row the table does not
-/// contain, so the denominator has to be the list's own shape, not `table.len()`.
+/// contain, so the denominator has to be the list's own shape, not
+/// `table.len()`.
 #[test]
 fn the_footer_denominator_counts_rows_the_list_can_actually_show() {
     let balls: Vec<(u16, &'static str)> = (1..=28).map(|i| (i, "ball")).collect();
@@ -525,10 +530,11 @@ fn icon_rows_paint_the_name_beside_the_icon_inside_the_frame() {
         }));
     }
     let out = last.unwrap();
-    assert!(out
-        .shapes
-        .iter()
-        .any(|cs| { matches!(cs.shape, Shape::Text(_)) }));
+    assert!(
+        out.shapes
+            .iter()
+            .any(|cs| { matches!(cs.shape, Shape::Text(_)) })
+    );
 
     // The popup publishes the rect it actually drew, so the test measures the same
     // frame the user sees rather than re-deriving geometry.
@@ -554,8 +560,8 @@ fn icon_rows_paint_the_name_beside_the_icon_inside_the_frame() {
             Shape::Text(t) => names.push((t.galley.text().to_string(), t.pos.x, t.pos.y)),
             Shape::Mesh(m) => {
                 let r = m.calc_bounds();
-                // The frame background is a mesh too; ignore the one that spans
-                // the popup, keep the small per-row sprites.
+                // The frame background is a mesh too; ignore the one that spans the popup, keep
+                // the small per-row sprites.
                 if r.width() < 40.0 && r.height() < 40.0 {
                     sprites.push((r.left(), r.top(), r.right(), r.bottom()));
                 }

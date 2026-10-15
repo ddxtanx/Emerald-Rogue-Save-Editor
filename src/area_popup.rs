@@ -1,23 +1,25 @@
 //! A popup anchored to a widget that SURVIVES clicks inside itself.
 //!
-//! `egui::ComboBox` is built on `containers/popup.rs`, whose rule is "close when the
-//! widget that owns the popup reports `clicked_elsewhere()`" - and a press on a
-//! `TextEdit` *inside* that popup counts as elsewhere. That is the bug behind
-//! "clicking the search box makes the menu disappear": any popup carrying an input
-//! field closes the moment you try to use it.
+//! `egui::ComboBox` is built on `containers/popup.rs`, whose rule is "close
+//! when the widget that owns the popup reports `clicked_elsewhere()`" - and a
+//! press on a `TextEdit` *inside* that popup counts as elsewhere. That is the
+//! bug behind "clicking the search box makes the menu disappear": any popup
+//! carrying an input field closes the moment you try to use it.
 //!
-//! The fix is the one applied to [`crate::searchable_combo`]: own the popup with an
-//! `Area` in the foreground order and decide dismissal yourself. This is the small,
-//! reusable form of that for popups which are not a filtered list - the PP ladder
-//! picker, for instance - where the content is arbitrary widgets and may include an
-//! editable field.
+//! The fix is the one applied to [`crate::searchable_combo`]: own the popup
+//! with an `Area` in the foreground order and decide dismissal yourself. This
+//! is the small, reusable form of that for popups which are not a filtered list
+//! - the PP ladder picker, for instance - where the content is arbitrary
+//! widgets and may include an editable field.
 //!
 //! Contract:
 //! * opens on the caller's request (normally `button.clicked()`);
 //! * stays open while clicks land inside its own rect or on the anchor;
-//! * closes on a press that starts outside both, on Escape, or on a second anchor press;
-//! * as an `Area` in `Order::Foreground` it is not clipped by the `ScrollArea` the
-//!   trigger sits in (a `ComboBox` inside a scrolled page is).
+//! * closes on a press that starts outside both, on Escape, or on a second
+//!    anchor press;
+//! * as an `Area` in `Order::Foreground` it is not clipped by the `ScrollArea`
+//!    the
+//! trigger sits in (a `ComboBox` inside a scrolled page is).
 
 use egui::{Area, Context, Frame, Id, Key, Order, PointerButton, Rect, Response, Ui};
 
@@ -42,8 +44,9 @@ impl Default for State {
 }
 
 /// Draw `content` in a popup anchored under (or above, when there is no room)
-/// `anchor`. Returns `Some(value)` for every frame the popup is open, so the caller
-/// can collect what the content produced; the content runs in its own `Ui`.
+/// `anchor`. Returns `Some(value)` for every frame the popup is open, so the
+/// caller can collect what the content produced; the content runs in its own
+/// `Ui`.
 pub fn anchored<T>(
     ui: &mut Ui,
     id: &str,
@@ -112,10 +115,10 @@ pub fn anchored<T>(
     Some(value)
 }
 
-/// Is the anchored popup registered under `id` currently open? Escape
-/// handling elsewhere (the mon editor window) must not close while one of
-/// these is up: they are `Area` popups with private state, invisible to
-/// egui's `any_popup_open()`.
+/// Is the anchored popup registered under `id` currently open? Escape handling
+/// elsewhere (the mon editor window) must not close while one of these is up:
+/// they are `Area` popups with private state, invisible to egui's
+/// `any_popup_open()`.
 pub fn is_open(ctx: &Context, id: &str) -> bool {
     ctx.data(|d| d.get_temp::<State>(Id::new(id)))
         .map_or(false, |st| st.open)
@@ -133,8 +136,8 @@ mod tests {
     struct H {
         ctx: egui::Context,
         warmed: bool,
-        /// Where the trigger button actually was last frame (recorded by the
-        /// harness, never guessed from layout assumptions).
+        /// Where the trigger button actually was last frame (recorded by the harness,
+        /// never guessed from layout assumptions).
         trigger: Rect,
     }
 
@@ -175,9 +178,9 @@ mod tests {
             }
         }
 
-        /// One frame: a trigger button in a fixed Area, and the anchored popup
-        /// whose content is a button plus a text field. Returns the content's
-        /// value for frames where the popup was open.
+        /// One frame: a trigger button in a fixed Area, and the anchored popup whose
+        /// content is a button plus a text field. Returns the content's value for
+        /// frames where the popup was open.
         fn frame(&mut self, events: Vec<Event>) -> Option<u32> {
             if !self.warmed {
                 self.warmed = true;
@@ -221,8 +224,8 @@ mod tests {
         }
     }
 
-    /// egui reports `clicked()` on the frame of the *release*, so a click is
-    /// move / press / release and the popup appears on the third frame.
+    /// egui reports `clicked()` on the frame of the *release*, so a click is move /
+    /// press / release and the popup appears on the third frame.
     impl H {
         /// Lay the trigger out once, then return where it really is.
         fn trigger(&mut self) -> Pos2 {

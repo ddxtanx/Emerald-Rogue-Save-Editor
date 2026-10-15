@@ -1,5 +1,5 @@
-//! Rogue-tab UI: adventure state, hub map, quests, difficulty, daycare,
-//! safari roster, unique mons.
+//! Rogue-tab UI: adventure state, hub map, quests, difficulty, daycare, safari
+//! roster, unique mons.
 
 use super::*;
 use crate::domain::DecorVariant;
@@ -8,8 +8,8 @@ use crate::tables_extra;
 
 impl Editor {
     /// One Lab-config slot whose value is a named option list. Generic over the
-    /// domain so each slot is validated against its own option table: the raw
-    /// value on disk stays addressable even when it is outside that table.
+    /// domain so each slot is validated against its own option table: the raw value
+    /// on disk stays addressable even when it is outside that table.
     fn typed_range_picker<D: crate::domain::Domain>(
         &self,
         ui: &mut egui::Ui,
@@ -61,14 +61,14 @@ impl Editor {
             );
             return;
         }
-        // Which state is live? SaveBlock1 always holds the *currently loaded* state.
-        // If the stashed hub party is non-empty while SB1 shows more/different mons,
-        // the player is mid-adventure.
+        // Which state is live? SaveBlock1 always holds the *currently loaded* state. If
+        // the stashed hub party is non-empty while SB1 shows more/different mons, the
+        // player is mid-adventure.
         let stash_named = rb.stash.ok && rb.stash.party.iter().any(|m| m.species() != 0);
         ui.heading("Rogue adventure state");
         let mut tod = rb.time_of_day;
-        // `seasonCounter` stores DAYS, not a season index. SeasonDay derives the
-        // season so this row cannot get the units wrong.
+        // `seasonCounter` stores DAYS, not a season index. SeasonDay derives the season
+        // so this row cannot get the units wrong.
         let season_day = self
             .file
             .as_ref()
@@ -159,8 +159,8 @@ impl Editor {
                 }
                 self.dirty = true;
             }
-            // The seed alone says nothing; the season decides which weather it maps
-            // to, so show that instead of leaving the player to do the modulo.
+            // The seed alone says nothing; the season decides which weather it maps to, so
+            // show that instead of leaving the player to do the modulo.
             ui.label(format!(
                 "in {}: {}",
                 season.name(),
@@ -313,8 +313,8 @@ impl Editor {
         });
 
         ui.collapsing("Hub map (areas, upgrades, coordinates)", |ui| {
-            // The map first: click/drag buildings on their tiles. The numeric grid
-            // below stays for exact coordinates and for the raw pad bytes.
+            // The map first: click/drag buildings on their tiles. The numeric grid below
+            // stays for exact coordinates and for the raw pad bytes.
             self.hub_map_visual(ui, &rb);
             ui.add_space(8.0);
             let area_snap: Vec<u8> = {
@@ -387,8 +387,8 @@ impl Editor {
                             coord_edits.push((i, x as i8, y as i8));
                         }
                         let (ox, oy) = coord_snap.get(i).copied().unwrap_or((0, 0));
-                        // The raw bytes are shown so the two padding bytes of the
-                        // game's padded `Coords8` are visible, not assumed zero.
+                        // The raw bytes are shown so the two padding bytes of the game's padded
+                        // `Coords8` are visible, not assumed zero.
                         let raw = match coord_raw_snap.get(i).copied().flatten() {
                             Some([rx, ry, p1, p2]) => {
                                 format!(" raw {rx:02X} {ry:02X} {p1:02X} {p2:02X}")
@@ -476,9 +476,9 @@ impl Editor {
             let mut weather_edit: Option<u16> = None;
 
             ui.strong("Home styles");
-            // One picker for all three slots, generic over the domain trait:
-            // each slot offers its own table's values, so an outdoor value can
-            // never be offered for the indoor slot.
+            // One picker for all three slots, generic over the domain trait: each slot
+            // offers its own table's values, so an outdoor value can never be offered for
+            // the indoor slot.
             egui::Grid::new("hubstyles")
                 .num_columns(2)
                 .spacing([16.0, 2.0])
@@ -577,8 +577,8 @@ impl Editor {
                             0 => sf.set_exterior_style(crate::domain::ExteriorStyle::from_raw(v)),
                             1 => sf.set_interior_style(crate::domain::InteriorStyle::from_raw(v)),
                             2 => sf.set_path_style(crate::domain::PathStyle::from_raw(v)),
-                            // a save with more style slots than the three the game
-                            // defines: write it raw rather than dropping the edit
+                            // a save with more style slots than the three the game defines: write
+                            // it raw rather than dropping the edit
                             _ => sf.set_hub_style(i, v),
                         }
                     }
@@ -607,9 +607,9 @@ impl Editor {
                         .collect()
                 };
                 let mut edits: Vec<(usize, u8, u8, crate::domain::DecorVariant, bool)> = Vec::new();
-                // The one region that keeps a sideways scrollbar: a six-column
-                // table of prop rows cannot wrap without redesigning the table, so
-                // it pans inside its own frame rather than making the page scroll.
+                // The one region that keeps a sideways scrollbar: a six-column table of prop
+                // rows cannot wrap without redesigning the table, so it pans inside its own
+                // frame rather than making the page scroll.
                 egui::ScrollArea::both()
                     .auto_shrink([false, false])
                     .max_height(240.0)
@@ -623,8 +623,8 @@ impl Editor {
                                     if !act {
                                         continue; // only slots the game actually placed
                                     }
-                                    // Slots below HOME_DECOR_OUTSIDE are the outdoor
-                                    // garden; the rest are indoor rooms.
+                                    // Slots below HOME_DECOR_OUTSIDE are the outdoor garden; the
+                                    // rest are indoor rooms.
                                     let region = if i < HOME_DECOR_OUTSIDE {
                                         "outdoor"
                                     } else {
@@ -724,8 +724,8 @@ impl Editor {
                 let label = CONFIG_RANGES.get(i).copied().unwrap_or("?");
                 ui.horizontal(|ui| {
                     ui.add_sized([190.0, 0.0], egui::Label::new(label).truncate(true));
-                    // Which value domain applies is a property of the slot, not a
-                    // literal at the call site (`ConfigRange::options`).
+                    // Which value domain applies is a property of the slot, not a literal at the
+                    // call site (`ConfigRange::options`).
                     let range = crate::domain::ConfigRange::from_raw(i as u8);
                     let opts = range.options();
                     if opts.is_empty() {
@@ -785,11 +785,10 @@ impl Editor {
         });
 
         ui.collapsing("Daycare (current)", |ui| {
-            // Snapshot first (the save must not stay borrowed while the row
-            // helper mutates selection), then draw through the shared
-            // mon_row helper: single click = select + Mon tab, double click =
-            // popup editor. The old rows only selected on click and offered
-            // no double-click path at all -- the reported "double tapping
+            // Snapshot first (the save must not stay borrowed while the row helper mutates
+            // selection), then draw through the shared mon_row helper: single click =
+            // select + Mon tab, double click = popup editor. The old rows only selected on
+            // click and offered no double-click path at all -- the reported "double tapping
             // pokemon in the daycare opens nothing" bug.
             let rows: Vec<(usize, Option<String>)> = {
                 let sf = self.file.as_ref().unwrap();
@@ -833,11 +832,11 @@ impl Editor {
                     for (i, s) in rows {
                         let (row, pr) = self.safari_row(ui, i, &s);
                         let _ = row;
-                        // Spawn priority is the one field that stays in the row: it is
-                        // safari-zone data (which spawn the game draws first), not a
-                        // property of the Pokemon, so the generic mon editor has no
-                        // section for it. Commit through the same setter the old inline
-                        // roster used; the record's other bytes are copied untouched.
+                        // Spawn priority is the one field that stays in the row: it is safari-zone
+                        // data (which spawn the game draws first), not a property of the Pokemon,
+                        // so the generic mon editor has no section for it. Commit through the same
+                        // setter the old inline roster used; the record's other bytes are copied
+                        // untouched.
                         if let Some(pr) = pr {
                             let mut c = s.clone();
                             c.priority = pr;
@@ -924,8 +923,8 @@ impl Editor {
                     self.file.as_mut().unwrap().set_stash_money(money);
                     self.dirty = true;
                 }
-                // stashed hub bag: quantity here is raw (the bag lives in the Rogue
-                // block, not SaveBlock1, so the XOR obfuscation does not apply)
+                // stashed hub bag: quantity here is raw (the bag lives in the Rogue block, not
+                // SaveBlock1, so the XOR obfuscation does not apply)
                 let bag: Vec<(u16, u16)> = rb.stash.bag.clone();
                 let mut bag_edits: Vec<(usize, u16, u16)> = Vec::new();
                 ui.add_space(4.0);
@@ -979,11 +978,11 @@ impl Editor {
     /// One compact safari row: index, species icon, species name (plus a short
     /// shiny marker). Everything else the entry stores -- nickname, the six IVs,
     /// nature, ball, ability slot, gender flag, spawn priority -- lives in the
-    /// shared Mon-tab editor, which these rows open through the same click
-    /// plumbing as the roster and daycare rows (`apply_mon_row_click`). A row
-    /// carrying twelve inline widgets made a 60-row list unreadable, and the
-    /// editor already has those widgets. Returns the row's response so a caller
-    /// (or a test) can measure where the clickable row actually landed.
+    /// shared Mon-tab editor, which these rows open through the same click plumbing
+    /// as the roster and daycare rows (`apply_mon_row_click`). A row carrying
+    /// twelve inline widgets made a 60-row list unreadable, and the editor already
+    /// has those widgets. Returns the row's response so a caller (or a test) can
+    /// measure where the clickable row actually landed.
     pub(crate) fn safari_row(
         &mut self,
         ui: &mut egui::Ui,
@@ -993,18 +992,18 @@ impl Editor {
         let sel = Sel::Safari(i);
         let selected = self.sel.as_ref() == Some(&sel);
         let sp = s.species();
-        // `species_name` is exactly what the Mon-tab heading prints for a spawn
-        // entry (`MonRec::heading`), so the row and the editor cannot disagree.
+        // `species_name` is exactly what the Mon-tab heading prints for a spawn entry
+        // (`MonRec::heading`), so the row and the editor cannot disagree.
         let name = if sp == 0 {
             "(empty)".to_string()
         } else {
             species_name(sp).to_string()
         };
         let shiny = if s.shiny() { " [shiny]" } else { "" };
-        // `icons` is borrowed for the whole row, so the row may not touch the
-        // rest of self: the closure hands back the row's response and the shared
-        // click/double-click semantics are applied after it, exactly as the
-        // roster rows do (a row of buttons would swallow `clicked`).
+        // `icons` is borrowed for the whole row, so the row may not touch the rest of
+        // self: the closure hands back the row's response and the shared
+        // click/double-click semantics are applied after it, exactly as the roster rows
+        // do (a row of buttons would swallow `clicked`).
         let (row, pr) = {
             let icons = &self.icons;
             ui.horizontal(|ui| {
@@ -1015,9 +1014,9 @@ impl Editor {
                 let lab = ui
                     .selectable_label(selected, format!("{name}{shiny}"))
                     .on_hover_text(format!("stored species id {sp}"));
-                // Editable here, in the roster: priorityCounter decides which of
-                // these spawns the game draws first. The label still owns the
-                // click/select semantics; the DragValue is a separate widget.
+                // Editable here, in the roster: priorityCounter decides which of these spawns
+                // the game draws first. The label still owns the click/select semantics; the
+                // DragValue is a separate widget.
                 let mut pr = s.priority as i32;
                 if ui
                     .add(

@@ -1,19 +1,19 @@
 //! One searchable dropdown for every id picklist in the editor.
 //!
-//! ## Why not `egui::ComboBox`
-//! `ComboBox` renders its popup but decides dismissal from the *trigger
-//! button's* rect: `containers/popup.rs` closes whenever
-//! `button_response.clicked_elsewhere()`, and `Response::clicked_elsewhere`
-//! tests the press against the button's own `interact_rect`. A click on the
-//! popup's search field is therefore "elsewhere", so the popup closes and eats
-//! the click before the `TextEdit` ever sees it. Nothing in egui 0.27 exempts
-//! popup contents from that rule, so the popup is built here on `egui::Area`
-//! with our own dismissal: a press closes only when it lands outside the popup's
-//! own frame, or on Escape, or when a row is picked.
+//! ## Why not `egui::ComboBox` `ComboBox` renders its popup but decides
+//! dismissal from the *trigger button's* rect: `containers/popup.rs` closes
+//! whenever `button_response.clicked_elsewhere()`, and
+//! `Response::clicked_elsewhere` tests the press against the button's own
+//! `interact_rect`. A click on the popup's search field is therefore
+//! "elsewhere", so the popup closes and eats the click before the `TextEdit`
+//! ever sees it. Nothing in egui 0.27 exempts popup contents from that rule, so
+//! the popup is built here on `egui::Area` with our own dismissal: a press
+//! closes only when it lands outside the popup's own frame, or on Escape, or
+//! when a row is picked.
 //!
-//! Two behaviours the stock widget cannot give us, both requested:
-//!   * clicking the search field keeps the popup open and puts the caret there;
-//!   * the field is focused the frame the popup opens, so you can type right
+//! Two behaviours the stock widget cannot give us, both requested: * clicking
+//! the search field keeps the popup open and puts the caret there; * the field
+//! is focused the frame the popup opens, so you can type right
 //!     away and the list filters as a case-insensitive name substring.
 //!
 //! Rows are virtualized (`show_rows`) - the species table is ~1500 rows and the
@@ -43,10 +43,10 @@ pub struct Opts {
     pub none_label: Option<&'static str>,
     /// Label used if the current id is not in the table.
     pub unknown_label: &'static str,
-    /// True when id 0 means "nothing here" in this namespace (species, item,
-    /// move, held item). **False** for namespaces where 0 is a stored value:
-    /// ability slot 0, or met location `MAPSEC_POKEMON_HUB`. Treating those as
-    /// empty is how the ability picker started rendering every slot-0 mon as "-".
+    /// True when id 0 means "nothing here" in this namespace (species, item, move,
+    /// held item). **False** for namespaces where 0 is a stored value: ability slot
+    /// 0, or met location `MAPSEC_POKEMON_HUB`. Treating those as empty is how the
+    /// ability picker started rendering every slot-0 mon as "-".
     pub zero_is_none: bool,
     /// Extra hover text for the trigger button. Names-only pickers hide the raw
     /// stored number, so this is where it stays discoverable.
@@ -150,8 +150,8 @@ pub fn show(
     let popup_id = button_id.with("popup");
     let ctx = ui.ctx().clone();
 
-    // If the popup is closed (we just closed it, or another widget took the
-    // popup stack), disarm the caret request so the next open focuses again.
+    // If the popup is closed (we just closed it, or another widget took the popup
+    // stack), disarm the caret request so the next open focuses again.
     if !ui.memory(|m| m.is_popup_open(popup_id)) {
         if let Some(mut st) = ui.ctx().data_mut(|d| d.get_temp::<PopupState>(popup_id)) {
             if st.focus_armed {
@@ -243,10 +243,10 @@ pub fn show(
     let open = ui.memory(|m| m.is_popup_open(popup_id));
 
     if open {
-        // The popup must cover the whole line the button sits on, not just the
-        // button: a picker as narrow as its label floats over a much wider roster
-        // row, and the row sticking out on both sides of it reads as the pokemon
-        // being cut off. `anchor_width` is what the button had to work with.
+        // The popup must cover the whole line the button sits on, not just the button:
+        // a picker as narrow as its label floats over a much wider roster row, and the
+        // row sticking out on both sides of it reads as the pokemon being cut off.
+        // `anchor_width` is what the button had to work with.
         let popup_width = (opts
             .min_width
             .max(anchor_width)
@@ -265,9 +265,9 @@ pub fn show(
             Align2::LEFT_BOTTOM
         };
 
-        // The frame geometry is published under a key derived from the call-site
-        // name (not the egui id path, which a test cannot reconstruct) so the
-        // width/anchor contract below is checkable without a screen.
+        // The frame geometry is published under a key derived from the call-site name
+        // (not the egui id path, which a test cannot reconstruct) so the width/anchor
+        // contract below is checkable without a screen.
         let rect_key = Id::new(format!("scombo_frame_rect:{id_src}"));
         let frame_rect = AreaPopup {
             popup_id,
@@ -290,10 +290,10 @@ pub fn show(
         });
         ctx.data_mut(|d| d.insert_temp(rect_key, frame_rect));
 
-        // ---- dismissal ------------------------------------------------------
-        // A press outside our popup frame closes it. A press inside the frame -
-        // including on the search field, the scrollbar, or empty padding - does
-        // not, which is the whole point of this module.
+        // ---- dismissal ------------------------------------------------------ A press
+        // outside our popup frame closes it. A press inside the frame - including on
+        // the search field, the scrollbar, or empty padding - does not, which is the
+        // whole point of this module.
         let press = ctx.input(|i| {
             if i.pointer.any_pressed() {
                 i.pointer.interact_pos()
@@ -303,17 +303,17 @@ pub fn show(
         });
         let escape = ctx.input(|i| i.key_pressed(Key::Escape));
         let outside = press.map_or(false, |p| !frame_rect.contains(p));
-        // A press that landed on a widget belonging to another layer (i.e. not
-        // our popup) also closes us, even if it overlaps our rect.
+        // A press that landed on a widget belonging to another layer (i.e. not our
+        // popup) also closes us, even if it overlaps our rect.
         let foreign = press.map_or(false, |p| match ui.memory(|m| m.layer_id_at(p)) {
             Some(layer) => layer != LayerId::new(Order::Foreground, popup_id),
             None => false,
         });
         if escape || picked.is_some() || outside || foreign {
             ui.memory_mut(|m| m.close_popup());
-            // Closing also drops the search text: reopening a 900- or
-            // 1500-row list showing only the previous needle is how a picker
-            // gets mistaken for "the item is missing".
+            // Closing also drops the search text: reopening a 900- or 1500-row list showing
+            // only the previous needle is how a picker gets mistaken for "the item is
+            // missing".
             ui.ctx().data_mut(|d| {
                 if let Some(mut st) = d.get_temp::<PopupState>(popup_id) {
                     st.focus_armed = false;
@@ -332,8 +332,9 @@ const ICON_SIZE: f32 = 24.0;
 
 /// Where a trigger button draws its icon. The button reserves `icon_pad` on its
 /// left, and the icon has to sit **inside** that reservation: drawing it at
-/// `left_center() - icon_pad/2` placed it left of the button itself, so a picker
-/// sitting at a panel's left edge had its pokemon sprite sliced off by that edge.
+/// `left_center() - icon_pad/2` placed it left of the button itself, so a
+/// picker sitting at a panel's left edge had its pokemon sprite sliced off by
+/// that edge.
 fn trigger_icon_rect(rect: Rect, icon_pad: f32) -> Rect {
     let side = ICON_SIZE.min(rect.height()).min(icon_pad);
     Rect::from_min_size(
@@ -364,12 +365,11 @@ impl AreaPopup {
                 let width = self.min_width - frame.total_margin().sum().x;
                 let inner = frame.show(ui, |ui| {
                     ui.set_min_width(width);
-                    // The same figure as the MAXIMUM. An `Area` hands its content the
-                    // whole remaining screen width, so a min-width alone let rows lay
-                    // out far wider than the frame that draws them: anything in a row
-                    // that was not glued to the left edge landed past the frame's
-                    // clip and disappeared (that is how the ball picker ended up
-                    // showing icons with no names beside them).
+                    // The same figure as the MAXIMUM. An `Area` hands its content the whole
+                    // remaining screen width, so a min-width alone let rows lay out far wider than
+                    // the frame that draws them: anything in a row that was not glued to the left
+                    // edge landed past the frame's clip and disappeared (that is how the ball
+                    // picker ended up showing icons with no names beside them).
                     ui.set_max_width(width);
                     ui.set_max_height(self.max_height);
                     contents(ui)
@@ -409,14 +409,13 @@ fn body(
         st.focus_armed = true;
         search_resp.request_focus();
     }
-    // The field has focus, so egui would hand it our arrow keys: a focused
-    // TextEdit installs a focus-lock filter (text_edit/builder.rs:589) and
-    // `Memory::begin_frame` DROPS any event that filter claims
-    // (memory.rs:386-396) - `vertical_arrows: true` by default
-    // (builder.rs:128). Without releasing it, the first Up/Down after the popup
-    // opens is consumed as caret movement and never reaches the list, so the
-    // keyboard walk is off by one press. Applied after `ui.add`, this overrides
-    // the field's own filter for the next frame.
+    // The field has focus, so egui would hand it our arrow keys: a focused TextEdit
+    // installs a focus-lock filter (text_edit/builder.rs:589) and
+    // `Memory::begin_frame` DROPS any event that filter claims (memory.rs:386-396)
+    // - `vertical_arrows: true` by default (builder.rs:128). Without releasing it,
+    // the first Up/Down after the popup opens is consumed as caret movement and
+    // never reaches the list, so the keyboard walk is off by one press. Applied
+    // after `ui.add`, this overrides the field's own filter for the next frame.
     ctx.memory_mut(|m| {
         m.set_focus_lock_filter(
             search_resp.id,
@@ -507,10 +506,10 @@ fn body(
                 format!("  {name}")
             };
             // Rows are painted, not `Button`s. A button centers its galley inside
-            // `min_size`, and a row is as wide as the popup, so the name sat at the
-            // row's center - and whenever the row was wider than the frame that draws
-            // it, the name was clipped away entirely and the list read as a column of
-            // bare icons. Here the icon owns the left edge and the text follows it.
+            // `min_size`, and a row is as wide as the popup, so the name sat at the row's
+            // center - and whenever the row was wider than the frame that draws it, the
+            // name was clipped away entirely and the list read as a column of bare icons.
+            // Here the icon owns the left edge and the text follows it.
             let resp = ui
                 .allocate_exact_size(Vec2::new(wide, row_height), Sense::click())
                 .1
@@ -530,9 +529,9 @@ fn body(
                         ui.visuals().widgets.hovered.weak_bg_fill,
                     );
                 }
-                // The synthetic "none" row carries no stored id, so it gets neither
-                // a sprite nor the letter-badge fallback: a badge there reads like
-                // another real option's art (it showed "nb" for "(no ball)").
+                // The synthetic "none" row carries no stored id, so it gets neither a sprite
+                // nor the letter-badge fallback: a badge there reads like another real option's
+                // art (it showed "nb" for "(no ball)").
                 let show_icon = opts.icons != IconKind::None
                     && !(opts.zero_is_none && id == 0 && opts.none_label.is_some());
                 if show_icon {
@@ -551,9 +550,9 @@ fn body(
                         icon_rect,
                     );
                 }
-                // Text right of the icon (right of the left edge when there is no
-                // icon): the same `icon_pad` reservation the trigger button uses, so
-                // the sprite never lands on top of the name it is meant to label.
+                // Text right of the icon (right of the left edge when there is no icon): the
+                // same `icon_pad` reservation the trigger button uses, so the sprite never
+                // lands on top of the name it is meant to label.
                 let text_x = rect.left()
                     + if show_icon {
                         4.0 + ICON_SIZE + 6.0
@@ -584,11 +583,10 @@ fn body(
                 }
             }
             // `Response::clicked` also fires for keyboard/accesskit activation
-            // (`fake_primary_click`, response.rs:137) - egui activates whatever
-            // button is focusable when Enter arrives. Rows must answer only to
-            // the pointer, or every Enter would pick a row out from under the
-            // highlight the up/down walk just built. `clicked_by` is egui's own
-            // pointer-only variant (response.rs:143-151).
+            // (`fake_primary_click`, response.rs:137) - egui activates whatever button is
+            // focusable when Enter arrives. Rows must answer only to the pointer, or every
+            // Enter would pick a row out from under the highlight the up/down walk just
+            // built. `clicked_by` is egui's own pointer-only variant (response.rs:143-151).
             if resp.clicked_by(PointerButton::Primary)
                 || resp.double_clicked_by(PointerButton::Primary)
             {
@@ -612,10 +610,11 @@ fn body(
 }
 
 /// How many options the list could show at all, which is what "N of M options"
-/// compares against. It is not `table.len()`: a 0-means-empty namespace offers a
-/// synthetic "none" row that the table does not contain, and hides a 0 row that
-/// the table does contain. Counting the table alone printed "29 of 28 options"
-/// in the ball picker, because that picker offers `none` plus 28 balls.
+/// compares against. It is not `table.len()`: a 0-means-empty namespace offers
+/// a synthetic "none" row that the table does not contain, and hides a 0 row
+/// that the table does contain. Counting the table alone printed "29 of 28
+/// options" in the ball picker, because that picker offers `none` plus 28
+/// balls.
 fn listed_total(table: &[(u16, &str)], opts: &Opts) -> usize {
     let hidden_zero = usize::from(opts.zero_is_none && table.iter().any(|(id, _)| *id == 0));
     let none_row = usize::from(opts.none_label.is_some());

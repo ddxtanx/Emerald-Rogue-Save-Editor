@@ -205,7 +205,36 @@ docs/screenshot.png
   passed where a day counter belongs. Types keep out-of-domain bytes verbatim
   rather than clamping them, so a save round-trips byte for byte.
 
-## Development notes
+## Code style
+
+Formatted to the default Rust style: `rustfmt.toml` pins `style_edition = "2024"`,
+which is the edition the [Rust style guide](https://doc.rust-lang.org/style-guide/)
+currently documents. CI runs `cargo fmt --check`, so formatting is enforced rather
+than a matter of whoever-touched-it-last. The language `edition` in `Cargo.toml`
+stays at 2021 on purpose: edition 2024 also changes semantics, and pinning a
+formatting style should not quietly change behaviour.
+
+Rules rustfmt does not cover, and where the guide was followed by hand:
+
+- comment-only lines stay inside the guide's 80-column comment margin
+  (`tools/reflow_comments.py` does the reflow and is conservative by design: it
+  never merges doc-comment code examples, bullet lists, or the aligned offset
+  tables, because those comments are layouts and reflowing them destroys the point)
+- at most one blank line between statements and items, no trailing whitespace
+- one `#[derive(...)]` per item, doc comments before attributes, imports before
+  module declarations
+- `#[allow(...)]` is kept narrow and carries the reason (the `POCKET_*` constants
+  are the game's vocabulary, kept whole even where only tests use some of them)
+
+Two places the guide is deliberately not followed, both on purpose:
+
+- `use foo::*` glob imports stay. They are used per-module, and expanding 35 of
+  them into explicit lists would add friction every time a symbol is added, for no
+  real clarity gain.
+- some assertion/label lines exceed 100 columns. The overflow is inside string
+  literals (user-facing messages), which rustfmt cannot break and splitting into
+  implicit concatenation would make un-searchable.
+
 
 `tools/` holds the scripts that produced the format knowledge and the generated tables. They expect a local checkout
 of the game source and are driven by environment variables:

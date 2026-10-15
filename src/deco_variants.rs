@@ -1,8 +1,10 @@
-// Generated from /workspace/hermes/rogue-src-2207/src/data/rogue/decorations.json by tools/gen_deco_variants.py. Do not edit.
-// Index == the value stored in homeDecorations[].decorVariant; the enum
-// comes from DecorationExporter.cpp, which is why the ids are not readable
-// from the save alone. Cross-check: id 119 is the wardrobe the game seeds in
-// RogueHub_ClearProgress, and a real v2.2.0 save carries exactly that.
+// Generated from
+// /workspace/hermes/rogue-src-2207/src/data/rogue/decorations.json by
+// tools/gen_deco_variants.py. Do not edit. Index == the value stored in
+// homeDecorations[].decorVariant; the enum comes from DecorationExporter.cpp,
+// which is why the ids are not readable from the save alone. Cross-check: id
+// 119 is the wardrobe the game seeds in RogueHub_ClearProgress, and a real
+// v2.2.0 save carries exactly that.
 
 pub const DECOR_VARIANTS: &[&str] = &[
     "path 5x5",

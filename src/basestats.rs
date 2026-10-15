@@ -1,21 +1,22 @@
 //! Base stats per species, as the game defines them.
 //!
-//! The numbers live in `data/basestats.csv` (and the declared-without-data ids in
-//! `data/species_without_game_data.csv`), both generated from the game tree by
-//! `tools/gen_basestats_v2.py`. They are embedded here with `include_str!`, so the
-//! binary carries its data and there is no file to find, ship, or version-match at
-//! run time; parsing happens once, on first use.
+//! The numbers live in `data/basestats.csv` (and the declared-without-data ids
+//! in `data/species_without_game_data.csv`), both generated from the game tree
+//! by `tools/gen_basestats_v2.py`. They are embedded here with `include_str!`,
+//! so the binary carries its data and there is no file to find, ship, or
+//! version-match at run time; parsing happens once, on first use.
 //!
 //! Two things this file must keep honest, because both have already gone wrong
 //! once and were only noticed by a user:
 //!
 //! * a table can silently lose families (201 species disappeared when the
-//!   generator only understood brace-form `species_info` entries and not
-//!   `[SPECIES_X] = MACRO(args),`), so `game_data::tests` asserts that every id
-//!   the editor can name either has stats or is on the declared-without-data list;
+//! generator only understood brace-form `species_info` entries and not
+//! `[SPECIES_X] = MACRO(args),`), so `game_data::tests` asserts that every id
+//! the editor can name either has stats or is on the declared-without-data
+//! list;
 //! * a failure to parse must stay visible: `parse_problems` is reported in the
-//!   wording of a failed stat recalculation, so a truncated table cannot be
-//!   mistaken for "the game has no stats for this species".
+//! wording of a failed stat recalculation, so a truncated table cannot be
+//! mistaken for "the game has no stats for this species".
 
 use std::sync::OnceLock;
 
@@ -94,10 +95,10 @@ fn data() -> &'static Data {
     })
 }
 
-/// Base stats for a species: `[HP, Attack, Defense, Speed, SpA, SpD]`,
-/// exactly the order the editor's stat formula expects. `None` means this build's
-/// table has no entry - see [`species_without_game_data`] for the ids where the
-/// game itself has no data.
+/// Base stats for a species: `[HP, Attack, Defense, Speed, SpA, SpD]`, exactly
+/// the order the editor's stat formula expects. `None` means this build's table
+/// has no entry - see [`species_without_game_data`] for the ids where the game
+/// itself has no data.
 pub fn base_stats(sp: u16) -> Option<[u16; 6]> {
     let d = data();
     d.table
@@ -111,10 +112,10 @@ pub fn species_without_game_data() -> &'static [u16] {
     &data().without_data
 }
 
-/// Anything wrong with the embedded tables: a bad row, a duplicate id, a stat out
-/// of range. Empty is the expected state, and the test suite asserts that; the UI
-/// quotes it when a lookup misses, so a damaged table cannot be mistaken for a
-/// game limitation.
+/// Anything wrong with the embedded tables: a bad row, a duplicate id, a stat
+/// out of range. Empty is the expected state, and the test suite asserts that;
+/// the UI quotes it when a lookup misses, so a damaged table cannot be mistaken
+/// for a game limitation.
 pub fn parse_problems() -> &'static [String] {
     &data().problems
 }
@@ -123,8 +124,8 @@ pub fn parse_problems() -> &'static [String] {
 mod tests {
     use super::*;
 
-    /// The embedded tables must parse clean: a short row or a non-numeric stat is
-    /// a broken file, and "no base stats for species N" is the wrong diagnosis for
+    /// The embedded tables must parse clean: a short row or a non-numeric stat is a
+    /// broken file, and "no base stats for species N" is the wrong diagnosis for
     /// that.
     #[test]
     fn embedded_tables_parse_without_problems() {
@@ -148,8 +149,8 @@ mod tests {
             !d.without_data.is_empty(),
             "the declared-without-data list must still be emitted by the generator"
         );
-        // The order the stat formula assumes: HP first and, for a species the
-        // report named, present at all.
+        // The order the stat formula assumes: HP first and, for a species the report
+        // named, present at all.
         assert_eq!(base_stats(716).map(|b| b[0]), Some(126), "Xerneas base HP");
     }
 }

@@ -1,6 +1,6 @@
 //! Pokemon structs (80B BoxPokemon / 104B party Pokemon): decode, encode,
-//! bitfield accessors, and stat math. Level derives from exp (Rogue uses a
-//! flat exp schedule), see EXP_PER_LEVEL.
+//! bitfield accessors, and stat math. Level derives from exp (Rogue uses a flat
+//! exp schedule), see EXP_PER_LEVEL.
 
 use crate::format::*;
 use crate::game_data::*;
@@ -57,14 +57,14 @@ impl Mon {
         self.raw[20..27].copy_from_slice(&enc);
     }
     /// Build a fresh, self-consistent mon for an empty slot: species, level
-    /// (through the Rogue flat exp schedule, since level is derived from exp),
-    /// a random PID, the save's OTID/OT name, a Poké Ball, ability slot 0, and a
+    /// (through the Rogue flat exp schedule, since level is derived from exp), a
+    /// random PID, the save's OTID/OT name, a Poké Ball, ability slot 0, and a
     /// nickname matching the species. Cached stats stay zero, which is what the
     /// game itself writes: party stats are recomputed by `CalculateMonStats` on
     /// load and box mons derive everything from exp.
     ///
-    /// The struct is party-sized (104 B). `set_box_mon` truncates to the leading
-    /// 80 B, which is exactly `struct BoxPokemon`.
+    /// The struct is party-sized (104 B). `set_box_mon` truncates to the leading 80
+    /// B, which is exactly `struct BoxPokemon`.
     pub fn blank(otid: u32, ot_name: &str, species: u16, level: u8) -> Mon {
         let mut m = Mon::from_bytes(&vec![0u8; 104]);
         m.set_pid(random_pid());
@@ -124,9 +124,9 @@ impl Mon {
         self.pid_nature() ^ self.hidden_nature_mod()
     }
     pub fn set_nature(&mut self, n: crate::domain::Nature) {
-        // Write the modifier that reproduces exactly this nature. No `% 25`: the
-        // 5-bit field can express values above 24 and an edited save may hold
-        // one; clamping would turn the game's byte into ours.
+        // Write the modifier that reproduces exactly this nature. No `% 25`: the 5-bit
+        // field can express values above 24 and an edited save may hold one; clamping
+        // would turn the game's byte into ours.
         let modv = self.pid_nature() ^ (n.raw() & 0x1F);
         self.raw[18] = (self.raw[18] & 0x07) | ((modv & 0x1F) << 3);
     }
@@ -158,11 +158,11 @@ impl Mon {
         // exp is authoritative for level, so a party mon's cached byte follows it.
         self.sync_cached_level();
     }
-    /// The `PP Bonuses` byte at t[0]+8 holds one 2-bit field per move slot
-    /// (`u8 ppUps:2` x4). Only the per-slot accessors below are exposed: a
-    /// whole-byte setter is how the other three slots used to get wiped.
-    /// PP Ups applied to one move slot: 0..=3. The game caps it at 3
-    /// (pokemon.c `gPPUpGetMask`, item_use.c refuses a 4th).
+    /// The `PP Bonuses` byte at t[0]+8 holds one 2-bit field per move slot (`u8
+    /// ppUps:2` x4). Only the per-slot accessors below are exposed: a whole-byte
+    /// setter is how the other three slots used to get wiped. PP Ups applied to one
+    /// move slot: 0..=3. The game caps it at 3 (pokemon.c `gPPUpGetMask`,
+    /// item_use.c refuses a 4th).
     pub fn pp_bonus(&self, slot: usize) -> u8 {
         (self.t[0][8] >> (slot * 2)) & 3
     }
@@ -325,17 +325,18 @@ impl Mon {
     /// Rogue replaces the vanilla growth-rate tables with a single flat schedule:
     /// `Rogue_ModifyExperienceTables()` (src/rogue_baked.c) is just `level * 300`,
     /// ignoring growthRate entirely. `struct BoxPokemon` has no level field at all,
-    /// so the game always recomputes the level from exp
-    /// (`GetLevelFromBoxMonExp` / `GetLevelFromMonExp`, src/pokemon.c) - a loop over
-    /// that schedule clamped to MAX_LEVEL (100). `CalculateMonStats` then writes the
-    /// result back into the party struct's cached level byte. Exp is therefore the
-    /// authoritative field for *both* the 104-byte party and the 80-byte box layout,
-    /// and a party mon's cached byte is only a mirror that can go stale.
+    /// so the game always recomputes the level from exp (`GetLevelFromBoxMonExp` /
+    /// `GetLevelFromMonExp`, src/pokemon.c) - a loop over that schedule clamped to
+    /// MAX_LEVEL (100). `CalculateMonStats` then writes the result back into the
+    /// party struct's cached level byte. Exp is therefore the authoritative field
+    /// for *both* the 104-byte party and the 80-byte box layout, and a party mon's
+    /// cached byte is only a mirror that can go stale.
     pub fn level(&self) -> Option<u8> {
         Some(level_from_exp(self.exp()))
     }
-    /// The raw cached byte in the 104-byte party struct (offset 84). Box mons have no
-    /// such byte. Exposed so a stale/mismatched mirror is visible rather than silent.
+    /// The raw cached byte in the 104-byte party struct (offset 84). Box mons have
+    /// no such byte. Exposed so a stale/mismatched mirror is visible rather than
+    /// silent.
     pub fn level_cached(&self) -> Option<u8> {
         if self.raw.len() == MONSZ {
             Some(self.raw[84])
@@ -353,7 +354,8 @@ impl Mon {
             self.raw[84] = v;
         }
     }
-    /// Keep a party mon's cached level byte consistent with its exp. No-op for box mons.
+    /// Keep a party mon's cached level byte consistent with its exp. No-op for box
+    /// mons.
     pub fn sync_cached_level(&mut self) {
         if self.raw.len() == MONSZ {
             self.raw[84] = self.level().unwrap_or(0);
@@ -440,8 +442,8 @@ impl Mon {
 
     pub fn display_name(&self) -> String {
         let nick = self.nickname();
-        // Base (family) name: a form mon reads "Darmanitan", not
-        // "Darmanitan Standard Mode". See crate::game_data::species_base_name.
+        // Base (family) name: a form mon reads "Darmanitan", not "Darmanitan Standard
+        // Mode". See crate::game_data::species_base_name.
         let sp = species_base_name(self.species());
         if !nick.is_empty() && nick != sp {
             format!("Lv{} {} ({})", self.level().unwrap_or(0), nick, sp)
@@ -451,8 +453,8 @@ impl Mon {
     }
 }
 
-/// vanilla gNatureStatTable: nature index boosts stat (nat/5) and lowers
-/// stat (nat%5) in the stat order [Atk, Def, Spe, SpA, SpD] (our indices 1..=5).
+/// vanilla gNatureStatTable: nature index boosts stat (nat/5) and lowers stat
+/// (nat%5) in the stat order [Atk, Def, Spe, SpA, SpD] (our indices 1..=5).
 pub(crate) fn nature_split(nat: usize, stat: usize) -> u32 {
     if stat == 0 {
         return 100;
@@ -470,12 +472,12 @@ pub(crate) fn nature_split(nat: usize, stat: usize) -> u32 {
 
 /// Game stat formula (src/pokemon.c CalStat), integer division at each step.
 /// `stat` is 0=HP..5=SpDef. Note index 3 is Speed and 4/5 are SpA/SpD in our
-/// ordering, matching how the cached stat block is laid out.
-/// Recompute the cached stat block the way the game's `CalculateMonStats` does.
-/// Gen 3 caches stats in the save, so an IV / EV / level change stays invisible
-/// in-game until this runs - which is what the editor's "recalculate stats"
-/// button needs, and any copy that lands in the party. `Err` names why it cannot
-/// be done: an out-of-range nature has no row in the 25-entry modifier table, and
+/// ordering, matching how the cached stat block is laid out. Recompute the
+/// cached stat block the way the game's `CalculateMonStats` does. Gen 3 caches
+/// stats in the save, so an IV / EV / level change stays invisible in-game
+/// until this runs - which is what the editor's "recalculate stats" button
+/// needs, and any copy that lands in the party. `Err` names why it cannot be
+/// done: an out-of-range nature has no row in the 25-entry modifier table, and
 /// an unknown species has no base-stat row.
 pub(crate) fn recalculate_cached_stats(m: &mut Mon) -> Result<u32, String> {
     // The stat block lives at bytes 86..98, which only exist in a 104-byte party
@@ -494,11 +496,11 @@ pub(crate) fn recalculate_cached_stats(m: &mut Mon) -> Result<u32, String> {
         return Err(format!("nature value {} is outside 0..=24", nat.raw()));
     }
     let Some(bs) = crate::basestats::base_stats(m.species()) else {
-        // Two very different reasons for a miss, and the user cannot tell them
-        // apart from the outside: the game itself has no species_info entry for
-        // this id (a placeholder / unimplemented form id - the constant exists in
-        // species.h, the data does not), versus a gap in the editor's generated
-        // table, which is a bug and should read like one.
+        // Two very different reasons for a miss, and the user cannot tell them apart
+        // from the outside: the game itself has no species_info entry for this id (a
+        // placeholder / unimplemented form id - the constant exists in species.h, the
+        // data does not), versus a gap in the editor's generated table, which is a bug
+        // and should read like one.
         let sp = m.species();
         if crate::basestats::species_without_game_data().contains(&sp) {
             return Err(format!(
@@ -532,9 +534,9 @@ pub(crate) fn calc_stat(base: u32, iv: u32, ev: u32, lvl: u32, nat: usize, stat:
     }
 }
 
-/// A PID for a mon we are creating. It sets the substruct permutation
-/// (`pid % 24`), the encryption key (`pid ^ otid`), and the nature, so it must
-/// be non-zero and varied; two mons with the same PID/OTID pair would encrypt
+/// A PID for a mon we are creating. It sets the substruct permutation (`pid %
+/// 24`), the encryption key (`pid ^ otid`), and the nature, so it must be
+/// non-zero and varied; two mons with the same PID/OTID pair would encrypt
 /// identically. Seeded from the clock plus a stack address, which is plenty for
 /// "give the new mon a different identity".
 fn random_pid() -> u32 {
@@ -563,9 +565,9 @@ mod tests {
         m
     }
 
-    /// The user's request #3: a mon with a form reads as its BASE name, not
-    /// the ROM's form-qualified speciesName string. 555's stored name string
-    /// is "Darmanitan Standard Mode"; the display shows "Darmanitan".
+    /// The user's request #3: a mon with a form reads as its BASE name, not the
+    /// ROM's form-qualified speciesName string. 555's stored name string is
+    /// "Darmanitan Standard Mode"; the display shows "Darmanitan".
     #[test]
     fn a_form_mon_displays_its_base_name() {
         assert_eq!(
@@ -582,17 +584,17 @@ mod tests {
     /// goes wrong: the one-word write (`set_all_ivs`) against six masked single
     /// writes (`set_iv_at`), and then the seal + re-read the editor performs.
     ///
-    /// Deliberately synthetic rather than read from a real save: the regression
-    /// pin must run on CI too, where no save is present.
-    /// A stat block only exists in a 104-byte party record. On an 80-byte box
-    /// record the writes would land nowhere, so the helper must say so rather
-    /// than report success - and `party_sized` is what makes a copy writable.
+    /// Deliberately synthetic rather than read from a real save: the regression pin
+    /// must run on CI too, where no save is present. A stat block only exists in a
+    /// 104-byte party record. On an 80-byte box record the writes would land
+    /// nowhere, so the helper must say so rather than report success - and
+    /// `party_sized` is what makes a copy writable.
     #[test]
     fn stat_recalculation_refuses_a_box_record_and_works_once_sized_for_the_party() {
         let made = Mon::blank(0x1234_5678, "Garrett", 59, 54); // Arcanine, L54
         assert_eq!(made.raw.len(), 104, "a fresh record is party-sized");
-        // Box records reach the editor as the first 80 bytes (`from_bytes` on a
-        // BOXSZ slice), which is the shape whose stat writes would go nowhere.
+        // Box records reach the editor as the first 80 bytes (`from_bytes` on a BOXSZ
+        // slice), which is the shape whose stat writes would go nowhere.
         let mut boxed = Mon::from_bytes(&made.raw[..80]);
         let err = recalculate_cached_stats(&mut boxed)
             .expect_err("an 80-byte record has no stat block to write");
@@ -624,9 +626,9 @@ mod tests {
         assert_eq!(max as u32, expect_hp, "HP must match the game formula");
     }
 
-    /// The user's report: "I could not recompute xerneas' stat changes upon
-    /// editing the save." Xerneas (716) was one of 201 species missing from the
-    /// generated table, so the button refused with "no base stats in table".
+    /// The user's report: "I could not recompute xerneas' stat changes upon editing
+    /// the save." Xerneas (716) was one of 201 species missing from the generated
+    /// table, so the button refused with "no base stats in table".
     #[test]
     fn a_xerneas_can_be_stat_recomputed() {
         let mut m = Mon::blank(0x1234_5678, "Garrett", 716, 50);
@@ -649,8 +651,8 @@ mod tests {
         assert!(st.iter().all(|v| *v > 0), "all stats non-zero: {st:?}");
     }
 
-    /// The other half of the same report: an id the game declares but never
-    /// defines must say so, rather than implying the editor's table is broken.
+    /// The other half of the same report: an id the game declares but never defines
+    /// must say so, rather than implying the editor's table is broken.
     #[test]
     fn an_id_the_game_declares_without_data_says_so_rather_than_blaming_the_table() {
         let sp = 1481; // "Mimikyu Totem" in the editor's name table
@@ -679,8 +681,8 @@ mod tests {
             for (i, v) in seed.iter().enumerate() {
                 m.set_iv_at(i, *v);
             }
-            // The word also holds the is-egg bit above the six fields; an
-            // all-IV write must not clobber it.
+            // The word also holds the is-egg bit above the six fields; an all-IV write must
+            // not clobber it.
             m.set_is_egg(true);
             m
         };

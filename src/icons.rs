@@ -63,9 +63,9 @@ pub struct IconStore {
     cache: RefCell<HashMap<String, Option<TextureHandle>>>,
     /// One tally per namespace, indexed by `IconKind::index`.
     tallies: RefCell<[IconTally; IconKind::COUNT]>,
-    /// Cached answer to "does `items/` hold any PNG on disk": -1 unknown,
-    /// 0 no, 1 yes. Probed once so the hint does not re-read a 900-entry
-    /// directory every frame.
+    /// Cached answer to "does `items/` hold any PNG on disk": -1 unknown, 0 no, 1
+    /// yes. Probed once so the hint does not re-read a 900-entry directory every
+    /// frame.
     items_probe: Cell<i8>,
 }
 
@@ -85,9 +85,9 @@ impl IconStore {
         }
     }
 
-    /// A store pointed at an explicit root (or no root at all). Test-only: it
-    /// lets the counters and the status line be pinned without the real,
-    /// gitignored `assets/` tree being present.
+    /// A store pointed at an explicit root (or no root at all). Test-only: it lets
+    /// the counters and the status line be pinned without the real, gitignored
+    /// `assets/` tree being present.
     #[cfg(test)]
     fn at_root(root: Option<PathBuf>) -> Self {
         IconStore {
@@ -100,8 +100,8 @@ impl IconStore {
         self.root.as_deref()
     }
 
-    /// One-line description for the status bar, honest about missing art, and
-    /// per namespace so "items are all badges" can never read as intentional.
+    /// One-line description for the status bar, honest about missing art, and per
+    /// namespace so "items are all badges" can never read as intentional.
     pub fn status(&self) -> String {
         match self.root() {
             None => "icons: no assets/icons dir - run `python3 tools/get_icons.py`".into(),
@@ -126,10 +126,10 @@ impl IconStore {
         self.tallies.borrow()[kind.index()]
     }
 
-    /// True when the assets root exists but the item namespace has no art at
-    /// all, so every item row is a generated letter badge. The on-disk probe
-    /// makes this right on the very first frame, before any item id has been
-    /// requested by a picker.
+    /// True when the assets root exists but the item namespace has no art at all,
+    /// so every item row is a generated letter badge. The on-disk probe makes this
+    /// right on the very first frame, before any item id has been requested by a
+    /// picker.
     pub fn items_art_absent(&self) -> bool {
         // No root at all: the status line already names the command to run.
         if self.root.is_none() || self.tally(IconKind::Item).resolved > 0 {
@@ -172,8 +172,8 @@ impl IconStore {
         format!("{dir}/{id}.png")
     }
 
-    /// Resolve an icon to a texture, decoding + uploading it on first use.
-    /// `None` means "no art for this id" (Rogue-only items, fake forms).
+    /// Resolve an icon to a texture, decoding + uploading it on first use. `None`
+    /// means "no art for this id" (Rogue-only items, fake forms).
     pub fn get(&self, ctx: &Context, kind: IconKind, id: u16) -> Option<TextureHandle> {
         if kind == IconKind::None || id == 0 {
             return None;
@@ -458,8 +458,8 @@ mod tests {
             line.contains(&format!("(root {})", root.display())),
             "{line}"
         );
-        // The state the Items tab has to explain out loud instead of leaving as
-        // a badge that looks intentional.
+        // The state the Items tab has to explain out loud instead of leaving as a badge
+        // that looks intentional.
         assert!(store.items_art_absent(), "an empty root has no item art");
 
         // The same store with item art on disk must NOT claim it is missing.
@@ -477,8 +477,8 @@ mod tests {
         );
         assert!(stocked.status().contains("items 0 shown / 0 missing"));
 
-        // No root at all: the line keeps naming the fetcher, and the in-list
-        // hint stays off because the status line already says what to run.
+        // No root at all: the line keeps naming the fetcher, and the in-list hint stays
+        // off because the status line already says what to run.
         let bare = IconStore::at_root(None);
         let line = bare.status();
         assert!(line.contains("no assets/icons dir"), "{line}");

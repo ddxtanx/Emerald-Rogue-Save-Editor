@@ -1,5 +1,6 @@
-// Generated from Pokabbie/pokeemerald-rogue (expansion branch) headers. Do not edit.
-// Supplemental tables: species form ids > 905, Rogue custom items, quest slot names.
+// Generated from Pokabbie/pokeemerald-rogue (expansion branch) headers. Do not
+// edit. Supplemental tables: species form ids > 905, Rogue custom items, quest
+// slot names.
 
 pub const SPECIES_EXTRA: &[(u16, &str)] = &[
     (906, "Venusaur (Mega)"),

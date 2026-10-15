@@ -1,4 +1,3 @@
-#![allow(unused_imports)]
 use crate::basestats::base_stats;
 use crate::deco_variants;
 use crate::domain::{DecorVariant, ExteriorStyle, HubArea, InteriorStyle, PathStyle, Pocket};
@@ -14,18 +13,18 @@ mod tests {
 
     #[test]
     fn safari_iv_columns_are_the_six_stat_indices_and_the_field_is_five_bits() {
-        // The UI labels each column from StatIdx, so a row cannot print "SpA"
-        // over the SpD bits. Struct order is hp, atk, def, spe, spa, spd.
+        // The UI labels each column from StatIdx, so a row cannot print "SpA" over the
+        // SpD bits. Struct order is hp, atk, def, spe, spa, spd.
         let labels: Vec<&str> = crate::domain::StatIdx::ALL
             .iter()
             .map(|s| s.label())
             .collect();
         assert_eq!(labels, ["HP", "Atk", "Def", "Spe", "SpA", "SpD"]);
 
-        // The save packs IVs in 5-bit fields. The safari setters check their
-        // input and refuse to write a value that would not fit, rather than
-        // spilling into the neighbouring field -- the GUI clamps to 0..=31 so a
-        // user cannot reach this, but a hand-built edit must not corrupt.
+        // The save packs IVs in 5-bit fields. The safari setters check their input and
+        // refuse to write a value that would not fit, rather than spilling into the
+        // neighbouring field -- the GUI clamps to 0..=31 so a user cannot reach this,
+        // but a hand-built edit must not corrupt.
         let mut s = SafariMon::default();
         let r = std::panic::catch_unwind(|| {
             let mut t = s.clone();
@@ -45,9 +44,9 @@ mod tests {
 
     #[test]
     fn safari_bitfields_roundtrip_without_bleed() {
-        // struct RogueSafariMon is two bitfield words + tail. Setting every
-        // field to a distinct value and reading it back proves the shifts/masks;
-        // asserting the raw words afterwards proves no neighbour was clobbered.
+        // struct RogueSafariMon is two bitfield words + tail. Setting every field to a
+        // distinct value and reading it back proves the shifts/masks; asserting the raw
+        // words afterwards proves no neighbour was clobbered.
         let mut s = SafariMon::default();
         s.set_species(1005);
         for (k, st) in crate::domain::StatIdx::ALL.iter().enumerate() {
@@ -140,8 +139,8 @@ mod tests {
         assert_eq!(level_from_exp(300), 1);
         assert_eq!(level_from_exp(599), 1);
         assert_eq!(level_from_exp(600), 2);
-        // GetLevelFromBoxMonExp clamps its loop at MAX_LEVEL (100), so over-leveled
-        // exp still reports 100 (e.g. the level-115 exp seen on boxed mons).
+        // GetLevelFromBoxMonExp clamps its loop at MAX_LEVEL (100), so over-leveled exp
+        // still reports 100 (e.g. the level-115 exp seen on boxed mons).
         assert_eq!(level_from_exp(30000), 100);
         assert_eq!(level_from_exp(34500), 100);
         assert_eq!(level_from_exp(0x1F_FFFF), 100);
@@ -149,8 +148,8 @@ mod tests {
 
     #[test]
     fn box_mon_level_set_writes_exp_not_a_byte() {
-        // 80-byte box struct: no level byte exists. set_level must encode via exp,
-        // and set_exp must move the level read-back.
+        // 80-byte box struct: no level byte exists. set_level must encode via exp, and
+        // set_exp must move the level read-back.
         let raw = vec![0u8; BOXSZ];
         // zeroed struct: pid/otid 0 -> key 0; accessors don't need a valid checksum
         let mut m = Mon::from_bytes(&raw);
@@ -188,9 +187,9 @@ mod tests {
         put16(&mut merged, base + 3, ROGUE_SECRET);
         merged[base + 5] = 1;
         put16(&mut merged, base + 6, 1434);
-        // A real (nonzero) SaveBlock2 encryption key, so tests that check the
-        // XOR obfuscation of money and bag quantities cannot pass by accident
-        // with an identity key.
+        // A real (nonzero) SaveBlock2 encryption key, so tests that check the XOR
+        // obfuscation of money and bag quantities cannot pass by accident with an
+        // identity key.
         put32(&mut merged, ENC_KEY_OFF, 0x1234_ABCD);
         let mut o = base + 8;
         // emit a count prefix and skip the element bytes; zeros are fine
@@ -227,8 +226,8 @@ mod tests {
             merged[o + k] = 0xEE; // ride state / replay / rng tail junk: nonzero pids,
         } // checksums wrong -> the stash validity scan cannot false-anchor here
         o += 50;
-        // sRunRestoreBlock: party 6x104 | bag 450x4 | daycare 3x84 | diff 12 | money | time
-        // Plant a REAL sealed party mon so the stash validity scan anchors on the
+        // sRunRestoreBlock: party 6x104 | bag 450x4 | daycare 3x84 | diff 12 | money |
+        // time Plant a REAL sealed party mon so the stash validity scan anchors on the
         // exact offset (byte-shifted copies of a sealed mon fail checksums).
         let stash = o + 16;
         let mut raw = vec![0u8; MONSZ];
@@ -308,9 +307,9 @@ mod tests {
 
     #[test]
     fn hub_coord_validator_flags_unreachable_and_stranding_moves() {
-        // Build a chain: Labs(0,0) - AdvEntrance(1,0) - Safari(2,0).
-        // Everything else stays unbuilt, so Safari is a leaf whose only door is
-        // AdvEntrance and Labs is a leaf whose only door is AdvEntrance too.
+        // Build a chain: Labs(0,0) - AdvEntrance(1,0) - Safari(2,0). Everything else
+        // stays unbuilt, so Safari is a leaf whose only door is AdvEntrance and Labs is
+        // a leaf whose only door is AdvEntrance too.
         let mut sf = synth_save();
         sf.set_hub_area(crate::domain::HubArea::from_raw(2), true);
         sf.set_hub_area(crate::domain::HubArea::from_raw(1), true);
@@ -328,8 +327,8 @@ mod tests {
             w.is_empty(),
             "placement 4-connected to built AdvEntrance should be clean, got {w:?}"
         );
-        // (the mover's own OLD tile never counts as its new neighbour: moving the
-        // leaf Safari from (2,0) to (2,1) really does isolate it)
+        // (the mover's own OLD tile never counts as its new neighbour: moving the leaf
+        // Safari from (2,0) to (2,1) really does isolate it)
         let w = sf.hub_coord_warnings_at(&rb, 3, 2, 1);
         assert!(
             w.iter()
@@ -349,8 +348,8 @@ mod tests {
             "collision not reported: {w:?}"
         );
 
-        // taking Safari off the chain strands nothing (Safari is the leaf), but
-        // moving the MIDDLE area away orphans both ends.
+        // taking Safari off the chain strands nothing (Safari is the leaf), but moving
+        // the MIDDLE area away orphans both ends.
         let w = sf.hub_coord_warnings_at(&rb, 1, 9, 9);
         assert!(
             w.iter()
@@ -363,11 +362,11 @@ mod tests {
             "orphaned Safari not reported: {w:?}"
         );
 
-        // a move that keeps one end attached must not warn about that end:
-        // AdvEntrance (1,0) -> (1,1) leaves Safari(2,0) supported only by... nothing,
-        // but Labs(0,0) is still adjacent to nothing either. Both strand. Instead
-        // place it at (2,-1): then it is adjacent to Safari(2,0), so Safari keeps
-        // its door and only Labs is stranded.
+        // a move that keeps one end attached must not warn about that end: AdvEntrance
+        // (1,0) -> (1,1) leaves Safari(2,0) supported only by... nothing, but Labs(0,0)
+        // is still adjacent to nothing either. Both strand. Instead place it at (2,-1):
+        // then it is adjacent to Safari(2,0), so Safari keeps its door and only Labs is
+        // stranded.
         let w = sf.hub_coord_warnings_at(&rb, 1, 2, -1);
         assert!(
             w.iter()
@@ -379,8 +378,8 @@ mod tests {
             "Safari keeps a neighbour at (2,0); should not be reported: {w:?}"
         );
 
-        // an UNBUILT area getting a coordinate gets no reachability advice: the
-        // coord is inert until the game builds the area itself
+        // an UNBUILT area getting a coordinate gets no reachability advice: the coord
+        // is inert until the game builds the area itself
         let w = sf.hub_coord_warnings_at(&rb, 6, 50, 50);
         assert!(
             w.is_empty(),
@@ -407,8 +406,8 @@ mod tests {
             deco_variants::DECOR_VARIANT_NAMES[119],
             "DECOR_VARIANT_OUTFIT_CHANGING_WARDROBE"
         );
-        // ids 0 and 178 are not "empty": 0 is a real placeable tile, 178 is the
-        // in-game remove action. Nothing in the save uses either as a blank marker.
+        // ids 0 and 178 are not "empty": 0 is a real placeable tile, 178 is the in-game
+        // remove action. Nothing in the save uses either as a blank marker.
         assert_eq!(decor_name(0), "path 5x5");
         assert_eq!(
             deco_variants::DECOR_VARIANT_NAMES[deco_variants::DECOR_VARIANT_REMOVE],
@@ -419,9 +418,9 @@ mod tests {
 
     #[test]
     fn save_reseals_sectors_and_keeps_shape() {
-        // in-memory only: save() must recompute sector checksums and byte size.
-        // (We only call the checksum logic here; the disk write path is gated by
-        // explicit user consent and is exercised manually, not by tests.)
+        // in-memory only: save() must recompute sector checksums and byte size. (We
+        // only call the checksum logic here; the disk write path is gated by explicit
+        // user consent and is exercised manually, not by tests.)
         let sf = synth_save();
         for k in 0..SLOT_SECTORS {
             let data = &sf.merged[k * DATASZ..(k + 1) * DATASZ];
@@ -431,11 +430,11 @@ mod tests {
 
     #[test]
     fn live_save_round_trips_byte_identically() {
-        // The strongest regression net we have: parse a real save, re-serialize
-        // through save() into a temp file, and require byte equality. This
-        // proves sector rotation, counters, footers, and the mGBA trailer all
-        // survive untouched when nothing was edited. Skips (green) if the
-        // fixture is not on this machine, so CI without saves stays green.
+        // The strongest regression net we have: parse a real save, re-serialize through
+        // save() into a temp file, and require byte equality. This proves sector
+        // rotation, counters, footers, and the mGBA trailer all survive untouched when
+        // nothing was edited. Skips (green) if the fixture is not on this machine, so
+        // CI without saves stays green.
         let fixture = std::env::var("ER_TEST_SAVE").ok();
         let Some(path) = fixture.filter(|p| std::path::Path::new(p).exists()) else {
             eprintln!("live_save_round_trip: ER_TEST_SAVE not set/found, skipping");
@@ -459,8 +458,8 @@ mod tests {
     }
 
     /// A real save is the only proof that the ball id range is the right one: every
-    /// mon the game caught must name as a ball. Skips (green) when the fixture is not
-    /// on this machine, so CI without saves stays green.
+    /// mon the game caught must name as a ball. Skips (green) when the fixture is
+    /// not on this machine, so CI without saves stays green.
     #[test]
     fn every_ball_in_a_real_save_names_a_known_ball() {
         let Some(path) = std::env::var("ER_TEST_SAVE")
@@ -513,10 +512,11 @@ mod tests {
         eprintln!("ball ids in this save: {}", named.join(", "));
     }
 
-    /// `include/constants/species.h` defines ids up to NUM_SPECIES-1 = 1573, and the
-    /// Rogue form block (906+) is where the editor's name table used to run out: 140
-    /// ids rendered as the `??????` lookup fallback and 70 more named a different
-    /// Pokemon than the id (990 printed "Maractus" for Galarian Darmanitan).
+    /// `include/constants/species.h` defines ids up to NUM_SPECIES-1 = 1573, and
+    /// the Rogue form block (906+) is where the editor's name table used to run
+    /// out: 140 ids rendered as the `??????` lookup fallback and 70 more named a
+    /// different Pokemon than the id (990 printed "Maractus" for Galarian
+    /// Darmanitan).
     #[test]
     fn every_species_id_the_game_defines_has_a_name() {
         let unnamed: Vec<u16> = (1..1574u16)
@@ -575,10 +575,10 @@ mod tests {
         assert_eq!(ex.last().map(|(id, _)| *id), Some(1573));
     }
 
-    /// The Safari Zone row now names the ability its slot resolves to and the gender
-    /// its flag means. In a real save every stored value must therefore name
-    /// something real -- a row that falls back to "no ability in this slot" means the
-    /// species table or the slot decode is wrong.
+    /// The Safari Zone row now names the ability its slot resolves to and the
+    /// gender its flag means. In a real save every stored value must therefore name
+    /// something real -- a row that falls back to "no ability in this slot" means
+    /// the species table or the slot decode is wrong.
     #[test]
     fn every_safari_row_in_a_real_save_names_its_ability_and_gender() {
         let Some(path) = std::env::var("ER_TEST_SAVE")
@@ -760,10 +760,10 @@ mod tests {
 
     #[test]
     fn pocket_name_never_panics_and_names_every_pocket() {
-        // Regression: the GUI Items tab renders pocket_name() per row; an
-        // earlier version sliced a "POCKET_" prefix off display names that
-        // don't have it and panicked on "Items" (opening the tab killed the
-        // app). Every u8 must produce a label, known pockets must name right.
+        // Regression: the GUI Items tab renders pocket_name() per row; an earlier
+        // version sliced a "POCKET_" prefix off display names that don't have it and
+        // panicked on "Items" (opening the tab killed the app). Every u8 must produce a
+        // label, known pockets must name right.
         assert_eq!(pocket_name(Pocket::from_raw(3)), "Medicine (pocket 3)");
         assert_eq!(pocket_name(Pocket::from_raw(1)), "Items (pocket 1)");
         for p in 0..=255u8 {
@@ -775,9 +775,9 @@ mod tests {
 
     #[test]
     fn hub_field_editors_land_on_the_walked_offsets() {
-        // The hub arrays are only reachable through the sequential stream walk,
-        // so this pins every hub setter against the same walked offsets the
-        // getters report -- a wrong stride here desyncs the rest of the block.
+        // The hub arrays are only reachable through the sequential stream walk, so this
+        // pins every hub setter against the same walked offsets the getters report -- a
+        // wrong stride here desyncs the rest of the block.
         let mut sf = synth_save();
         let rb = sf.rogue_block().unwrap();
         assert_eq!(rb.coords_f.n, 11);
@@ -785,9 +785,9 @@ mod tests {
         assert_eq!(rb.styles_f.n, 3);
         assert_eq!(rb.wander_f.n, 10);
 
-        // coords: 4-byte entries of `s8 x, s8 y` + 2 pad bytes, NOT s16 and NOT
-        // stride 2. Town Square written as (-2, 3) must read back as s8 pair and
-        // the two following bytes must be zero pad, not part of a 16-bit y.
+        // coords: 4-byte entries of `s8 x, s8 y` + 2 pad bytes, NOT s16 and NOT stride
+        // 2. Town Square written as (-2, 3) must read back as s8 pair and the two
+        // following bytes must be zero pad, not part of a 16-bit y.
         sf.set_hub_area_coord(HubArea::from_raw(0), -2, 3);
         let o = rb.coords_f.data;
         assert_eq!(
@@ -817,11 +817,11 @@ mod tests {
         // negative x survives: (i8)0xFE == -2
         assert_eq!(sf.merged[o] as i8, -2);
 
-        // The built bit and the coordinate are independent writes here, matching
-        // what the game does in BuildArea but not coupling them: setting a coord
-        // on an UNBUILT area is inert (the game overwrites it when it builds the
-        // area, and GetAreaAt skips unbuilt areas), so the setter must not
-        // silently build anything.
+        // The built bit and the coordinate are independent writes here, matching what
+        // the game does in BuildArea but not coupling them: setting a coord on an
+        // UNBUILT area is inert (the game overwrites it when it builds the area, and
+        // GetAreaAt skips unbuilt areas), so the setter must not silently build
+        // anything.
         sf.set_hub_area_coord(HubArea::from_raw(10), 30, 40);
         assert!(
             !sf.hub_area_built(&rb, HubArea::from_raw(10)),
@@ -841,8 +841,8 @@ mod tests {
             Some((30, 40))
         );
 
-        // decorations: u8 x, u8 y, u8 variant, u8 active:1 -- toggling active
-        // must not disturb the variant byte or the unused 7 bits.
+        // decorations: u8 x, u8 y, u8 variant, u8 active:1 -- toggling active must not
+        // disturb the variant byte or the unused 7 bits.
         let d = rb.decor_f.data;
         sf.merged[d + 3] = 0b1000_0000; // foreign non-zero unused bits
         sf.set_hub_decoration(0, 12, 9, DecorVariant::from_raw(47), true);
@@ -899,15 +899,15 @@ mod tests {
         assert_eq!(le16(&sf.merged, w + 4 * 2), 0);
         assert_eq!(sf.hub_wander_mon(&rb, 4), Some((0, false)));
 
-        // weather: raw u16 seed (the game takes state % 5 / % 6 per season).
-        // `weather` is decoded onto the block, so a re-decode must see the write.
+        // weather: raw u16 seed (the game takes state % 5 / % 6 per season). `weather`
+        // is decoded onto the block, so a re-decode must see the write.
         sf.set_hub_weather_state(5);
         assert_eq!(sf.rogue_block().unwrap().weather, 5);
         sf.set_hub_weather_state(0xFFFF);
         let rbw = sf.rogue_block().unwrap();
         assert_eq!(rbw.weather, 0xFFFF);
-        // buckets as the game computes them: %5 spring/summer, %6 autumn/winter.
-        // (Same buckets as the live save's 3105 -- different seeds, same weather.)
+        // buckets as the game computes them: %5 spring/summer, %6 autumn/winter. (Same
+        // buckets as the live save's 3105 -- different seeds, same weather.)
         assert_eq!(rbw.weather % 5, 0);
         assert_eq!(rbw.weather % 6, 3);
         assert_eq!(3105 % 5, 0);
@@ -921,8 +921,8 @@ mod tests {
         assert_eq!(rb2.safari_f.n, 60);
         assert_eq!(rb2.mastery_f.n, 72);
         assert!(rb2.stash.ok, "stash anchor must survive hub edits");
-        // out-of-range writes are no-ops, not panics or corruption: the bytes of
-        // the following arrays must be untouched, and reads bound-check cleanly.
+        // out-of-range writes are no-ops, not panics or corruption: the bytes of the
+        // following arrays must be untouched, and reads bound-check cleanly.
         let before_mastery: Vec<u8> = sf.merged[rb.mastery_f.data..rb.mastery_f.data + 8].to_vec();
         sf.set_hub_area_coord(HubArea::from_raw(99), 1, 1);
         sf.set_hub_area(HubArea::from_raw(99), true);
@@ -940,8 +940,8 @@ mod tests {
         assert_eq!(sf.hub_decoration(&rb3, 192), None);
         assert_eq!(sf.hub_style(&rb3, 3), None);
         assert_eq!(sf.hub_wander_mon(&rb3, 10), None);
-        // slot 9 was never written (synth stream zero-fills the elements): a
-        // raw 0 is SPECIES_NONE, not a follow-mon
+        // slot 9 was never written (synth stream zero-fills the elements): a raw 0 is
+        // SPECIES_NONE, not a follow-mon
         assert_eq!(sf.hub_wander_mon(&rb3, 9), Some((0, false)));
         // slot 3 keeps its shiny entry despite all the out-of-range writes
         assert_eq!(sf.hub_wander_mon(&rb3, 3), Some((612, true)));
@@ -963,13 +963,13 @@ mod tests {
 
     #[test]
     fn bag_inserts_keep_pocket_runs_contiguous() {
-        // UpdateBagItemsPointers walks the flat array once and stops at the
-        // first pocket change, so a pocket run that appears twice puts the
-        // second copy beyond the game's reach. Every mutation must leave one
-        // contiguous run per pocket, in ascending pocket order.
+        // UpdateBagItemsPointers walks the flat array once and stops at the first
+        // pocket change, so a pocket run that appears twice puts the second copy beyond
+        // the game's reach. Every mutation must leave one contiguous run per pocket, in
+        // ascending pocket order.
         let mut sf = synth_save();
-        // Pocket ids from the generated table: Medicine 3, Stones 4, Balls 5,
-        // Held 2 (per-item order inside a run is ascending id).
+        // Pocket ids from the generated table: Medicine 3, Stones 4, Balls 5, Held 2
+        // (per-item order inside a run is ascending id).
         assert_eq!(
             item_pocket(39),
             Pocket::from_raw(item_pockets::POCKET_MEDICINE)
@@ -990,8 +990,8 @@ mod tests {
         sf.set_bag_capacity_upgrades(3);
         assert_eq!(sf.bag_capacity(), 110);
 
-        // Start from a legal bag: medicine run, then stones, then balls,
-        // each pocket exactly once, in ascending pocket order.
+        // Start from a legal bag: medicine run, then stones, then balls, each pocket
+        // exactly once, in ascending pocket order.
         sf.write_bag_slots(false, &[(39, 20), (40, 5), (265, 3), (1, 10), (2, 5)]);
         assert_eq!(
             SaveFile::bag_run_summary(&sf.bag_slots_raw(false).unwrap()),
@@ -1022,8 +1022,8 @@ mod tests {
         assert_eq!(potion.1, 25, "existing stack must absorb the merge");
         let ball = slots.iter().find(|(i, _)| *i == 1).unwrap();
         assert_eq!(ball.1, 14, "existing ball stack must absorb the merge");
-        // The new medicine slot must sit between the other two medicine ids,
-        // not at the tail of the array.
+        // The new medicine slot must sit between the other two medicine ids, not at the
+        // tail of the array.
         let medicine_ids: Vec<u16> = slots
             .iter()
             .take_while(|(i, _)| *i != 0)
@@ -1045,8 +1045,8 @@ mod tests {
         );
         assert!(sf.bag_warnings(false).is_empty());
 
-        // A pocketless id can never be placed: the game would have no pocket
-        // to point at.
+        // A pocketless id can never be placed: the game would have no pocket to point
+        // at.
         assert!(sf.add_bag_item(0xFFFF, 1, false).is_err());
     }
 
@@ -1062,9 +1062,9 @@ mod tests {
         assert_eq!(raw ^ key as u16, 1234, "quantity must be written XOR'd");
         assert_eq!(sf.bag_slots_raw(false).unwrap()[0], (1, 1234));
 
-        // The game ends a run on itemId == ITEM_NONE only; a zero quantity with
-        // a real id is a ghost the game still counts. Writes must leave the
-        // array terminated, not leave a live id with qty 0 in the middle.
+        // The game ends a run on itemId == ITEM_NONE only; a zero quantity with a real
+        // id is a ghost the game still counts. Writes must leave the array terminated,
+        // not leave a live id with qty 0 in the middle.
         sf.write_bag_slots(false, &[(1, 5), (2, 0), (3, 9)]);
         sf.sort_bag(false).unwrap();
         let after = sf.bag_slots_raw(false).unwrap();
@@ -1075,8 +1075,8 @@ mod tests {
 
     #[test]
     fn bag_capacity_and_key_item_budgets() {
-        // Rogue_GetBagCapacity: 450 - 37*10 + upgrades*10, capped at 450.
-        // Key items live inside the same array but out of a 50-slot budget.
+        // Rogue_GetBagCapacity: 450 - 37*10 + upgrades*10, capped at 450. Key items
+        // live inside the same array but out of a 50-slot budget.
         let mut sf = synth_save();
         sf.set_bag_capacity_upgrades(0);
         assert_eq!(sf.bag_capacity(), 80);
@@ -1085,8 +1085,8 @@ mod tests {
         sf.set_bag_capacity_upgrades(200);
         assert_eq!(sf.bag_capacity(), 450, "upgrade count must clamp");
 
-        // Fill ordinary slots past capacity: warnings must fire, and an add
-        // must refuse rather than write an unreachable tail.
+        // Fill ordinary slots past capacity: warnings must fire, and an add must refuse
+        // rather than write an unreachable tail.
         let mut sf = synth_save();
         sf.set_bag_capacity_upgrades(0);
         let many: Vec<(u16, u16)> = (0..100).map(|i| (5, (i as u16) + 1)).collect();
@@ -1099,16 +1099,17 @@ mod tests {
         // Stack cap is 999 for every pocket.
         let tall: Vec<(u16, u16)> = vec![(5, 5000)];
         sf.write_bag_slots(false, &tall);
-        assert!(sf
-            .bag_warnings(false)
-            .iter()
-            .any(|w| w.contains("per-stack cap")));
+        assert!(
+            sf.bag_warnings(false)
+                .iter()
+                .any(|w| w.contains("per-stack cap"))
+        );
     }
 
     #[test]
     fn stash_bag_is_not_obfuscated() {
-        // The stashed hub-state bag sits inside sRunRestoreBlock and is
-        // serialized by memcpy: quantities must land raw, with no XOR.
+        // The stashed hub-state bag sits inside sRunRestoreBlock and is serialized by
+        // memcpy: quantities must land raw, with no XOR.
         let mut sf = synth_save();
         let key = sf.enc_key() & 0xFFFF;
         assert_ne!(key, 0);
@@ -1126,12 +1127,12 @@ mod tests {
 
     #[test]
     fn pocket_table_reproduces_live_save_runs() {
-        // The table's whole point: fed a real bag, it must reproduce exactly
-        // the contiguous runs the game sees. Pins against a live save shape.
+        // The table's whole point: fed a real bag, it must reproduce exactly the
+        // contiguous runs the game sees. Pins against a live save shape.
         // Potion/Medicine ordering from the generated table, not hand-typed.
         assert_eq!(item_pockets::POCKET_ORDER.len(), 9);
-        // The display order and the numeric constants must agree; the generator
-        // emits both from the same source, and this fails if they ever drift.
+        // The display order and the numeric constants must agree; the generator emits
+        // both from the same source, and this fails if they ever drift.
         assert_eq!(
             item_pockets::POCKET_ORDER
                 .iter()
@@ -1157,8 +1158,8 @@ mod tests {
             item_pocket(68),
             Pocket::from_raw(item_pockets::POCKET_MEDICINE)
         );
-        // Evolution items are baked into POCKET_ITEMS by rogue_baked.c even
-        // though items.h parks them elsewhere; the table carries that patch.
+        // Evolution items are baked into POCKET_ITEMS by rogue_baked.c even though
+        // items.h parks them elsewhere; the table carries that patch.
         for id in item_pockets::EVO_ITEMS {
             assert_eq!(
                 item_pocket(*id),
@@ -1175,9 +1176,9 @@ mod tests {
 #[test]
 fn gender_flag_only_ever_holds_the_values_the_game_writes() {
     // Save files are personal data and never committed, so this checks the bit
-    // layout against a real save only when one is reachable: `ER_TEST_SAVE`, or
-    // the developer's own save at the default path. Skips (green) otherwise, so
-    // CI without saves stays green while local runs still pin the layout.
+    // layout against a real save only when one is reachable: `ER_TEST_SAVE`, or the
+    // developer's own save at the default path. Skips (green) otherwise, so CI
+    // without saves stays green while local runs still pin the layout.
     let path = std::env::var("ER_TEST_SAVE").unwrap_or_else(|_| "/workspace/hermes/er2.sav".into());
     if !std::path::Path::new(&path).exists() {
         eprintln!(
@@ -1186,10 +1187,10 @@ fn gender_flag_only_ever_holds_the_values_the_game_writes() {
         return;
     }
     let sf = SaveFile::open(&path).expect("load save");
-    // GetGenderForSpecies treats genderFlag as a boolean (0 -> male, anything
-    // else -> female), so a correct read of the 3-bit field can never return a
-    // value above 1. Anything larger means the bit offsets are wrong and we are
-    // reading neighbouring ribbon/shiny bits.
+    // GetGenderForSpecies treats genderFlag as a boolean (0 -> male, anything else
+    // -> female), so a correct read of the 3-bit field can never return a value
+    // above 1. Anything larger means the bit offsets are wrong and we are reading
+    // neighbouring ribbon/shiny bits.
     let mut seen: Vec<u8> = Vec::new();
     let mut check = |m: &Mon| {
         if !seen.contains(&m.gender_flag()) {

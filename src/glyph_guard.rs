@@ -9,20 +9,20 @@
 //!
 //! The old guard was a deny-list: it could never catch the next unverified
 //! character. This guard is the inverse: every non-ASCII code point anywhere
-//! under src/ (comments included, so a comment cannot smuggle one back into
-//! a copy-pasted label) must appear on the explicit allow-list below.
+//! under src/ (comments included, so a comment cannot smuggle one back into a
+//! copy-pasted label) must appear on the explicit allow-list below.
 //!
 //! The allow-list is NOT a guess. Every entry was verified against the cmap
 //! tables of the exact .ttf files egui/epaint 0.27.2 bundles by
 //! tools/check_glyphs.py, which parses the fonts themselves and reports, per
 //! character, coverage in the proportional chain (Ubuntu-Light, NotoEmoji,
-//! emoji-icon) and the monospace chain (Hack, NotoEmoji, emoji-icon). That
-//! tool is the only sanctioned way to add or remove entries: run it, do not
-//! re-guess coverage from memory.
+//! emoji-icon) and the monospace chain (Hack, NotoEmoji, emoji-icon). That tool
+//! is the only sanctioned way to add or remove entries: run it, do not re-guess
+//! coverage from memory.
 
-/// Every non-ASCII code point permitted in the sources, by code point. Each
-/// one is covered by the PROPORTIONAL font chain (the chain that draws labels);
-/// the bracket comment names the verification from tools/check_glyphs.py.
+/// Every non-ASCII code point permitted in the sources, by code point. Each one
+/// is covered by the PROPORTIONAL font chain (the chain that draws labels); the
+/// bracket comment names the verification from tools/check_glyphs.py.
 const ALLOWED_NON_ASCII: [u32; 10] = [
     0x00B7, // middle dot (both chains)
     0x00C9, // Latin capital E with acute (both chains; Pokemon -> Pokémon)
@@ -41,10 +41,10 @@ mod tests {
     use super::*;
     use std::path::{Path, PathBuf};
 
-    /// Every `.rs` file under this crate's `src/` may contain only ASCII or a
-    /// code point on the allow-list, comments included. Skipping is only
-    /// allowed when the source tree itself cannot be read (a checkout without
-    /// sources), never when a file is unreadable -- that is reported.
+    /// Every `.rs` file under this crate's `src/` may contain only ASCII or a code
+    /// point on the allow-list, comments included. Skipping is only allowed when
+    /// the source tree itself cannot be read (a checkout without sources), never
+    /// when a file is unreadable -- that is reported.
     #[test]
     fn no_non_ascii_glyph_outside_the_font_verified_allow_list() {
         let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
@@ -96,10 +96,10 @@ mod tests {
         );
     }
 
-    /// The anti-regression lock: the characters that were verified to be
-    /// missing from the proportional chain (and are therefore banned by the
-    /// allow-list) must stay off it. If someone "helpfully" re-adds one, this
-    /// test fails even before the source scan does.
+    /// The anti-regression lock: the characters that were verified to be missing
+    /// from the proportional chain (and are therefore banned by the allow-list)
+    /// must stay off it. If someone "helpfully" re-adds one, this test fails even
+    /// before the source scan does.
     #[test]
     fn the_allow_list_excludes_every_unverified_glyph() {
         for banned in [
@@ -124,9 +124,9 @@ mod tests {
         }
     }
 
-    /// The allow-list is exactly the verified set: if a character is added to
-    /// the sources, the same commit must extend this list AND keep the entry
-    /// justified by tools/check_glyphs.py.
+    /// The allow-list is exactly the verified set: if a character is added to the
+    /// sources, the same commit must extend this list AND keep the entry justified
+    /// by tools/check_glyphs.py.
     #[test]
     fn the_allow_list_is_the_documented_verified_set() {
         let expected: Vec<u32> = vec![

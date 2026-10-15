@@ -197,8 +197,10 @@ def ruststr(s):
     return s.replace("\\", "\\\\").replace('"', '\\"')
 
 with open(OUT, "w") as f:
-    f.write("// Generated from Pokabbie/pokeemerald-rogue (expansion branch) headers. Do not edit.\n")
-    f.write("// Supplemental tables: species form ids > 905, Rogue custom items, quest slot names.\n\n")
+    f.write("// Generated from Pokabbie/pokeemerald-rogue (expansion branch) headers.\n")
+    f.write("// Do not edit; regenerate instead.\n")
+    f.write("// Supplemental tables: species form ids > 905, Rogue custom items,\n")
+    f.write("// quest slot names.\n\n")
     f.write("pub const SPECIES_EXTRA: &[(u16, &str)] = &[\n")
     for k in sorted(species_extra):
         f.write(f'    ({k}, "{ruststr(species_extra[k])}"),\n')

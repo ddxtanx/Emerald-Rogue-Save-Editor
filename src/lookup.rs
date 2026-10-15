@@ -4,11 +4,11 @@
 //! mon alone:
 //!
 //! * `genderFlag` is 3 bits, but for fixed-gender species the game IGNORES it
-//!   entirely and returns the species' fixed value. Showing the raw bit made
-//!   Beldum/Metagross read as "Female" (`0xE0` = flag bits set, but
-//!   `genderRatio == MON_GENDERLESS` decides the answer).
+//! entirely and returns the species' fixed value. Showing the raw bit made
+//! Beldum/Metagross read as "Female" (`0xE0` = flag bits set, but `genderRatio
+//! == MON_GENDERLESS` decides the answer).
 //! * `abilityNum` is only a SLOT INDEX into `gBaseStats[species].abilities[]`,
-//!   so the same number means a different ability per species.
+//! so the same number means a different ability per species.
 //!
 //! Both helpers below mirror the game's functions rather than inventing a
 //! policy, because the point of the editor is to show what the game will show.
@@ -40,13 +40,12 @@ impl Gender {
             Gender::Genderless => "Genderless",
         }
     }
-    /// Compact mark for roster rows: ♂ / ♀ / Ø. The slashed O (U+00D8) reads
-    /// as an empty-set-style genderless marker next to ♂/♀ and, unlike the
-    /// old U+2205 (present only in Hack, the MONO font chain), it is covered
-    /// by the fonts egui 0.27 bundles for PROPORTIONAL text -- so genderless
-    /// mons no longer show an empty tofu box. The word stays the primary cue:
-    /// label() spells "Genderless" and the mon editor's gender picker uses
-    /// the word, never the glyph alone.
+    /// Compact mark for roster rows: ♂ / ♀ / Ø. The slashed O (U+00D8) reads as an
+    /// empty-set-style genderless marker next to ♂/♀ and, unlike the old U+2205
+    /// (present only in Hack, the MONO font chain), it is covered by the fonts egui
+    /// 0.27 bundles for PROPORTIONAL text -- so genderless mons no longer show an
+    /// empty tofu box. The word stays the primary cue: label() spells "Genderless"
+    /// and the mon editor's gender picker uses the word, never the glyph alone.
     pub fn glyph(self) -> char {
         match self {
             Gender::Male => '♂',
@@ -89,8 +88,8 @@ pub fn ability_name(id: u16) -> Option<&'static str> {
 /// `abilities = [NONE, X, Y]` slot 0 resolves to X, not to the hidden Y.
 ///
 /// Two overrides in the game are deliberately not modelled here: a traded mon
-/// (`IsOtherTrainer(otId)`) can have its whole ability list replaced by a custom
-/// gift mon, and revision mode can override a species' abilities from
+/// (`IsOtherTrainer(otId)`) can have its whole ability list replaced by a
+/// custom gift mon, and revision mode can override a species' abilities from
 /// `gRoguePokemonProfiles_Revised`. Both are noted in docs/FORMAT.md.
 pub fn ability_for(sp: u16, slot: u8) -> Option<u16> {
     let ab = species_meta(sp)?.1;
@@ -123,10 +122,10 @@ pub fn ability_slot_label(sp: u16, slot: u8) -> &'static str {
     }
 }
 
-/// The ability slots worth offering for a species, labelled with the ability they
-/// resolve to. A slot the species does not have is left out (picking it would only
-/// store a number), but the currently stored value is always present so an odd save
-/// still renders instead of showing a blank.
+/// The ability slots worth offering for a species, labelled with the ability
+/// they resolve to. A slot the species does not have is left out (picking it
+/// would only store a number), but the currently stored value is always present
+/// so an odd save still renders instead of showing a blank.
 pub fn ability_slot_options(sp: u16, current: u8) -> Vec<(u16, &'static str)> {
     let mut v: Vec<(u16, &'static str)> = (0..=MAX_ABILITY_SLOT)
         .filter(|s| ability_for(sp, *s).is_some())
@@ -138,10 +137,10 @@ pub fn ability_slot_options(sp: u16, current: u8) -> Vec<(u16, &'static str)> {
     v
 }
 
-/// What the saved 3-bit gender flag means for this species, spelled out. The flag
-/// is only decisive for variable-ratio species (Rogue forces those to 50% female),
-/// so for a fixed-gender species the label says the flag is ignored rather than
-/// pretending the flag picked the gender.
+/// What the saved 3-bit gender flag means for this species, spelled out. The
+/// flag is only decisive for variable-ratio species (Rogue forces those to 50%
+/// female), so for a fixed-gender species the label says the flag is ignored
+/// rather than pretending the flag picked the gender.
 pub fn gender_flag_label(sp: u16, flag: u8) -> &'static str {
     match gender_for_species(sp, flag) {
         Some(Gender::Male) if gender_is_fixed(sp) == Some(true) => "Male (always, species-fixed)",
@@ -155,9 +154,9 @@ pub fn gender_flag_label(sp: u16, flag: u8) -> &'static str {
     }
 }
 
-/// The gender flags a species honors, labelled. A fixed-gender species honors none,
-/// so its list just names the stored flag -- showing Male/Female there would imply
-/// an edit that the game throws away.
+/// The gender flags a species honors, labelled. A fixed-gender species honors
+/// none, so its list just names the stored flag -- showing Male/Female there
+/// would imply an edit that the game throws away.
 pub fn gender_flag_options(sp: u16, current: u8) -> Vec<(u16, &'static str)> {
     if gender_is_fixed(sp) == Some(true) {
         return vec![(current as u16, gender_flag_label(sp, current))];
@@ -178,9 +177,9 @@ pub fn gender_is_fixed(sp: u16) -> Option<bool> {
 
 /// Mirrors `GetGenderForSpecies` (src/pokemon.c:3321) plus
 /// `Rogue_ModifyGenderRatio` (src/rogue_pokemon.c:4057), which forces every
-/// variable-ratio species to exactly 50% female -- so the flag alone decides and
-/// no `pid`-based comparison is performed. Returns `None` when the species is
-/// unknown, in which case the caller must fall back to the raw flag.
+/// variable-ratio species to exactly 50% female -- so the flag alone decides
+/// and no `pid`-based comparison is performed. Returns `None` when the species
+/// is unknown, in which case the caller must fall back to the raw flag.
 pub fn gender_for_species(sp: u16, flag: u8) -> Option<Gender> {
     let ratio = species_meta(sp)?.0;
     Some(match ratio {
@@ -208,10 +207,10 @@ mod tests {
         ] {
             assert_eq!(ability_slot_label(sp, slot), want, "sp {sp} slot {slot}");
         }
-        // Options are the slots the species actually has, labelled.
-        // This ROM's own ordering (Gen 3 era: Guts is Hariyama's second ability,
-        // Sheer Force its hidden one), so the picker follows the game rather than
-        // modern games' numbering.
+        // Options are the slots the species actually has, labelled. This ROM's own
+        // ordering (Gen 3 era: Guts is Hariyama's second ability, Sheer Force its
+        // hidden one), so the picker follows the game rather than modern games'
+        // numbering.
         let opts = ability_slot_options(297, 0);
         assert_eq!(
             opts,
@@ -228,8 +227,8 @@ mod tests {
                 (6, "slot outside this species' ability list")
             ]
         );
-        // Form ids resolve through the same table: this ROM gives Hisuian Sliggoo
-        // Gooey in slot 2, which a hand-written list would likely get wrong.
+        // Form ids resolve through the same table: this ROM gives Hisuian Sliggoo Gooey
+        // in slot 2, which a hand-written list would likely get wrong.
         assert_eq!(
             ability_slot_options(1005, 2),
             vec![(0, "Sap Sipper"), (1, "Shell Armor"), (2, "Gooey")]
@@ -261,12 +260,12 @@ mod tests {
 
     #[test]
     fn fixed_gender_species_ignore_the_stored_flag() {
-        // Metagross (374) is genderless. The test save's party mon 2 stores
-        // genderFlag = 0xE0, which the old raw-flag read reported as "Female".
+        // Metagross (374) is genderless. The test save's party mon 2 stores genderFlag
+        // = 0xE0, which the old raw-flag read reported as "Female".
         assert_eq!(gender_for_species(374, 0xE0 & 7), Some(Gender::Genderless));
         assert_eq!(gender_is_fixed(374), Some(true));
-        // Magearna (801) likewise, and Arceus (493) whose whole family is
-        // written through a function-like macro in the source.
+        // Magearna (801) likewise, and Arceus (493) whose whole family is written
+        // through a function-like macro in the source.
         assert_eq!(gender_for_species(801, 1), Some(Gender::Genderless));
         assert_eq!(gender_for_species(493, 0), Some(Gender::Genderless));
     }
@@ -284,9 +283,9 @@ mod tests {
 
     #[test]
     fn signature_ability_species_map_slot_to_name() {
-        // Slot 0 of Arceus is Multitype (121); slot 1 is empty by declaration
-        // ({ MULTITYPE, NONE }), so the game substitutes rather than reading
-        // past the initializer.
+        // Slot 0 of Arceus is Multitype (121); slot 1 is empty by declaration ({
+        // MULTITYPE, NONE }), so the game substitutes rather than reading past the
+        // initializer.
         assert_eq!(ability_for(493, 0), Some(121));
         assert_eq!(ability_name(121), Some("Multitype"));
         assert_eq!(ability_label(493, 0), "Multitype");
@@ -304,19 +303,19 @@ mod tests {
 
     #[test]
     fn ability_slot_meaning_depends_on_the_species() {
-        // The test save's box mons 11 and 12 both store abilityNum = 2, but the
-        // species behind those ids are Slurpuff (685) and Inkay (686), so slot 2
-        // resolves to different abilities. Printing "2" hid this entirely.
+        // The test save's box mons 11 and 12 both store abilityNum = 2, but the species
+        // behind those ids are Slurpuff (685) and Inkay (686), so slot 2 resolves to
+        // different abilities. Printing "2" hid this entirely.
         assert_eq!(ability_for(685, 2), Some(84));
         assert_eq!(ability_name(ability_for(685, 2).unwrap()), Some("Unburden"));
         assert_eq!(
             ability_name(ability_for(686, 2).unwrap()),
             Some("Infiltrator")
         );
-        // Beldum (374) declares Clear Body in slot 0 and Light Metal in slot 2,
-        // with slot 1 empty. The game's fallback walks slots 0,1,2 for an empty
-        // *normal* slot -- so slot 1 reads as Clear Body, not the hidden Light
-        // Metal. (For an empty *hidden* slot the hidden slot is tried first.)
+        // Beldum (374) declares Clear Body in slot 0 and Light Metal in slot 2, with
+        // slot 1 empty. The game's fallback walks slots 0,1,2 for an empty *normal*
+        // slot -- so slot 1 reads as Clear Body, not the hidden Light Metal. (For an
+        // empty *hidden* slot the hidden slot is tried first.)
         assert_eq!(
             ability_name(ability_for(374, 0).unwrap()),
             Some("Clear Body")
@@ -330,8 +329,7 @@ mod tests {
             Some("Clear Body"),
             "an empty normal slot must fall through slots 0,1,2 in order"
         );
-        // Magearna (801) declares one signature ability, so every slot resolves
-        // to it.
+        // Magearna (801) declares one signature ability, so every slot resolves to it.
         assert_eq!(ability_for(801, 0), ability_for(801, 2));
         assert_eq!(
             ability_name(ability_for(801, 2).unwrap()),
@@ -341,19 +339,19 @@ mod tests {
 
     #[test]
     fn unknown_species_report_no_data_instead_of_guessing() {
-        // ids the generator could not resolve (cosmetic extra forms, e.g.
-        // 1438 Scatterbug polar cloak) must not be presented as known data.
+        // ids the generator could not resolve (cosmetic extra forms, e.g. 1438
+        // Scatterbug polar cloak) must not be presented as known data.
         assert_eq!(species_meta(1438), None);
         assert_eq!(gender_for_species(1438, 1), None);
         assert_eq!(ability_for(1438, 0), None);
     }
 
-    /// The user's "genderless shows an empty box" bug: the old genderless
-    /// glyph was U+2205, which egui 0.27's PROPORTIONAL font chain cannot
-    /// draw (it exists only in Hack), while ♂/♀ exist in both chains. The
-    /// replacement must be a code point the guard/check_glyphs tool verifies
-    /// for the proportional chain, and the WORD must stay available wherever
-    /// a word fits, so the symbol is never the only cue.
+    /// The user's "genderless shows an empty box" bug: the old genderless glyph was
+    /// U+2205, which egui 0.27's PROPORTIONAL font chain cannot draw (it exists
+    /// only in Hack), while ♂/♀ exist in both chains. The replacement must be a
+    /// code point the guard/check_glyphs tool verifies for the proportional chain,
+    /// and the WORD must stay available wherever a word fits, so the symbol is
+    /// never the only cue.
     #[test]
     fn the_genderless_glyph_renders_in_eguis_proportional_fonts() {
         assert_eq!(Gender::Male.glyph(), '♂');

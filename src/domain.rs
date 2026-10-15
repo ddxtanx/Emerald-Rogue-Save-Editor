@@ -2,8 +2,8 @@
 //!
 //! These exist so the compiler does the auditing. Before them, `homeStyles[0]`,
 //! a season index, and a day counter were all `u8` passed to three different
-//! setters, and `set_hub_season(4)` (a day, not a season) compiled silently. Now
-//! each domain is its own type and mixing them is a type error.
+//! setters, and `set_hub_season(4)` (a day, not a season) compiled silently.
+//! Now each domain is its own type and mixing them is a type error.
 //!
 //! Every type keeps the on-disk value even when it is outside the game's enum,
 //! because the editor must round-trip a real save byte for byte: Rogue ball ids
@@ -20,9 +20,9 @@ use crate::game_data::{
 };
 use crate::game_data::{HUB_AREAS, HUB_UPGRADES, SEASONS};
 
-/// The common shape of the domains whose values index a name table. Lets one
-/// UI helper serve hub areas, upgrades, home styles and Lab config values
-/// instead of a near-duplicate block per domain.
+/// The common shape of the domains whose values index a name table. Lets one UI
+/// helper serve hub areas, upgrades, home styles and Lab config values instead
+/// of a near-duplicate block per domain.
 pub trait Domain: Copy + std::fmt::Display {
     fn from_raw(v: u8) -> Self;
     fn raw(self) -> u8;
@@ -106,8 +106,8 @@ indexed_domain!(
     HUB_UPGRADES
 );
 indexed_domain!(
-    /// `homeStyles[0]` (`EXTERIOR_STYLE_*`), not interchangeable with the other
-    /// two style slots.
+    /// `homeStyles[0]` (`EXTERIOR_STYLE_*`), not interchangeable with the other two
+    /// style slots.
     ExteriorStyle,
     HOME_STYLE_EXTERIOR
 );
@@ -159,9 +159,9 @@ indexed_domain!(
 );
 
 impl ConfigRange {
-    /// The option list this slot's value is drawn from, empty for slots holding
-    /// a plain number. This is the one place the slot-to-domain mapping lives:
-    /// it used to be a `match i { 3 => .., 5 => .. }` at the call site.
+    /// The option list this slot's value is drawn from, empty for slots holding a
+    /// plain number. This is the one place the slot-to-domain mapping lives: it
+    /// used to be a `match i { 3 => .., 5 => .. }` at the call site.
     pub fn options(self) -> &'static [&'static str] {
         match self.0 {
             3 => BATTLE_FORMATS,
@@ -186,12 +186,12 @@ indexed_domain!(
     crate::deco_variants::DECOR_VARIANTS
 );
 
-/// `ball` field. Unlike the indexed domains this is an *id*, not a table index: it is
-/// the 5-bit `pokeball` ITEM id (`pokeball:5`, include/pokemon.h:120), which on this
-/// branch runs contiguously 1..=28 (`FIRST_BALL`=ITEM_POKE_BALL ..
-/// `LAST_BALL`=ITEM_ROGUE_BALL). Names/ids come from the item table itself via
-/// `game_data::balls()` so the mon panel and the bag tab can never disagree about what
-/// an id means.
+/// `ball` field. Unlike the indexed domains this is an *id*, not a table index:
+/// it is the 5-bit `pokeball` ITEM id (`pokeball:5`, include/pokemon.h:120),
+/// which on this branch runs contiguously 1..=28 (`FIRST_BALL`=ITEM_POKE_BALL
+/// .. `LAST_BALL`=ITEM_ROGUE_BALL). Names/ids come from the item table itself
+/// via `game_data::balls()` so the mon panel and the bag tab can never disagree
+/// about what an id means.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 pub struct Ball(pub u16);
 impl Ball {
@@ -515,9 +515,9 @@ impl StatIdx {
     }
 }
 
-/// `seasonCounter` interpreted as the season index it derives from
-/// (`days / DAYS_PER_SEASON`, wrapping over four seasons). Storing a *season*
-/// here is a unit error the type now prevents: the field holds days.
+/// `seasonCounter` interpreted as the season index it derives from (`days /
+/// DAYS_PER_SEASON`, wrapping over four seasons). Storing a *season* here is a
+/// unit error the type now prevents: the field holds days.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Season {
     Spring,
@@ -570,8 +570,8 @@ impl SeasonDay {
     pub fn raw(self) -> u8 {
         self.0
     }
-    /// `seasonCounter % DAYS_PER_SEASON` puts a day inside the first season, so
-    /// the game's own wrap is over `DAYS_PER_SEASON * SEASON_COUNT` days.
+    /// `seasonCounter % DAYS_PER_SEASON` puts a day inside the first season, so the
+    /// game's own wrap is over `DAYS_PER_SEASON * SEASON_COUNT` days.
     pub const fn cycle_len() -> u8 {
         crate::game_data::DAYS_PER_SEASON * crate::game_data::SEASON_COUNT as u8
     }
@@ -659,8 +659,8 @@ mod tests {
 
     #[test]
     fn season_day_units() {
-        // Two days per season, four seasons: day 6 is winter's first day, and
-        // the counter wraps rather than growing past the cycle.
+        // Two days per season, four seasons: day 6 is winter's first day, and the
+        // counter wraps rather than growing past the cycle.
         assert_eq!(SeasonDay::from_raw(6).season(), Season::Winter);
         assert_eq!(SeasonDay::from_raw(6).day_in_season(), 0);
         assert_eq!(SeasonDay::cycle_len(), 8);
@@ -720,8 +720,8 @@ mod tests {
     #[test]
     fn pockets_are_ids_not_positions() {
         assert_eq!(Pocket::NONE.raw(), 0);
-        // The display names in POCKET_ORDER are display names, so they must be
-        // taken whole (slicing a prefix off "Items" once panicked).
+        // The display names in POCKET_ORDER are display names, so they must be taken
+        // whole (slicing a prefix off "Items" once panicked).
         let listed: Vec<Pocket> = crate::item_pockets::POCKET_ORDER
             .iter()
             .map(|(_, p)| Pocket::from_raw(*p))

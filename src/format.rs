@@ -1,6 +1,7 @@
 //! Save-container format primitives: sector geometry, merged-stream offsets,
 //! endian helpers, Gen-3 string codec, and the substruct permutation table.
-//! Offsets verified against the game source and live saves (see docs/FORMAT.md).
+//! Offsets verified against the game source and live saves (see
+//! docs/FORMAT.md).
 
 pub(crate) const SECSZ: usize = 0x1000;
 pub(crate) const DATASZ: usize = 4084;
@@ -13,21 +14,21 @@ pub(crate) const PARTY_OFF: usize = 0x238;
 pub(crate) const MONSZ: usize = 104;
 pub(crate) const BOXSZ: usize = 80;
 // Rogue discards the vanilla growth-rate curves: Rogue_ModifyExperienceTables()
-// (src/rogue_baked.c) returns `level * 300` for every growthRate, and the level loop
-// in GetLevelFrom{Box}MonExp clamps at MAX_LEVEL. So exp == level*300 and level ==
-// clamp(exp/300, 0, MAX_LEVEL) - the same schedule for every species.
+// (src/rogue_baked.c) returns `level * 300` for every growthRate, and the level
+// loop in GetLevelFrom{Box}MonExp clamps at MAX_LEVEL. So exp == level*300 and
+// level == clamp(exp/300, 0, MAX_LEVEL) - the same schedule for every species.
 pub(crate) const EXP_PER_LEVEL: u32 = 300;
 pub(crate) const MAX_LEVEL: u8 = 100;
 
-/// Replay of the game's level loop (src/pokemon.c GetLevelFromBoxMonExp) against
-/// Rogue's flat `level * 300` schedule. Exact for all exp values, including the
-/// clamping when exp exceeds what level 100 costs.
+/// Replay of the game's level loop (src/pokemon.c GetLevelFromBoxMonExp)
+/// against Rogue's flat `level * 300` schedule. Exact for all exp values,
+/// including the clamping when exp exceeds what level 100 costs.
 pub(crate) fn level_from_exp(exp: u32) -> u8 {
     let lvl = exp / EXP_PER_LEVEL;
     lvl.min(MAX_LEVEL as u32) as u8
 }
-// Rogue shifts SB1 after the party: Pokemon structs are 104B not 80B.
-// Verified against jfzazo savconverter + live save:
+// Rogue shifts SB1 after the party: Pokemon structs are 104B not 80B. Verified
+// against jfzazo savconverter + live save:
 //   money   = 0x238 + 6*104      = 0x4A8 (XOR'd with SB2 encryptionKey @SB2+0x4C)
 //   pcItems = money + 4 + 4      = 0x4B0 (raw)
 //   bag     = pcItems + 50*4     = 0x578 (quantity XOR'd with low 16 bits of key)
@@ -39,14 +40,14 @@ pub(crate) const BAG_CAP: usize = 450;
 pub(crate) const PC_CAP: usize = 50;
 pub(crate) const SB1_BASE: usize = DATASZ; // SaveBlock1 = merged chunks 1..4
 pub(crate) const STOR_BASE: usize = 5 * DATASZ; // storage = merged chunks 5..13
-                                                // Bag sizing knobs (include/constants/global.h + constants/rogue.h):
-                                                //   SB1+0x4AC u8 bagSortMode (0 type, 1 name, 2 value, 3 amount)
-                                                //   SB1+0x4AD u8 bagCapacityUpgrades
-                                                // The game only ever *reads* the first `Rogue_GetBagCapacity()` slots of the
-                                                // flat bag array, so anything past capacity is invisible (and gets shuffled
-                                                // away by the next in-game bag sort). Key Items are special: they live in the
-                                                // LAST 50 slots of the physical array (`BAG_ITEM_RESERVED_SLOTS`), which is
-                                                // why a sorted bag ends with its key-item run.
+// Bag sizing knobs (include/constants/global.h + constants/rogue.h): SB1+0x4AC
+// u8 bagSortMode (0 type, 1 name, 2 value, 3 amount) SB1+0x4AD u8
+// bagCapacityUpgrades The game only ever *reads* the first
+// `Rogue_GetBagCapacity()` slots of the flat bag array, so anything past
+// capacity is invisible (and gets shuffled away by the next in-game bag sort).
+// Key Items are special: they live in the LAST 50 slots of the physical array
+// (`BAG_ITEM_RESERVED_SLOTS`), which is why a sorted bag ends with its key-item
+// run.
 /// u8 `bagSortMode` (vanilla SB1+0x494; +24 in this build). `ITEM_SORT_MODE_*`
 /// in include/constants/rogue.h: 0 type, 1 name, 2 value, 3 amount.
 pub(crate) const BAG_SORT_MODE_OFF: usize = 0x4AC;
@@ -59,10 +60,11 @@ pub(crate) const BAG_BASE_CAPACITY: usize = 450 - BAG_MAX_CAPACITY_UPGRADES * BA
 /// `MAX_BAG_ITEM_CAPACITY`: Rogue gives every pocket a 999-per-stack cap.
 pub(crate) const MAX_STACK: u16 = 999;
 
-// Rogue save block: overlays PC boxes 10..13 (boxes[TOTAL=14 alloc, 10 in use][0]).
-// Written by SerializeRogueBlock() (src/rogue_save.c) as a sequential stream where
-// every SerializeArray carries a u16 element-count prefix -> self-describing walk.
-// encryptionKey = 0: the block is plaintext. Verified vs v2.2.0-EX saves.
+// Rogue save block: overlays PC boxes 10..13 (boxes[TOTAL=14 alloc, 10 in
+// use][0]). Written by SerializeRogueBlock() (src/rogue_save.c) as a sequential
+// stream where every SerializeArray carries a u16 element-count prefix ->
+// self-describing walk. encryptionKey = 0: the block is plaintext. Verified vs
+// v2.2.0-EX saves.
 pub(crate) const ROGUE_BASE: usize = STOR_BASE + 4 + 10 * 30 * 80;
 pub(crate) const ROGUE_CAP: usize = 4 * 30 * 80; // 4 leftover boxes
 pub(crate) const ROGUE_SECRET: u16 = 27615;

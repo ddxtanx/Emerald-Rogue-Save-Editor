@@ -1,4 +1,5 @@
-//! er-save-editor - PKHeX-like editor for Pokémon Emerald Rogue (v2.x EX) saves.
+//! er-save-editor - PKHeX-like editor for Pokémon Emerald Rogue (v2.x EX)
+//! saves.
 //!
 //! Format grounded in Pokabbie/pokeemerald-rogue (expansion branch):
 //!   include/save.h          sector layout (4084+12 footer, security 0x08012025)
@@ -14,8 +15,11 @@
 //!   savefile.rs           the open save: slots, merged stream, accessors, write-back
 //!   app/                  the GUI (layout in app/mod.rs, per-tab UIs alongside)
 //!
-//! Run:  er-save-editor FILE.sav  (or --open FILE.sav)  -> opens read-only in the GUI.
+//! Run:  er-save-editor FILE.sav  (or --open FILE.sav)
+//!       -> opens read-only in the GUI.
 //! Nothing is written to disk unless Save / Save As is pressed (see README).
+
+use app::Editor;
 
 mod abilities;
 mod app;
@@ -46,8 +50,6 @@ mod glyph_guard;
 #[cfg(test)]
 mod save_tests;
 
-use app::Editor;
-
 /// write a line to stdout without panicking on broken pipes (e.g. `| head`)
 macro_rules! say {
     ($($a:tt)*) => {{
@@ -58,10 +60,10 @@ macro_rules! say {
 
 fn main() -> eframe::Result<()> {
     // The CLI does exactly one thing: pass a save to open it in the GUI.
-    //   er-save-editor FILE.sav
+    // er-save-editor FILE.sav
     //   er-save-editor --open FILE.sav     (explicit, equivalent)
-    // All editing happens in the GUI, and opening is read-only: nothing is
-    // written to disk unless the user presses Save / Save As.
+    // All editing happens in the GUI, and opening is read-only: nothing is written
+    // to disk unless the user presses Save / Save As.
     let args: Vec<String> = std::env::args().collect();
     let mut open_path: Option<String> = None;
     let mut i = 1;

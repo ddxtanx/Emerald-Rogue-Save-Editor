@@ -1,23 +1,26 @@
-//! Visual editors for the hub ("home base") - the tile map and the player's house.
+//! Visual editors for the hub ("home base") - the tile map and the player's
+//! house.
 //!
-//! The batch asked for "a visual editor for the home base menu". The old UI was a
-//! grid of checkboxes plus x/y number fields, which is technically complete but
-//! unusable for the thing players actually want: seeing where the buildings are and
-//! moving one to another tile. These two panels draw the tile grid the game uses and
-//! let the user click/drag on it.
+//! The batch asked for "a visual editor for the home base menu". The old UI was
+//! a grid of checkboxes plus x/y number fields, which is technically complete
+//! but unusable for the thing players actually want: seeing where the buildings
+//! are and moving one to another tile. These two panels draw the tile grid the
+//! game uses and let the user click/drag on it.
 //!
 //! Everything here stays inside the semantics already documented for the save:
-//! * `areaBuiltFlags` and `areaCoords` are INDEPENDENT bytes on disk. The game's
-//!   `RogueHub_BuildArea()` writes both, but live saves contain built areas and
-//!   stored coordinates that do not imply each other, so this editor never couples
-//!   them silently: building, unbuilding, and moving are separate actions, each
-//!   labelled as what it does.
+//! * `areaBuiltFlags` and `areaCoords` are INDEPENDENT bytes on disk. The
+//!    game's
+//! `RogueHub_BuildArea()` writes both, but live saves contain built areas and
+//! stored coordinates that do not imply each other, so this editor never
+//! couples them silently: building, unbuilding, and moving are separate
+//! actions, each labelled as what it does.
 //! * `areaCoords` is `s8 x, s8 y` plus two pad bytes (stride 4 on disk).
 //! * `homeDecorations` is 192 slots: 0..160 outdoor, 160..192 indoor, each
-//!   `u8 x, u8 y, u8 decorVariant, u8 active:1`.
-//! * Reachability rules (collision, no built neighbour, orphaning a neighbour) are
-//!   reported by `SaveFile::hub_coord_warnings` and shown before/while the move is
-//!   made, not after the fact.
+//! `u8 x, u8 y, u8 decorVariant, u8 active:1`.
+//! * Reachability rules (collision, no built neighbour, orphaning a neighbour)
+//!    are
+//! reported by `SaveFile::hub_coord_warnings` and shown before/while the move
+//! is made, not after the fact.
 
 use crate::domain::{DecorVariant, HubArea};
 use crate::format::HOME_DECOR_OUTSIDE;
@@ -25,8 +28,8 @@ use crate::game_data::HUB_AREAS;
 use crate::savefile::{RogueBlock, SaveFile};
 use egui::{Color32, Pos2, Rect, Ui, Vec2};
 
-/// Tile span the map view starts with. A v2.2.0 live save keeps every area inside
-/// (-2..2, -1..1); this is that with room to place new buildings.
+/// Tile span the map view starts with. A v2.2.0 live save keeps every area
+/// inside (-2..2, -1..1); this is that with room to place new buildings.
 const VIEW_MIN: i32 = -8;
 const VIEW_MAX: i32 = 9;
 /// Tile size in points. Small enough that the whole default view fits a panel
@@ -133,8 +136,8 @@ impl super::Editor {
 
         let cols = VIEW_MAX - VIEW_MIN + 1;
         let rows = VIEW_MAX - VIEW_MIN + 1;
-        // The map never asks for sideways room: the cell size adapts to the
-        // panel width, so the whole grid is visible at any window width.
+        // The map never asks for sideways room: the cell size adapts to the panel
+        // width, so the whole grid is visible at any window width.
         let cell = CELL.min(ui.available_width() / cols as f32);
         let (_grid_rect, resp) = ui.allocate_exact_size(
             Vec2::new(cols as f32 * cell, rows as f32 * cell),
@@ -359,9 +362,9 @@ impl super::Editor {
             .data_mut(|d| d.insert_temp(egui::Id::new("hub_map_sel"), sel));
     }
 
-    /// The player's house: outdoor and indoor tile grids with the placed props drawn
-    /// on them. Click an empty tile to drop the chosen prop there, click a prop to
-    /// select it, and use the buttons to change or clear the selected prop.
+    /// The player's house: outdoor and indoor tile grids with the placed props
+    /// drawn on them. Click an empty tile to drop the chosen prop there, click a
+    /// prop to select it, and use the buttons to change or clear the selected prop.
     pub(crate) fn house_visual(&mut self, ui: &mut Ui, rb: &RogueBlock) {
         let snap: Vec<(u8, u8, crate::domain::DecorVariant, bool)> = {
             let sf: &SaveFile = self.file.as_ref().unwrap();
@@ -380,12 +383,12 @@ impl super::Editor {
         let outside_end = HOME_DECOR_OUTSIDE.min(slots);
 
         // The coordinate space comes from the game's own region table
-        // (sHomeRegionCoords, src/rogue_hub.c:123-128): the garden accepts props on
-        // x/y 4..31, the interior on 1..10, and the house footprint itself is
-        // x 15..19 / y 14..19. The viewport here used to be a guessed 24x24, which
-        // pushed a prop at (25,15) - the statue in a real save - outside the drawn
-        // grid and into the margin, where it read as a stray floating icon that
-        // could not even be hovered for its name.
+        // (sHomeRegionCoords, src/rogue_hub.c:123-128): the garden accepts props on x/y
+        // 4..31, the interior on 1..10, and the house footprint itself is x 15..19 / y
+        // 14..19. The viewport here used to be a guessed 24x24, which pushed a prop at
+        // (25,15) - the statue in a real save - outside the drawn grid and into the
+        // margin, where it read as a stray floating icon that could not even be hovered
+        // for its name.
         struct Region {
             x0: i32,
             y0: i32,
@@ -455,8 +458,8 @@ impl super::Editor {
                 sel.variant = DecorVariant::from_raw(v as u8);
             }
             // Placement is deliberately two-step: pick the prop, mark the tile, then
-            // commit. A single click that wrote a prop put furniture down every time
-            // the user was only trying to find out where a slot was.
+            // commit. A single click that wrote a prop put furniture down every time the
+            // user was only trying to find out where a slot was.
             let armed = sel.pending_tile.map(|(px, py, _)| (px, py));
             let place = ui.add_enabled(armed.is_some(), egui::Button::new("place prop here"));
             ui.ctx()
@@ -510,8 +513,8 @@ impl super::Editor {
                 place.y0,
                 place.y1
             ));
-            // Cells shrink to the width on offer rather than pushing the page
-            // sideways: the body area scrolls vertically only.
+            // Cells shrink to the width on offer rather than pushing the page sideways: the
+            // body area scrolls vertically only.
             let cell = cell.min(ui.available_width() / span as f32);
             let (_grid_rect, resp) = ui.allocate_exact_size(
                 Vec2::new(span as f32 * cell, span as f32 * cell),
@@ -540,9 +543,9 @@ impl super::Editor {
                     egui::Stroke::new(0.4_f32, Color32::from_gray(50)),
                 );
             }
-            // The band the game marks placeable, plus the house footprint it
-            // reserves: an anonymous field makes a prop next to the wall impossible
-            // to reason about, and the band is what tells you a prop sits off-map.
+            // The band the game marks placeable, plus the house footprint it reserves: an
+            // anonymous field makes a prop next to the wall impossible to reason about, and
+            // the band is what tells you a prop sits off-map.
             let band_rect = tile_rect(origin, cell, 0, 0, place.x0, place.y0)
                 .union(tile_rect(origin, cell, 0, 0, place.x1, place.y1));
             painter.rect_stroke(
@@ -567,8 +570,8 @@ impl super::Editor {
                     Color32::from_gray(130),
                 );
             }
-            // Placed props in this range. `on_hover_text` consumes the Response,
-            // so the label is chosen here and attached once, after the grid.
+            // Placed props in this range. `on_hover_text` consumes the Response, so the
+            // label is chosen here and attached once, after the grid.
             let mut hover: Option<String> = None;
             for i in range.clone() {
                 let (x, y, v, act) = snap[i];
@@ -576,10 +579,9 @@ impl super::Editor {
                     continue;
                 }
                 let r = tile_rect(origin, cell, 0, 0, x as i32, y as i32);
-                // Placeholder, not game art: a flat blue square read as "a floating
-                // blue icon" with no clue which prop it is. Hue comes from the
-                // variant id, and the name's initials go on the tile itself, so the
-                // grid is legible before you hover.
+                // Placeholder, not game art: a flat blue square read as "a floating blue icon"
+                // with no clue which prop it is. Hue comes from the variant id, and the name's
+                // initials go on the tile itself, so the grid is legible before you hover.
                 let name = prop_name(variant_table, v);
                 let base = crate::icons::hue_for(v.raw() as u16);
                 painter.rect_filled(r.shrink(1.0), 2.0, base);
@@ -635,13 +637,13 @@ impl super::Editor {
                         sel.slot = Some(i);
                         sel.pending_tile = None;
                     }
-                    // Marking a target is not an edit: no slot is touched and `dirty`
-                    // stays false until the place button commits it.
+                    // Marking a target is not an edit: no slot is touched and `dirty` stays false
+                    // until the place button commits it.
                     None => {
                         sel.pending_tile = Some((p.0, p.1, which as u8));
-                        // A warning, not a veto: the region table is where the game
-                        // blits placeable tiles, which is not proof that it rejects a
-                        // prop outside that band, so the user is told and left to choose.
+                        // A warning, not a veto: the region table is where the game blits placeable
+                        // tiles, which is not proof that it rejects a prop outside that band, so
+                        // the user is told and left to choose.
                         if !(place.x0..=place.x1).contains(&p.0)
                             || !(place.y0..=place.y1).contains(&p.1)
                         {
@@ -698,9 +700,9 @@ struct DecorSel {
 }
 
 /// `(id, name)` table for the searchable prop picker. `decorVariant` indexes
-/// `sDecorationVariants[]`, so the enum order IS the id; the game's own "remove"
-/// code (id `DECOR_VARIANT_REMOVE`) is a menu return value, never a stored variant,
-/// so it is not offered.
+/// `sDecorationVariants[]`, so the enum order IS the id; the game's own
+/// "remove" code (id `DECOR_VARIANT_REMOVE`) is a menu return value, never a
+/// stored variant, so it is not offered.
 fn decor_variant_table() -> &'static [(u16, &'static str)] {
     static TABLE: std::sync::OnceLock<Vec<(u16, &'static str)>> = std::sync::OnceLock::new();
     TABLE.get_or_init(|| {
@@ -811,8 +813,8 @@ mod functional {
     //
     // The point of these is the claim the panel makes: that clicking a tile does
     // what the panel says it does. Compiling proves nothing about the click
-    // mapping, so the grid publishes its own rect and the test clicks the centre
-    // of a tile the same way the widget computes it.
+    // mapping, so the grid publishes its own rect and the test clicks the centre of
+    // a tile the same way the widget computes it.
 
     use super::*;
     use egui::{Event, Id, Modifiers, PointerButton, RawInput};

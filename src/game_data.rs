@@ -6,22 +6,24 @@ use crate::tables;
 use crate::tables_extra;
 
 /// A mon's ball field is a **5-bit item id**, not a small table index:
-/// `/*0x0A*/ u16 pokeball:5; //31 balls` (include/pokemon.h:120). A ball IS an item
-/// to the game -- `value = ITEM_POKE_BALL; SetBoxMonData(boxMon, MON_DATA_POKEBALL,
-/// &value)` (src/pokemon.c:950-951), `GetMonData(.., MON_DATA_POKEBALL) ==
-/// ITEM_LUXURY_BALL` (src/pokemon.c:3506), and the summary screen turns the stored id
-/// back into a sprite with `ItemIdToBallId` (src/pokemon_summary_screen.c:4645).
+/// `/*0x0A*/ u16 pokeball:5; //31 balls` (include/pokemon.h:120). A ball IS an
+/// item to the game -- `value = ITEM_POKE_BALL; SetBoxMonData(boxMon,
+/// MON_DATA_POKEBALL, &value)` (src/pokemon.c:950-951), `GetMonData(..,
+/// MON_DATA_POKEBALL) == ITEM_LUXURY_BALL` (src/pokemon.c:3506), and the
+/// summary screen turns the stored id back into a sprite with `ItemIdToBallId`
+/// (src/pokemon_summary_screen.c:4645).
 ///
 /// So the ball list is the generated item table restricted to
-/// `FIRST_BALL..=LAST_BALL` (include/constants/items.h:39-40 -- on this expansion
-/// branch ITEM_POKE_BALL = 1 .. ITEM_ROGUE_BALL = 28), deliberately NOT a second
-/// hand-written list. An earlier copy of this table carried the 2.2.07-era
-/// master-branch numbering (see the `rogue-src-2207` checkout: ITEM_MASTER_BALL = 1,
-/// ITEM_POKE_BALL = 4, ITEM_ROGUE_BALL = 13), which made the mon panel label a Poké
-/// Ball "Master Ball" while the bag tab called that same id a Poké Ball. Deriving the
-/// list from the item table makes that contradiction unrepresentable, and the ids are
-/// also the icon keys (`assets/icons/items/<id>.png`), which is what lets the ball
-/// picker draw the real ball sprites.
+/// `FIRST_BALL..=LAST_BALL` (include/constants/items.h:39-40 -- on this
+/// expansion branch ITEM_POKE_BALL = 1 .. ITEM_ROGUE_BALL = 28), deliberately
+/// NOT a second hand-written list. An earlier copy of this table carried the
+/// 2.2.07-era master-branch numbering (see the `rogue-src-2207` checkout:
+/// ITEM_MASTER_BALL = 1, ITEM_POKE_BALL = 4, ITEM_ROGUE_BALL = 13), which made
+/// the mon panel label a Poké Ball "Master Ball" while the bag tab called that
+/// same id a Poké Ball. Deriving the list from the item table makes that
+/// contradiction unrepresentable, and the ids are also the icon keys
+/// (`assets/icons/items/<id>.png`), which is what lets the ball picker draw the
+/// real ball sprites.
 pub(crate) const FIRST_BALL: u16 = 1; // ITEM_POKE_BALL
 pub(crate) const LAST_BALL: u16 = 28; // ITEM_ROGUE_BALL
 
@@ -49,7 +51,8 @@ pub(crate) fn ball_name(ball: u8) -> &'static str {
         .unwrap_or("(no ball / invalid)")
 }
 
-/// Full species pick-list: base dex + Rogue form ids (megas, gigantamax, fake forms).
+/// Full species pick-list: base dex + Rogue form ids (megas, gigantamax, fake
+/// forms).
 pub(crate) fn all_species() -> &'static [(u16, &'static str)] {
     use std::sync::OnceLock;
     static T: OnceLock<Vec<(u16, &'static str)>> = OnceLock::new();
@@ -97,7 +100,8 @@ pub(crate) const CONFIG_TOGGLES: &[&str] = &[
     "Trainers: Gen 10 (placeholder)",
 ];
 
-/// Lab difficulty-config range slots, index order per include/constants/rogue.h.
+/// Lab difficulty-config range slots, index order per
+/// include/constants/rogue.h.
 pub(crate) const CONFIG_RANGES: &[&str] = &[
     "Trainer level shift",
     "(unused: item)",
@@ -194,12 +198,13 @@ pub(crate) const SEASON_COUNT: usize = 4;
 pub(crate) const DAYS_PER_SEASON: u8 = 2;
 /// On-disk `saveVersion` is `SAVE_VER_ID_* - 1` (rogue_save.c:
 /// `RogueSave_GetVersionIdFor(v) = v + 1`). v2.2.0 saves therefore carry **7**
-/// (= SAVE_VER_ID_2_2_0), and a v2.2.1 build writes 8 (ROGUE_SAVE_VERSION).
-/// The game migrates an older save itself on load (RogueSave_OnSaveLoaded ->
+/// (= SAVE_VER_ID_2_2_0), and a v2.2.1 build writes 8 (ROGUE_SAVE_VERSION). The
+/// game migrates an older save itself on load (RogueSave_OnSaveLoaded ->
 /// Rogue_NotifySaveVersionUpdated), re-serializing the block in the current
 /// layout; the stamp only decides *which* fixups run. The stream walk's era
 /// pins (232 quests, 7 campaigns, 72 mastery bytes, ...) are v2.2.x, so a save
-/// from a different layout fails `ok` and exposes header-only -> no blind edits.
+/// from a different layout fails `ok` and exposes header-only -> no blind
+/// edits.
 pub(crate) fn rogue_version_name(v: u16) -> &'static str {
     // on-disk stamp -> SAVE_VER_ID_{v+1}
     match v + 1 {
@@ -224,7 +229,8 @@ pub(crate) fn title_lookup<'a>(table: &'a [(u16, &'a str)], id: u16) -> &'a str 
         .unwrap_or("??????")
 }
 
-/// species lookup that also covers Rogue form ids (>905): megas, gigantamax, fake forms
+/// species lookup that also covers Rogue form ids (>905): megas, gigantamax,
+/// fake forms
 pub(crate) fn species_name(id: u16) -> &'static str {
     match title_lookup(tables::SPECIES, id) {
         "??????" => title_lookup(tables_extra::SPECIES_EXTRA, id),
@@ -238,10 +244,10 @@ pub(crate) fn species_name(id: u16) -> &'static str {
 // Standard Mode"). The mapping is the game's: see src/form_tables.rs and
 // tools/gen_form_tables.py.
 
-/// The family anchor (base) id for a species id. A form id maps to the id
-/// that owns its family's formSpeciesIdTable; any other id is its own base.
-/// (In this ROM the family anchor is itself the default-form id: species.h
-/// aliases SPECIES_DARMANITAN onto SPECIES_DARMANITAN_STANDARD_MODE = 555.)
+/// The family anchor (base) id for a species id. A form id maps to the id that
+/// owns its family's formSpeciesIdTable; any other id is its own base. (In this
+/// ROM the family anchor is itself the default-form id: species.h aliases
+/// SPECIES_DARMANITAN onto SPECIES_DARMANITAN_STANDARD_MODE = 555.)
 pub(crate) fn form_base_id(id: u16) -> u16 {
     crate::form_tables::FORM_BASES
         .iter()
@@ -273,8 +279,8 @@ pub(crate) fn species_base_name(id: u16) -> &'static str {
         .unwrap_or_else(|| species_name(base))
 }
 
-/// The species pick-list with unambiguous rows: a form id renders as
-/// "Base (Form)" -- e.g. "Darmanitan (Standard Mode)" -- because form ids are
+/// The species pick-list with unambiguous rows: a form id renders as "Base
+/// (Form)" -- e.g. "Darmanitan (Standard Mode)" -- because form ids are
 /// distinct ids the user picks, and two family members must not look alike.
 pub(crate) fn species_picker_table() -> &'static [(u16, &'static str)] {
     use std::sync::OnceLock;
@@ -325,8 +331,8 @@ pub(crate) fn item_pocket_raw(id: u16) -> u8 {
         .unwrap_or(0)
 }
 
-/// `Rogue_IsEvolutionItem`: the game's own sort displays evolution items
-/// first and groups them together inside their pocket run (`SortItemPlaceBefore`
+/// `Rogue_IsEvolutionItem`: the game's own sort displays evolution items first
+/// and groups them together inside their pocket run (`SortItemPlaceBefore`
 /// fallback sub-sort). Part of the editor's canonical order so an editor-sorted
 /// bag matches what the game's in-bag sort would produce.
 pub(crate) fn is_evo_item(id: u16) -> bool {
@@ -341,8 +347,8 @@ pub(crate) fn bag_sort_key(id: u16) -> (crate::domain::Pocket, bool, u16) {
 }
 
 pub(crate) fn pocket_name(p: crate::domain::Pocket) -> String {
-    // Display names in POCKET_ORDER are human labels ("Items"), not the C
-    // constant names - never slice a prefix off them (that panicked once).
+    // Display names in POCKET_ORDER are human labels ("Items"), not the C constant
+    // names - never slice a prefix off them (that panicked once).
     if p.is_known() {
         format!("{} (pocket {})", p.name(), p.raw())
     } else {
@@ -361,8 +367,8 @@ mod tests {
     /// and the generator only followed bare `NAME` indirection. The table looked
     /// complete, and the editor answered "no base stats in table" for mons that
     /// have base stats. So: every species id the editor can NAME must either have
-    /// stats or be on the generated declared-without-data list (constants the
-    /// tree declares with no species_info entry -- placeholder/unimplemented forms).
+    /// stats or be on the generated declared-without-data list (constants the tree
+    /// declares with no species_info entry -- placeholder/unimplemented forms).
     #[test]
     fn every_named_species_either_has_stats_or_is_declared_without_game_data() {
         let mut gaps = Vec::new();
@@ -411,9 +417,10 @@ mod tests {
     }
 
     /// Values read straight out of the tree, not remembered: Emerald Rogue
-    /// REBALANCES base stats (Alcremie is 65/60/75/64/110/121 in ALCREMIE_MISC_INFO,
-    /// not the national-dex 80/85/95/110/110/80), so an expectation written from
-    /// memory is not evidence. Table order: [HP, Atk, Def, Spe, SpA, SpD].
+    /// REBALANCES base stats (Alcremie is 65/60/75/64/110/121 in
+    /// ALCREMIE_MISC_INFO, not the national-dex 80/85/95/110/110/80), so an
+    /// expectation written from memory is not evidence. Table order: [HP, Atk, Def,
+    /// Spe, SpA, SpD].
     #[test]
     fn function_like_macro_families_carry_the_trees_values() {
         for (id, want, src) in [
@@ -456,12 +463,12 @@ mod tests {
         }
     }
 
-    /// The user's example, straight from the game's own linkage: species 555
-    /// (ROM name string "Darmanitan Standard Mode") shows as base "Darmanitan"
-    /// with "Standard Mode" as the separate form detail. Note the base id: in
-    /// this ROM the FAMILY ANCHOR is 555 itself -- species.h has
-    /// `#define SPECIES_DARMANITAN SPECIES_DARMANITAN_STANDARD_MODE`, and id
-    /// 554 is "Darumaka", the pre-evolution, not a Darmanitan form entry.
+    /// The user's example, straight from the game's own linkage: species 555 (ROM
+    /// name string "Darmanitan Standard Mode") shows as base "Darmanitan" with
+    /// "Standard Mode" as the separate form detail. Note the base id: in this ROM
+    /// the FAMILY ANCHOR is 555 itself -- species.h has `#define SPECIES_DARMANITAN
+    /// SPECIES_DARMANITAN_STANDARD_MODE`, and id 554 is "Darumaka", the
+    /// pre-evolution, not a Darmanitan form entry.
     #[test]
     fn darmanitan_case_from_the_games_linkage() {
         assert_eq!(species_name(555), "Darmanitan Standard Mode");
@@ -493,9 +500,9 @@ mod tests {
         assert_eq!(species_base_name(0), species_name(0));
     }
 
-    /// The generated table's shape is part of the contract: the pinned entry
-    /// count changes only when the game source or the generator changes, and
-    /// every emitted pair must be a real, non-chaining, non-zero mapping.
+    /// The generated table's shape is part of the contract: the pinned entry count
+    /// changes only when the game source or the generator changes, and every
+    /// emitted pair must be a real, non-chaining, non-zero mapping.
     #[test]
     fn the_generated_linkage_table_is_sane_and_pinned() {
         assert_eq!(
@@ -565,8 +572,8 @@ mod tests {
         assert_eq!(ball_name(0), "(no ball)", "ITEM_NONE is not a ball");
     }
 
-    /// Species pickers must stay unambiguous: form ids are distinct ids the
-    /// user picks, so each renders "Base (Form)".
+    /// Species pickers must stay unambiguous: form ids are distinct ids the user
+    /// picks, so each renders "Base (Form)".
     #[test]
     fn picker_rows_render_base_form_and_stay_ambiguous() {
         let t = species_picker_table();
@@ -644,8 +651,8 @@ mod tests {
         assert_eq!(w(Season::Summer, 1), "None");
         assert_eq!(w(Season::Autumn, 2), "Leaves (Grassy Terrain)");
         assert_eq!(w(Season::Autumn, 5), "None");
-        // Winter really does use WEATHER_SNOW even though the header marks the
-        // constant unused for vanilla, so the label must not carry that note.
+        // Winter really does use WEATHER_SNOW even though the header marks the constant
+        // unused for vanilla, so the label must not carry that note.
         assert_eq!(w(Season::Winter, 0), "Snow");
         assert_eq!(w(Season::Winter, 3), "Shade");
         assert_eq!(w(Season::Winter, 4), "None");
@@ -657,10 +664,11 @@ mod tests {
     }
 }
 
-/// `homeDecorations[].decorVariant` is an index into a game-generated enum, so the
-/// id is meaningless without this table. The enum is emitted by the game's own
-/// DecorationExporter; `tools/gen_deco_variants.py` reproduces its ordering and is
-/// anchored on a real save (id 119 = the wardrobe `RogueHub_ClearProgress` seeds).
+/// `homeDecorations[].decorVariant` is an index into a game-generated enum, so
+/// the id is meaningless without this table. The enum is emitted by the game's
+/// own DecorationExporter; `tools/gen_deco_variants.py` reproduces its ordering
+/// and is anchored on a real save (id 119 = the wardrobe
+/// `RogueHub_ClearProgress` seeds).
 pub(crate) fn decor_name(id: u8) -> &'static str {
     crate::deco_variants::DECOR_VARIANTS
         .get(id as usize)
@@ -669,12 +677,12 @@ pub(crate) fn decor_name(id: u8) -> &'static str {
 }
 
 /// The hub's `weatherState` is a u16 seed, **not** a weather id.
-/// `Rogue_ModifyOverworldMapWeather()` (src/rogue_controller.c:1918-2011) folds it
-/// per season into the weather an outdoor map shows: `state % 5` in spring
+/// `Rogue_ModifyOverworldMapWeather()` (src/rogue_controller.c:1918-2011) folds
+/// it per season into the weather an outdoor map shows: `state % 5` in spring
 /// (:1941-1956) and summer (:1957-1970), `state % 6` in autumn (:1971-1987) and
-/// winter (:1988-2005). Indoor/underground maps keep their own weather, a run in
-/// progress uses `VAR_ROGUE_DESIRED_WEATHER` instead (:1929-1933), and before the
-/// tutorial finishes the game forces no weather (:1934-1936).
+/// winter (:1988-2005). Indoor/underground maps keep their own weather, a run
+/// in progress uses `VAR_ROGUE_DESIRED_WEATHER` instead (:1929-1933), and
+/// before the tutorial finishes the game forces no weather (:1934-1936).
 pub(crate) fn hub_weather_for(season: crate::domain::Season, state: u16) -> &'static str {
     use crate::domain::Season;
     use crate::weather_names as w;

@@ -23,7 +23,8 @@ pub struct SaveFile {
     pub edited: bool,
 }
 
-/// One decoded array from the Rogue stream: element count + absolute merged offset of data.
+/// One decoded array from the Rogue stream: element count + absolute merged
+/// offset of data.
 #[derive(Clone, Copy, Default)]
 pub struct RogueField {
     pub n: usize,
@@ -79,8 +80,8 @@ pub struct RogueBlock {
 }
 
 /// One safari-zone roster entry. The two bitfield words are kept raw and
-/// exposed only through accessors with runtime bounds, so an out-of-range
-/// write can never bleed into a neighbouring field.
+/// exposed only through accessors with runtime bounds, so an out-of-range write
+/// can never bleed into a neighbouring field.
 #[derive(Clone, Default, PartialEq)]
 pub struct SafariMon {
     pub w0: u32,
@@ -267,8 +268,8 @@ impl SaveFile {
     }
 
     pub fn box_mon(&self, bx: usize, slot: usize) -> Mon {
-        // BoxPokemon needs 4-byte alignment: currentBox(u8) + 3 pad, then 14*30 boxes of 80B.
-        // Confirmed by header comment /*0x8344*/ boxNames = 4 + 420*80.
+        // BoxPokemon needs 4-byte alignment: currentBox(u8) + 3 pad, then 14*30 boxes
+        // of 80B. Confirmed by header comment /*0x8344*/ boxNames = 4 + 420*80.
         let off = self.storage_base() + 4 + (bx * BOX_SLOTS + slot) * BOXSZ;
         Mon::from_bytes(&self.merged[off..off + BOXSZ])
     }
@@ -301,10 +302,10 @@ impl SaveFile {
         )
     }
 
-    // ---- Rogue save block (boxes 10..13), read-only decode.
-    // Stream layout per SerializeRogueBlockInternal() (rogue_save.c, v2.2.0 era):
-    // header + count-prefixed arrays; every array count is recorded so a
-    // layout drift desyncs loudly instead of mis-editing.
+    // ---- Rogue save block (boxes 10..13), read-only decode. Stream layout per
+    // SerializeRogueBlockInternal() (rogue_save.c, v2.2.0 era): header +
+    // count-prefixed arrays; every array count is recorded so a layout drift
+    // desyncs loudly instead of mis-editing.
     pub fn rogue_block(&self) -> Option<RogueBlock> {
         let base = ROGUE_BASE;
         if base + ROGUE_CAP > self.merged.len() {
@@ -402,9 +403,10 @@ impl SaveFile {
         Some(rb)
     }
 
-    /// sRunRestoreBlock = 6x104 party | 450x4 bag | 3x84 daycare | difficulty(12) | u32 money | u32 playTime.
-    /// Located by validity (checksums + sane money) rather than a fixed gap, so a
-    /// game build that shifts the debug/ride tail still decodes.
+    /// sRunRestoreBlock = 6x104 party | 450x4 bag | 3x84 daycare | difficulty(12) |
+    /// u32 money | u32 playTime. Located by validity (checksums + sane money)
+    /// rather than a fixed gap, so a game build that shifts the debug/ride tail
+    /// still decodes.
     fn find_stash(&self, from: usize) -> Stash {
         let base = ROGUE_BASE;
         for cand in from + 1..from + 96 {
@@ -513,10 +515,10 @@ impl SaveFile {
     }
 
     // ---- Safari-zone roster (safariMons[60], 20 B each) -------------------
-    // struct RogueSafariMon (include/rogue.h). Bitfields pack into two u32
-    // words (ARM GCC order, confirmed against a real v2.2.0 roster: every
-    // IV <=31, nature <=24, shiny 0/1, priority 0..101):
-    //   w0: species:16 | hpIV:5 | attackIV:5 | defenseIV:5 | shinyFlag:1
+    // struct RogueSafariMon (include/rogue.h). Bitfields pack into two u32 words
+    // (ARM GCC order, confirmed against a real v2.2.0 roster: every IV <=31, nature
+    // <=24, shiny 0/1, priority 0..101): w0: species:16 | hpIV:5 | attackIV:5 |
+    // defenseIV:5 | shinyFlag:1
     //   w1: speedIV:5  | spAttackIV:5 | spDefenseIV:5 | pokeball:5
     //       | nature:5 | abilityNum:2 | genderFlag:1 | unused0:4
     // then nickname[10], priorityCounter u8, customMonLookup u8  (= 20 bytes).
@@ -640,7 +642,8 @@ impl SaveFile {
     /// `s8 x, s8 y` followed by two pad bytes (`struct Coords8` is two s8 members;
     /// the compiler pads the serialized stride to 4). Reading the pair as `s16`
     /// gives nonsense (Town Square would be x=257), and stride 2 desyncs every
-    /// array that follows. Pinned in `hub_field_editors_land_on_the_walked_offsets`.
+    /// array that follows. Pinned in
+    /// `hub_field_editors_land_on_the_walked_offsets`.
     ///
     /// `RogueHub_ClearProgress` memsets the whole hub map and then calls
     /// `RogueHub_BuildArea` (which sets the built bit AND x/y together), so in a
@@ -664,10 +667,10 @@ impl SaveFile {
         Some((self.merged[o] as i8, self.merged[o + 1] as i8))
     }
     /// Raw coordinate bytes (x, y, pad0, pad1) so the GUI/CLI can show what is
-    /// actually on disk, including a non-zero pad from a foreign editor.
-    /// The four stored bytes for area `i` (x, y, then the two padding bytes the
-    /// game's padded `Coords8` leaves behind). Shown in the UI so the padding is
-    /// visible rather than assumed to be zero.
+    /// actually on disk, including a non-zero pad from a foreign editor. The four
+    /// stored bytes for area `i` (x, y, then the two padding bytes the game's
+    /// padded `Coords8` leaves behind). Shown in the UI so the padding is visible
+    /// rather than assumed to be zero.
     pub fn hub_area_coord_raw(&self, rb: &RogueBlock, i: usize) -> Option<[u8; 4]> {
         if !rb.ok || i >= rb.coords_f.n {
             return None;
@@ -699,12 +702,12 @@ impl SaveFile {
     /// one tile from an area's coordinate in a direction that area's ROM-side
     /// `connectionWarps` allow, and `RogueHub_FindAreaAtCoord` returns the first
     /// BUILT area sitting on that tile. So a hand-placed coordinate can break the
-    /// map in two ways the game itself never produces:
-    ///  * two built areas on one tile -> the second is unreachable (its tile
-    ///    resolves to the first match, and nothing warps to it);
-    ///  * an area with no built neighbour in any direction it can connect -> no
-    ///    warp path exists, so the area is unreachable except by another edit.
-    /// These are advisory: the game does not re-validate coords on load.
+    /// map in two ways the game itself never produces: * two built areas on one
+    /// tile -> the second is unreachable (its tile resolves to the first match, and
+    /// nothing warps to it); * an area with no built neighbour in any direction it
+    /// can connect -> no warp path exists, so the area is unreachable except by
+    /// another edit. These are advisory: the game does not re-validate coords on
+    /// load.
     pub fn hub_coord_warnings(
         &self,
         rb: &RogueBlock,
@@ -732,14 +735,14 @@ impl SaveFile {
             }
         }
         // 2. adjacency. The ROM `connectionWarps` table is per-area and not in the
-        //    save, so the conservative check is: at least one built neighbour in a
-        //    4-connected direction. The game additionally requires the *direction*
-        //    to be warpable for both areas, which this cannot know from the save.
+        // save, so the conservative check is: at least one built neighbour in a
+        // 4-connected direction. The game additionally requires the *direction* to be
+        // warpable for both areas, which this cannot know from the save.
         let neighbours: [(i8, i8); 4] = [(0, 1), (0, -1), (1, 0), (-1, 0)];
         let mover_built = self.hub_area_built_at(rb, i);
         let touches = neighbours.iter().any(|(dx, dy)| {
-            // s8 arithmetic wraps like the game's s8 coords; keep it in i16 so the
-            // wrap is explicit rather than a Rust overflow panic.
+            // s8 arithmetic wraps like the game's s8 coords; keep it in i16 so the wrap is
+            // explicit rather than a Rust overflow panic.
             let nx = (x as i16 + *dx as i16) as i8;
             let ny = (y as i16 + *dy as i16) as i8;
             (0..rb.coords_f.n).any(|j| {
@@ -754,9 +757,8 @@ impl SaveFile {
             ));
         }
         // 3. moving can also ORPHAN whatever used to sit next to this area's old
-        //    tile: an area that was only reachable through here loses its last
-        //    door. Only meaningful when the mover is built (an unbuilt area is not
-        //    anybody's door).
+        // tile: an area that was only reachable through here loses its last door. Only
+        // meaningful when the mover is built (an unbuilt area is not anybody's door).
         if let (true, Some((ox, oy))) = (mover_built, self.hub_area_coord_at(rb, i)) {
             let supports = |k: usize| -> bool {
                 let (kx, ky) = match self.hub_area_coord_at(rb, k) {
@@ -771,8 +773,8 @@ impl SaveFile {
                         return true;
                     }
                     (0..rb.coords_f.n).any(|j| {
-                        // exclude the mover and the candidate orphan: after the move
-                        // i is at (x,y), handled above, and k is not its own support
+                        // exclude the mover and the candidate orphan: after the move i is at (x,y),
+                        // handled above, and k is not its own support
                         j != i
                             && j != k
                             && self.hub_area_built_at(rb, j)
@@ -798,8 +800,8 @@ impl SaveFile {
         }
         out
     }
-    /// `homeDecorations` entry: `u8 x, u8 y, u8 decorVariant, u8 active:1`.
-    /// 160 outdoor slots (offset 0) then 32 indoor slots (offset 160).
+    /// `homeDecorations` entry: `u8 x, u8 y, u8 decorVariant, u8 active:1`. 160
+    /// outdoor slots (offset 0) then 32 indoor slots (offset 160).
     pub fn hub_decoration(
         &self,
         rb: &RogueBlock,
@@ -848,9 +850,9 @@ impl SaveFile {
             .count()
     }
     /// `homeStyles[0]` house exterior, `[1]` house interior, `[2]` path
-    /// (`rogue_hub.c` indexes them with `HOME_STYLE_HOUSE_EXTERIOR` etc.).
-    /// The three `homeStyles` bytes as three distinct domains. Slot order is
-    /// exterior, interior, path (`homeStyles[]` in `struct RogueHubMap`).
+    /// (`rogue_hub.c` indexes them with `HOME_STYLE_HOUSE_EXTERIOR` etc.). The
+    /// three `homeStyles` bytes as three distinct domains. Slot order is exterior,
+    /// interior, path (`homeStyles[]` in `struct RogueHubMap`).
     pub fn home_styles(
         &self,
         rb: &RogueBlock,
@@ -891,8 +893,8 @@ impl SaveFile {
         self.merged[rb.styles_f.data + i] = v;
         self.edited = true;
     }
-    /// `homeWanderingMonSpecies` is NOT a species id: the game stores
-    /// `species + FOLLOWMON_SHINY_OFFSET(10000)` when the follow-mon is shiny
+    /// `homeWanderingMonSpecies` is NOT a species id: the game stores `species +
+    /// FOLLOWMON_SHINY_OFFSET(10000)` when the follow-mon is shiny
     /// (`MonSpeciesToFollowSpecies`), which is why live saves show values like
     /// 10374. 0 = SPECIES_NONE (no follow-mon in that slot).
     pub fn hub_wander_mon(&self, rb: &RogueBlock, i: usize) -> Option<(u16, bool)> {
@@ -948,13 +950,12 @@ impl SaveFile {
         self.edited = true;
     }
     /// `seasonCounter` is NOT a season index: it counts elapsed days in a
-    /// 2-day-per-season / 4-season cycle (`rogue_timeofday.c`:
-    /// DAYS_PER_SEASON 2, SEASON_COUNT 4, wrapped % 8;
-    /// `RogueToD_GetSeason()` returns `seasonCounter / DAYS_PER_SEASON`).
-    /// So this takes a season index 0..3 and parks the counter at that
-    /// season's first day, exactly like `RogueToD_SetSeason()`.
-    /// `seasonCounter` as a day counter, with the season it falls in derivable
-    /// from it. The field stores days, so a bare season index handed to
+    /// 2-day-per-season / 4-season cycle (`rogue_timeofday.c`: DAYS_PER_SEASON 2,
+    /// SEASON_COUNT 4, wrapped % 8; `RogueToD_GetSeason()` returns `seasonCounter /
+    /// DAYS_PER_SEASON`). So this takes a season index 0..3 and parks the counter
+    /// at that season's first day, exactly like `RogueToD_SetSeason()`.
+    /// `seasonCounter` as a day counter, with the season it falls in derivable from
+    /// it. The field stores days, so a bare season index handed to
     /// `set_season_counter` used to be a silent unit error.
     pub fn season_day(&self, rb: &RogueBlock) -> Option<crate::domain::SeasonDay> {
         if !rb.ok {
@@ -968,8 +969,8 @@ impl SaveFile {
         self.set_season_counter(day.raw())
     }
     pub fn set_hub_season(&mut self, season: crate::domain::Season) {
-        // Landing on a season means day 0 of it, which is the only way to write
-        // this field correctly.
+        // Landing on a season means day 0 of it, which is the only way to write this
+        // field correctly.
         self.set_season_day(crate::domain::SeasonDay::from_raw(
             season.index() * crate::game_data::DAYS_PER_SEASON,
         ))
@@ -1069,8 +1070,8 @@ impl SaveFile {
     // ---- edits are applied to merged, then flushed to sectors + saved
     pub fn set_party_mon(&mut self, i: usize, m: &Mon) {
         let off = SB1_BASE + PARTY_OFF + i * MONSZ;
-        // An 80 B BoxPokemon copied into the party gets a zeroed stat tail; the
-        // game recomputes it on load.
+        // An 80 B BoxPokemon copied into the party gets a zeroed stat tail; the game
+        // recomputes it on load.
         let n = m.raw.len().min(MONSZ);
         self.merged[off..off + n].copy_from_slice(&m.raw[..n]);
         for b in self.merged[off + n..off + MONSZ].iter_mut() {
@@ -1115,9 +1116,9 @@ impl SaveFile {
         Some((n, otid))
     }
 
-    /// Remove a party slot, closing the gap so `partyCount` and the slot array
-    /// stay consistent (a hole in the middle is not a state the game produces).
-    /// Returns the new party count.
+    /// Remove a party slot, closing the gap so `partyCount` and the slot array stay
+    /// consistent (a hole in the middle is not a state the game produces). Returns
+    /// the new party count.
     pub fn delete_party_mon(&mut self, i: usize) -> usize {
         let n = self.party_count().min(6);
         if i >= n || n == 0 {
@@ -1162,17 +1163,17 @@ impl SaveFile {
     //
     // `UpdateBagItemsPointers()` (src/item.c) splits the flat 450-slot array into
     // one CONTIGUOUS RUN per pocket, walking pockets 1..9 in order and stopping at
-    // the first id whose pocket differs: "Expects items to always be sorted".
-    // A real v2.2.0 bag is exactly that (probe on a live save: 64 packed slots in
+    // the first id whose pocket differs: "Expects items to always be sorted". A
+    // real v2.2.0 bag is exactly that (probe on a live save: 64 packed slots in
     // runs 1,2,3,5,6,7,8,9 - the empty Stones pocket simply leaves no run).
     //
-    // So every scripted edit must (a) keep runs contiguous, (b) keep the run
-    // order ascending by pocket, and (c) keep zero-quantity slots at the tail,
-    // never in the middle. These helpers do the whole-array rewrite so the
-    // invariants hold by construction, and they mirror the game's own capacity
-    // accounting (`Rogue_GetBagCapacity`, `GetBagUnreservedFreeSlots`,
-    // `GetBagReservedFreeSlots`): key items have their own 50-slot budget and
-    // every pocket stacks to `MAX_BAG_ITEM_CAPACITY` = 999.
+    // So every scripted edit must (a) keep runs contiguous, (b) keep the run order
+    // ascending by pocket, and (c) keep zero-quantity slots at the tail, never in
+    // the middle. These helpers do the whole-array rewrite so the invariants hold
+    // by construction, and they mirror the game's own capacity accounting
+    // (`Rogue_GetBagCapacity`, `GetBagUnreservedFreeSlots`,
+    // `GetBagReservedFreeSlots`): key items have their own 50-slot budget and every
+    // pocket stacks to `MAX_BAG_ITEM_CAPACITY` = 999.
 
     /// Which bag array an edit targets: the live SaveBlock1 bag, or the stashed
     /// hub-state bag inside the Rogue block (`sRunRestoreBlock`).
@@ -1186,10 +1187,10 @@ impl SaveFile {
         }
     }
 
-    /// Raw (id, qty) for the whole bag array, with quantities decoded. The live
-    /// bag XORs quantity with the low 16 bits of the key; the stashed bag is a
-    /// plain memcpy in `SerializeRogueBlockInternal` and is NOT obfuscated
-    /// (confirmed on a real save: raw reads 5,5,2,11,3 / XOR reads garbage).
+    /// Raw (id, qty) for the whole bag array, with quantities decoded. The live bag
+    /// XORs quantity with the low 16 bits of the key; the stashed bag is a plain
+    /// memcpy in `SerializeRogueBlockInternal` and is NOT obfuscated (confirmed on
+    /// a real save: raw reads 5,5,2,11,3 / XOR reads garbage).
     pub(crate) fn bag_slots_raw(&self, stash: bool) -> Option<Vec<(u16, u16)>> {
         let off = self.bag_slot_off(stash)?;
         let k16 = if stash {
@@ -1248,14 +1249,14 @@ impl SaveFile {
         }
     }
     /// u8 `bagSortMode` at SB1+0x4AC (0 type, 1 name, 2 value, 3 amount). The
-    /// editor's own sort keys off pocket + id, which matches the game's
-    /// primary key; sort mode only permutes WITHIN a run.
+    /// editor's own sort keys off pocket + id, which matches the game's primary
+    /// key; sort mode only permutes WITHIN a run.
     pub fn bag_sort_mode(&self) -> u8 {
         self.merged[SB1_BASE + BAG_SORT_MODE_OFF]
     }
     /// The game writes this from the bag-sort menu (item_menu.c:3247). Values
-    /// outside 0..=3 make `SortItemPlaceBefore` fall through to its default, so
-    /// the UI clamps to the four modes the game defines.
+    /// outside 0..=3 make `SortItemPlaceBefore` fall through to its default, so the
+    /// UI clamps to the four modes the game defines.
     pub fn set_bag_sort_mode(&mut self, v: u8) {
         self.merged[SB1_BASE + BAG_SORT_MODE_OFF] =
             v.min(crate::format::BAG_SORT_MODES.len() as u8 - 1);
@@ -1265,9 +1266,9 @@ impl SaveFile {
     pub(crate) fn bag_run_summary(slots: &[(u16, u16)]) -> Vec<(crate::domain::Pocket, usize)> {
         let mut out: Vec<(crate::domain::Pocket, usize)> = Vec::new();
         for (id, _qty) in slots {
-            // Exactly the game's terminator: `itemId == ITEM_NONE`. A slot with a
-            // real id and quantity 0 is still counted as part of the pocket run
-            // by UpdateBagItemsPointers, so it must be counted here too.
+            // Exactly the game's terminator: `itemId == ITEM_NONE`. A slot with a real id
+            // and quantity 0 is still counted as part of the pocket run by
+            // UpdateBagItemsPointers, so it must be counted here too.
             if *id == 0 {
                 break;
             }
@@ -1358,9 +1359,9 @@ impl SaveFile {
         (filled, key)
     }
 
-    /// Mirror of `AddBagItem`: merge into an under-full stack of the same id,
-    /// then insert a new slot in sorted position if the pocket's slot budget
-    /// allows. Returns a human-readable summary.
+    /// Mirror of `AddBagItem`: merge into an under-full stack of the same id, then
+    /// insert a new slot in sorted position if the pocket's slot budget allows.
+    /// Returns a human-readable summary.
     pub fn add_bag_item(&mut self, id: u16, qty: u16, stash: bool) -> Result<String, String> {
         if qty == 0 {
             return Err("quantity must be >= 1".to_string());
@@ -1375,9 +1376,9 @@ impl SaveFile {
         let mut slots = self
             .bag_slots_raw(stash)
             .ok_or_else(|| "bag not found (is the Rogue block decodable?)".to_string())?;
-        // Head of the array exactly as UpdateBagItemsPointers sees it: it ends
-        // at the first ITEM_NONE slot. Quantity-0 ghosts inside the head are
-        // dropped (the game's own ShrinkBagItems ends up rewriting them away).
+        // Head of the array exactly as UpdateBagItemsPointers sees it: it ends at the
+        // first ITEM_NONE slot. Quantity-0 ghosts inside the head are dropped (the
+        // game's own ShrinkBagItems ends up rewriting them away).
         let mut head: Vec<(u16, u16)> = slots
             .drain(..)
             .take_while(|(i, _)| *i != 0)
@@ -1479,8 +1480,8 @@ impl SaveFile {
         ))
     }
 
-    /// Set one quantity in place and re-normalise the array (drop empty slots,
-    /// keep pocket runs contiguous). Setting 0 removes that stack.
+    /// Set one quantity in place and re-normalise the array (drop empty slots, keep
+    /// pocket runs contiguous). Setting 0 removes that stack.
     pub fn set_bag_slot_qty(&mut self, i: usize, qty: u16, stash: bool) -> Result<(), String> {
         let Some(mut slots) = self.bag_slots_raw(stash) else {
             return Err("bag not found".to_string());
@@ -1503,8 +1504,8 @@ impl SaveFile {
         Ok(())
     }
 
-    /// Re-sort the whole bag by (pocket, id) - the same primary key the game
-    /// uses. Use after hand-editing to restore the contiguous-run invariant.
+    /// Re-sort the whole bag by (pocket, id) - the same primary key the game uses.
+    /// Use after hand-editing to restore the contiguous-run invariant.
     pub fn sort_bag(&mut self, stash: bool) -> Result<String, String> {
         let Some(slots) = self.bag_slots_raw(stash) else {
             return Err("bag not found".to_string());

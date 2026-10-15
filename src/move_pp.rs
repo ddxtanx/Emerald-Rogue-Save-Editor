@@ -3,10 +3,10 @@
 
 use crate::move_pp_data::move_pp_table;
 
-/// PP Ups are 2 bits per move slot (`gPPUpGetMask`, `src/pokemon.c:424`) and the
-/// items never push the field past 3: the PP Up branch requires the stored value
-/// `<= 2` (`src/pokemon.c:3638`) and PP Max requires `< 3` (`:3914`), after which
-/// it sets the field to exactly 3 (`gPPUpAddValues * 3`, `:3918`).
+/// PP Ups are 2 bits per move slot (`gPPUpGetMask`, `src/pokemon.c:424`) and
+/// the items never push the field past 3: the PP Up branch requires the stored
+/// value `<= 2` (`src/pokemon.c:3638`) and PP Max requires `< 3` (`:3914`),
+/// after which it sets the field to exactly 3 (`gPPUpAddValues * 3`, `:3918`).
 pub const MAX_PP_UPS: u8 = 3;
 
 /// Base max PP as the game's move table stores it (0 for the empty slot).
@@ -33,41 +33,43 @@ pub fn max_pp(move_id: u16, ups: u8) -> u8 {
 
 /// Whether the PP Up / PP Max items would touch this move at all: both branches
 /// refuse a move whose current max PP is under 5 (`temp1 > 4` at
-/// `src/pokemon.c:3638`, `temp2 >= 5` at `:3914`), which is how Sketch (1 PP) and
-/// Sheer Cold (1 PP) are excluded.
+/// `src/pokemon.c:3638`, `temp2 >= 5` at `:3914`), which is how Sketch (1 PP)
+/// and Sheer Cold (1 PP) are excluded.
 pub fn vitamins_apply(move_id: u16) -> bool {
     max_pp(move_id, 0) >= 5
 }
 
 /// Current PP after the cap changes from `from_ups` to `to_ups`. The game adds
 /// the cap delta to the stored current PP rather than refilling the move
-/// (`newCap - oldCap` on top of `MON_DATA_PP1`: `src/pokemon.c:3643-3645` for the
-/// PP Up, `:3920-3922` for PP Max). Mirroring that keeps an edited mon consistent
-/// (raising ups never leaves it at `0/24`); lowering ups clamps to the new cap.
+/// (`newCap - oldCap` on top of `MON_DATA_PP1`: `src/pokemon.c:3643-3645` for
+/// the PP Up, `:3920-3922` for PP Max). Mirroring that keeps an edited mon
+/// consistent (raising ups never leaves it at `0/24`); lowering ups clamps to
+/// the new cap.
 pub fn bump_current_pp(cur: u8, move_id: u16, from_ups: u8, to_ups: u8) -> u8 {
     let old_cap = max_pp(move_id, from_ups) as i32;
     let new_cap = max_pp(move_id, to_ups) as i32;
     if new_cap >= old_cap {
         (cur as i32 + (new_cap - old_cap)).min(new_cap) as u8
     } else {
-        // Nothing in the game lowers PP Ups, so there is no item behaviour to
-        // copy: taking them away clamps current PP down to the smaller cap
-        // instead of draining the mon by a delta nobody asked for.
+        // Nothing in the game lowers PP Ups, so there is no item behaviour to copy:
+        // taking them away clamps current PP down to the smaller cap instead of
+        // draining the mon by a delta nobody asked for.
         cur.min(new_cap as u8)
     }
 }
 
-/// Max out one move slot: raise its PP-Up count to the most it can hold and fill
-/// current PP to that cap. Both "max PP" affordances call this, because the
-/// per-slot button used to leave the ups alone (so a mon with 0 ups got plain
-/// base PP from a button labelled "max PP") while the bulk button raised ups to 3 -
-/// the same label promising two different things.
+/// Max out one move slot: raise its PP-Up count to the most it can hold and
+/// fill current PP to that cap. Both "max PP" affordances call this, because
+/// the per-slot button used to leave the ups alone (so a mon with 0 ups got
+/// plain base PP from a button labelled "max PP") while the bulk button raised
+/// ups to 3 - the same label promising two different things.
 ///
 /// The ups change is gated the way the game gates the items: PP Up and PP Max
 /// refuse a move whose max PP is under 5 (`src/pokemon.c:3638`, `:3914`), so on
-/// such a move the field is left alone and only current PP is refilled to its own
-/// cap - writing `3` there would be a value no item could ever have produced.
-/// Returns the line the editor shows, so the change is visible next to the button.
+/// such a move the field is left alone and only current PP is refilled to its
+/// own cap - writing `3` there would be a value no item could ever have
+/// produced. Returns the line the editor shows, so the change is visible next
+/// to the button.
 pub fn apply_max_pp(m: &mut crate::mon::Mon, slot: usize) -> String {
     let id = m.moves()[slot];
     let ups = m.pp_bonus(slot);
@@ -102,11 +104,11 @@ pub fn pp_ladder(move_id: u16) -> [(u8, u8); 4] {
 mod tests {
     use super::*;
 
-    /// The user report: "The pp max button does not set the pp to what it would
-    /// be after 3 pp ups - it just makes it the normal amount." The per-slot
-    /// button was refilling PP to the cap for the UPS THE SLOT ALREADY HAD (0 ups
-    /// -> base PP), while the bulk "31 IVs / max PP" button raised the field to 3.
-    /// Same label, two promises. Both now call `apply_max_pp`.
+    /// The user report: "The pp max button does not set the pp to what it would be
+    /// after 3 pp ups - it just makes it the normal amount." The per-slot button
+    /// was refilling PP to the cap for the UPS THE SLOT ALREADY HAD (0 ups -> base
+    /// PP), while the bulk "31 IVs / max PP" button raised the field to 3. Same
+    /// label, two promises. Both now call `apply_max_pp`.
     #[test]
     fn max_pp_raises_the_ups_field_and_fills_to_the_three_up_cap() {
         let mut m = crate::mon::Mon::blank(0x1234_5678, "Garrett", 59, 50);
@@ -183,9 +185,9 @@ mod tests {
         assert_eq!(pp_ladder(1), [(0, 35), (1, 42), (2, 49), (3, 56)]);
         assert_eq!(pp_ladder(428), [(0, 15), (1, 18), (2, 21), (3, 24)]);
         assert_eq!(pp_ladder(329), [(0, 5), (1, 6), (2, 7), (3, 8)]);
-        // Every base PP in this tree is a multiple of 5, so the older
-        // `base + base/5*ups` happened to agree here; the game's own expression is
-        // used so the cap cannot drift if a base ever stops being one.
+        // Every base PP in this tree is a multiple of 5, so the older `base +
+        // base/5*ups` happened to agree here; the game's own expression is used so the
+        // cap cannot drift if a base ever stops being one.
         for (id, base) in crate::move_pp_data::move_pp_table() {
             let base = *base as u32;
             if base >= 5 {
@@ -200,8 +202,9 @@ mod tests {
     }
 
     /// The ups field is 2 bits and the game never stores more than 3 (the PP Up
-    /// branch requires `<= 2`, `src/pokemon.c:3638`; PP Max sets exactly 3, `:3918`).
-    /// A hand-typed 9 must clamp rather than wrap into the next slot's bits.
+    /// branch requires `<= 2`, `src/pokemon.c:3638`; PP Max sets exactly 3,
+    /// `:3918`). A hand-typed 9 must clamp rather than wrap into the next slot's
+    /// bits.
     #[test]
     fn ups_past_three_do_not_move_the_cap() {
         assert_eq!(max_pp(1, 9), max_pp(1, 3));
@@ -226,8 +229,8 @@ mod tests {
     fn changing_ups_bumps_current_pp_the_way_the_item_does() {
         assert_eq!(bump_current_pp(15, 428, 0, 1), 18);
         // Zen Headbutt's caps run 15/18/21/24, so three ups add nine - and the item
-        // hands that nine to CURRENT PP rather than refilling a depleted move. The
-        // "max PP" button is what fills a slot up to its cap.
+        // hands that nine to CURRENT PP rather than refilling a depleted move. The "max
+        // PP" button is what fills a slot up to its cap.
         assert_eq!(
             bump_current_pp(0, 428, 0, 3),
             9,

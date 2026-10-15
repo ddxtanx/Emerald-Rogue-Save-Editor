@@ -9,8 +9,8 @@
 /// is the description of the id, so the UI shows the name.
 ///
 /// Id 0 is a real section (Pokemon Hub), not "unset" - unlike species/item/move
-/// ids, this namespace must not treat 0 as empty. The three 0xF? entries are the
-/// `METLOC_*` specials the game writes for eggs, in-game trades and the
+/// ids, this namespace must not treat 0 as empty. The three 0xF? entries are
+/// the `METLOC_*` specials the game writes for eggs, in-game trades and the
 /// Mirage Island-style fateful encounters.
 pub const MAPSECS: &[(u16, &str)] = &[
     (0, "Pokemon Hub"),

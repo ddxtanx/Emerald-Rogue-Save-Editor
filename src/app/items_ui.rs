@@ -4,22 +4,23 @@ use super::*;
 use crate::searchable_combo::Opts;
 
 /// Shown in the Items tab when the assets root exists but holds no item art:
-/// names both fetchers, because only the second one writes `assets/icons/items/`.
-/// Plain ASCII on purpose -- egui 0.27's bundled fonts are subsetted.
+/// names both fetchers, because only the second one writes
+/// `assets/icons/items/`. Plain ASCII on purpose -- egui 0.27's bundled fonts
+/// are subsetted.
 const ITEM_ART_MISSING_HINT: &str = "item art is not installed, so items draw a letter badge \
     instead of the game icon: run `python3 tools/get_icons.py`, or `python3 \
     tools/get_icons_from_source.py` (that one writes assets/icons/items/)";
 
 impl Editor {
     pub(crate) fn items_ui(&mut self, ui: &mut egui::Ui) {
-        // Read everything out of the save first, then drop the borrow, so the
-        // widgets below can mutate `self` (filter / add-row state) freely.
+        // Read everything out of the save first, then drop the borrow, so the widgets
+        // below can mutate `self` (filter / add-row state) freely.
         //
         // Bag header: the bag is one flat array the game splits into contiguous
-        // per-pocket runs on load (`UpdateBagItemsPointers`), and it does NOT
-        // re-sort after loading - so quantity edits go through
-        // set_bag_slot_qty (re-compacts, keeps runs intact) and new ids only
-        // ever arrive via add_bag_item, which inserts in sorted position.
+        // per-pocket runs on load (`UpdateBagItemsPointers`), and it does NOT re-sort
+        // after loading - so quantity edits go through set_bag_slot_qty (re-compacts,
+        // keeps runs intact) and new ids only ever arrive via add_bag_item, which
+        // inserts in sorted position.
         let (bag_items, pc_items, cap, mut cap_up, warnings, sort_mode) = match &self.file {
             Some(sf) => (
                 sf.bag_items(),
@@ -35,9 +36,9 @@ impl Editor {
         ui.checkbox(&mut self.hide_empty_items, "hide empty slots");
         let mut edits: Vec<(bool, usize, u16, u16)> = Vec::new();
 
-        // The saved sort mode decides how the GAME orders items inside a pocket
-        // run; the editor's own sort button uses "type" order. Editable, because
-        // the game's own sort menu writes this byte (item_menu.c:3247).
+        // The saved sort mode decides how the GAME orders items inside a pocket run;
+        // the editor's own sort button uses "type" order. Editable, because the game's
+        // own sort menu writes this byte (item_menu.c:3247).
         let mut sort_changed = false;
         let mut sort_mode = sort_mode as usize;
         let (cap_bumped, do_sort) = ui
@@ -92,16 +93,16 @@ impl Editor {
             );
         }
 
-        // Item art is fetched separately from pokemon art, and when it is absent
-        // every item row falls back to a coloured letter badge. That reads like a
-        // design choice ("icons are just abbreviated names") unless the tab says
-        // otherwise, so say it in plain ASCII next to the item list header.
+        // Item art is fetched separately from pokemon art, and when it is absent every
+        // item row falls back to a coloured letter badge. That reads like a design
+        // choice ("icons are just abbreviated names") unless the tab says otherwise, so
+        // say it in plain ASCII next to the item list header.
         if self.icons.items_art_absent() {
             ui.colored_label(egui::Color32::from_rgb(210, 130, 40), ITEM_ART_MISSING_HINT);
         }
 
-        // Add / remove row: one searchable item picker, one quantity, and the
-        // same stash toggle for both directions.
+        // Add / remove row: one searchable item picker, one quantity, and the same
+        // stash toggle for both directions.
         let mut do_add = false;
         let mut do_remove = false;
         ui.horizontal_wrapped(|ui| {
@@ -233,8 +234,8 @@ mod tests {
     use super::*;
 
     /// The hint is the only thing that tells the user the letter badges are a
-    /// missing download rather than the intended look, so it has to be drawn by
-    /// the bundled subset fonts (ASCII only -- egui 0.27 turns arrows, crosses and
+    /// missing download rather than the intended look, so it has to be drawn by the
+    /// bundled subset fonts (ASCII only -- egui 0.27 turns arrows, crosses and
     /// fancy dashes into empty boxes) and it has to name the scripts that fix it.
     #[test]
     fn the_missing_item_art_hint_is_ascii_and_names_both_fetchers() {
