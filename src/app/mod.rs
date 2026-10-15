@@ -1378,12 +1378,12 @@ mod tests {
             focused: true,
             ..Default::default()
         };
-        ctx.run(input, |ctx| {
+        let _ = ctx.run(input, |ctx| {
             egui::CentralPanel::default().show(ctx, |ui| {
                 let out = Editor::wrap_scroll_area().show(ui, |ui| {
                     ui.horizontal_wrapped(|ui| {
                         for i in 0..40 {
-                            ui.button(format!("field {i}"));
+                            let _ = ui.button(format!("field {i}"));
                         }
                     });
                 });
@@ -1449,7 +1449,9 @@ mod tests {
                     }
                 }
                 egui::Shape::Text(t) => {
-                    out.push((t.galley.text().to_string(), t.galley.rect.max.x));
+                    // Screen extent, not the galley's local rect: `t.pos` is the
+                    // paint origin and `galley.rect` starts at zero.
+                    out.push((t.galley.text().to_string(), t.pos.x + t.galley.rect.max.x));
                 }
                 _ => {}
             }
@@ -1789,6 +1791,118 @@ mod tests {
         assert!(
             !painted.contains("loc "),
             "the raw met-location number must not be shown as the label:\n{painted}"
+        );
+    }
+
+    /// User report: pressing "31 all" does not set every IV to 31. Driven through
+    /// the real widget - find the painted button, click it across separate input
+    /// frames, then read the record back out of the save.
+    #[test]
+    fn the_31_all_button_sets_every_iv_in_the_stored_record() {
+        let Some(mut app) = editor_with_save() else {
+            return;
+        };
+        // A mon that does NOT already have 31 IVs, or the test proves nothing.
+        let (bx, slot, before) = {
+            let sf = app.file.as_ref().unwrap();
+            (0..ACTIVE_BOXES)
+                .flat_map(|b| (0..BOX_SLOTS).map(move |s| (b, s)))
+                .map(|(b, s)| (b, s, sf.box_mon(b, s).ivs()))
+                .find(|(_, _, ivs)| ivs.iter().any(|&v| v != 31) && ivs.iter().any(|&v| v != 0))
+                .expect("this save has a box mon with mixed IVs")
+        };
+        app.sel = Some(Sel::Box(bx, slot));
+        app.tab = Tab::Mon;
+
+        let ctx = egui::Context::default();
+        let mk = |events: Vec<egui::Event>| egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(1400.0, 1200.0),
+            )),
+            focused: true,
+            events,
+            ..Default::default()
+        };
+        fn texts(shape: &egui::Shape, out: &mut Vec<(String, egui::Rect)>) {
+            match shape {
+                egui::Shape::Vec(v) => {
+                    for sh in v {
+                        texts(sh, out);
+                    }
+                }
+                egui::Shape::Text(t) => {
+                    // `galley.rect` is LOCAL (origin at 0); `t.pos` is where it is
+                    // painted. Only the sum is a screen position.
+                    let at = t.pos + t.galley.rect.min.to_vec2();
+                    out.push((
+                        t.galley.text().to_string(),
+                        egui::Rect::from_min_size(at, t.galley.size()),
+                    ));
+                }
+                _ => {}
+            }
+        }
+        let paint = |app: &mut Editor, events: Vec<egui::Event>| {
+            ctx.run(mk(events), |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    app.mon_editor_ui(ui);
+                });
+            })
+        };
+
+        // Where is the button? It is painted as a galley saying "31 all"; the
+        // galley's center sits inside the button, so that is the click point.
+        let mut at: Option<egui::Pos2> = None;
+        for _ in 0..3 {
+            let out = paint(&mut app, vec![]);
+            let mut ts = Vec::new();
+            for cs in &out.shapes {
+                texts(&cs.shape, &mut ts);
+            }
+            if let Some((_, r)) = ts.iter().find(|(t, _)| t.trim() == "31 all") {
+                at = Some(r.center());
+            }
+        }
+        let at = at.expect("the editor paints a '31 all' button for a box record");
+
+        // move / press / release on separate frames: egui registers click
+        // interest across frames and the state change lands on the release frame.
+        let _ = paint(&mut app, vec![egui::Event::PointerMoved(at)]);
+        let _ = paint(
+            &mut app,
+            vec![egui::Event::PointerButton {
+                pos: at,
+                pressed: true,
+                button: egui::PointerButton::Primary,
+                modifiers: Default::default(),
+            }],
+        );
+        let _ = paint(
+            &mut app,
+            vec![egui::Event::PointerButton {
+                pos: at,
+                pressed: false,
+                button: egui::PointerButton::Primary,
+                modifiers: Default::default(),
+            }],
+        );
+        let out = paint(&mut app, vec![]);
+
+        let after = app.file.as_ref().unwrap().box_mon(bx, slot).ivs();
+        let mut ts = Vec::new();
+        for cs in &out.shapes {
+            texts(&cs.shape, &mut ts);
+        }
+        let row: Vec<String> = ts
+            .into_iter()
+            .map(|(t, _)| t)
+            .filter(|t| t.contains("HP:") || t.contains("Atk:"))
+            .collect();
+        assert_eq!(
+            after, [31; 6],
+            "stored IVs went {before:?} -> {after:?} after clicking '31 all' at {at:?}; \
+             the IV row painted {row:?}"
         );
     }
 

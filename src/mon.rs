@@ -235,12 +235,17 @@ impl Mon {
         let w = (w & !(0x1F << (5 * i))) | (((v & 0x1F) as u32) << (5 * i));
         self.t[3][4..8].copy_from_slice(&w.to_le_bytes());
     }
+    /// All six IV fields at once. This deliberately loops the same masked setter
+    /// the per-field widgets use, instead of packing the word separately: an
+    /// earlier version ANDed the spread value with `0x1F1F1F1F`, which is a
+    /// BYTE-wise mask (six 0x1F bytes = 48 bits, truncated to 32) rather than the
+    /// 30-bit IV field mask, so "31 all" wrote 0x1F1F1F1F and the six 5-bit fields
+    /// came back shifted - 31, 24, 7, 30, 17, 15 - instead of six 31s.
     pub fn set_all_ivs(&mut self, v: u8) {
-        let w = le32(&self.t[3], 4);
-        let keep = w & (0xC000_0000);
-        let ivs: u32 = (0x1F1F1F1Fu32) & if v > 31 { 0 } else { repeat5(v) };
-        self.t[3][4..8].copy_from_slice(&((w & 0xC000_0000) | ivs).to_le_bytes());
-        let _ = keep;
+        let v = v.min(31);
+        for i in 0..6 {
+            self.set_iv_at(i, v);
+        }
     }
     pub fn is_egg(&self) -> bool {
         (le32(&self.t[3], 4) >> 30) & 1 == 1
@@ -435,14 +440,6 @@ impl Mon {
     }
 }
 
-pub(crate) fn repeat5(v: u8) -> u32 {
-    let mut r = 0u32;
-    for i in 0..6 {
-        r |= ((v & 0x1F) as u32) << (5 * i);
-    }
-    r
-}
-
 /// vanilla gNatureStatTable: nature index boosts stat (nat/5) and lowers
 /// stat (nat%5) in the stat order [Atk, Def, Spe, SpA, SpD] (our indices 1..=5).
 pub(crate) fn nature_split(nat: usize, stat: usize) -> u32 {
@@ -516,5 +513,64 @@ mod tests {
         assert_eq!(mon_of_species(1092).display_name(), "Lv0 Darmanitan");
         // A plain id is untouched.
         assert_eq!(mon_of_species(143).display_name(), "Lv0 Snorlax");
+    }
+
+    /// User report: "31 all" does not set every IV to 31. This isolates WHERE it
+    /// goes wrong: the one-word write (`set_all_ivs`) against six masked single
+    /// writes (`set_iv_at`), and then the seal + re-read the editor performs.
+    #[test]
+    fn the_all_iv_write_matches_six_single_iv_writes() {
+        let sf = crate::savefile::SaveFile::open("/workspace/hermes/er2.sav").unwrap();
+        let mut base = None;
+        'scan: for b in 0..10usize {
+            for s in 0..30usize {
+                let m = sf.box_mon(b, s);
+                if m.species() != 0
+                    && m.ivs().iter().any(|&v| v != 31)
+                    && m.ivs().iter().any(|&v| v != 0)
+                {
+                    base = Some(m);
+                    break 'scan;
+                }
+            }
+        }
+        let base = base.expect("this save has a box mon with mixed IVs");
+        eprintln!(
+            "before: ivs={:?} word=0x{:08X} egg={}",
+            base.ivs(),
+            le32(&base.t[3], 4),
+            base.is_egg()
+        );
+
+        let mut a = base.clone();
+        a.set_all_ivs(31);
+        let mut b = base.clone();
+        for i in 0..6 {
+            b.set_iv_at(i, 31);
+        }
+        eprintln!(
+            "set_all_ivs -> ivs={:?} word=0x{:08X}\nsix set_iv_at -> ivs={:?} word=0x{:08X}",
+            a.ivs(),
+            le32(&a.t[3], 4),
+            b.ivs(),
+            le32(&b.t[3], 4)
+        );
+
+        let mut c = base.clone();
+        c.set_all_ivs(31);
+        c.seal();
+        eprintln!("after seal(): ivs={:?}", c.ivs());
+
+        assert_eq!(
+            a.ivs(),
+            [31; 6],
+            "set_all_ivs must leave all six fields at 31"
+        );
+        assert_eq!(
+            le32(&a.t[3], 4),
+            le32(&b.t[3], 4),
+            "one-word and six-field writes must agree (upper bits preserved)"
+        );
+        assert_eq!(c.ivs(), [31; 6], "seal() must not disturb the IV word");
     }
 }
