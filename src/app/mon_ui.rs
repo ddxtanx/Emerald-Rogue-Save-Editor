@@ -787,10 +787,17 @@ impl Editor {
                     }
                     if ui
                         .button("max PP")
-                        .on_hover_text("fill current PP up to the cap for the current ups")
+                        .on_hover_text(
+                            "take this slot to the most PP Ups it can hold (3: the 2-bit field \
+                             caps there, and the game's own PP Max sets it to exactly 3) and fill \
+                             current PP to that cap. A move under 5 max PP is refused PP Ups by \
+                             the game, so its ups count is left alone and only PP is refilled.",
+                        )
                         .clicked()
                     {
-                        m.set_pp(s, crate::move_pp::max_pp(id, m.pp_bonus(s)));
+                        // One implementation shared with "31 IVs / max PP", so the
+                        // two buttons cannot promise different numbers again.
+                        self.mon_note = Some(crate::move_pp::apply_max_pp(m, s));
                         changed = true;
                     }
                     // The PP picker: the PP-Up steps the game knows, each shown with

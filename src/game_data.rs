@@ -354,6 +354,108 @@ pub(crate) fn pocket_name(p: crate::domain::Pocket) -> String {
 mod tests {
     use super::*;
 
+    /// A generated table that silently drops families is the failure mode this
+    /// project keeps hitting. 201 species -- Xerneas (716), Alcremie (869), the 17
+    /// Arceus and 17 Silvally forms, Genesect's drives, Minior's cores, Ogerpon's
+    /// masks -- were absent because their entries read `[SPECIES_X] = NAME(args),`
+    /// and the generator only followed bare `NAME` indirection. The table looked
+    /// complete, and the editor answered "no base stats in table" for mons that
+    /// have base stats. So: every species id the editor can NAME must either have
+    /// stats or be on the generated `SPECIES_WITHOUT_GAME_DATA` list (constants the
+    /// tree declares with no species_info entry -- placeholder/unimplemented forms).
+    #[test]
+    fn every_named_species_either_has_stats_or_is_declared_without_game_data() {
+        let mut gaps = Vec::new();
+        for (id, name) in tables::SPECIES
+            .iter()
+            .chain(tables_extra::SPECIES_EXTRA.iter())
+        {
+            if crate::basestats::base_stats(*id).is_none()
+                && !crate::basestats::SPECIES_WITHOUT_GAME_DATA.contains(id)
+            {
+                gaps.push((*id, *name));
+            }
+        }
+        assert!(
+            gaps.is_empty(),
+            "{} named species have no base stats and are not declared without game data: \
+             {:?}",
+            gaps.len(),
+            &gaps[..gaps.len().min(12)]
+        );
+    }
+
+    /// The declared-without-data list must not become a place to hide generator
+    /// bugs, so the species that real mons actually use are pinned by name here.
+    #[test]
+    fn real_species_are_never_on_the_without_game_data_list() {
+        for (id, name) in [
+            (716u16, "Xerneas"),
+            (869, "Alcremie"),
+            (493, "Arceus"),
+            (649, "Genesect"),
+            (1176, "Silvally (Fighting)"),
+            (1236, "Alcremie (Ruby Cream)"),
+            (1200, "Minior (Orange core)"),
+            (1417, "Ogerpon (Wellspring Mask)"),
+        ] {
+            assert!(
+                !crate::basestats::SPECIES_WITHOUT_GAME_DATA.contains(&id),
+                "{name} ({id}) must have base stats"
+            );
+            assert!(
+                crate::basestats::base_stats(id).is_some(),
+                "{name} ({id}) missing from the table"
+            );
+        }
+    }
+
+    /// Values read straight out of the tree, not remembered: Emerald Rogue
+    /// REBALANCES base stats (Alcremie is 65/60/75/64/110/121 in ALCREMIE_MISC_INFO,
+    /// not the national-dex 80/85/95/110/110/80), so an expectation written from
+    /// memory is not evidence. Table order: [HP, Atk, Def, Spe, SpA, SpD].
+    #[test]
+    fn function_like_macro_families_carry_the_trees_values() {
+        for (id, want, src) in [
+            (
+                716u16,
+                [126, 131, 95, 99, 131, 98],
+                "XERNEAS_MISC_INFO, gen_6.h:4586",
+            ),
+            (
+                869,
+                [65, 60, 75, 64, 110, 121],
+                "ALCREMIE_MISC_INFO, gen_8.h:3266",
+            ),
+            (
+                493,
+                [120, 120, 120, 120, 120, 120],
+                "ARCEUS_SPECIES_INFO, gen_4.h",
+            ),
+            (
+                649,
+                [71, 120, 95, 99, 120, 95],
+                "GENESECT_SPECIES_INFO, gen_5.h",
+            ),
+            (
+                1176,
+                [95, 95, 95, 95, 95, 95],
+                "SILVALLY_SPECIES_INFO, gen_7.h",
+            ),
+            (
+                1200,
+                [60, 100, 60, 120, 100, 60],
+                "MINIOR_CORE_SPECIES_INFO, gen_7.h",
+            ),
+        ] {
+            assert_eq!(
+                crate::basestats::base_stats(id),
+                Some(want),
+                "species {id} should match {src}"
+            );
+        }
+    }
+
     /// The user's example, straight from the game's own linkage: species 555
     /// (ROM name string "Darmanitan Standard Mode") shows as base "Darmanitan"
     /// with "Standard Mode" as the separate form detail. Note the base id: in

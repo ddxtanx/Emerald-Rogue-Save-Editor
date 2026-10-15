@@ -1050,13 +1050,27 @@ impl Editor {
                             if let Some(mut rec) = self.selected_rec() {
                                 rec.set_all_ivs(31);
                                 if let Some(m) = rec.full_mut() {
+                                    // Same call as the per-slot "max PP" button: raise
+                                    // the PP-Up field to the most it can hold (3) and
+                                    // fill PP to that cap, skipping the moves the game
+                                    // refuses PP Ups on.
+                                    let mut raised = 0;
+                                    let mut gated = 0;
                                     for s in 0..4 {
-                                        m.set_pp_bonus(s, 3);
-                                        // cap = base + base/5 * 3, exactly what the
-                                        // game allows after three PP Ups
-                                        let cap = crate::move_pp::max_pp(m.moves()[s], 3);
-                                        m.set_pp(s, cap);
+                                        if crate::move_pp::vitamins_apply(m.moves()[s]) {
+                                            raised += 1;
+                                        } else {
+                                            gated += 1;
+                                        }
+                                        crate::move_pp::apply_max_pp(m, s);
                                     }
+                                    self.mon_note = Some(match gated {
+                                        0 => format!("PP ups raised to 3 on {raised} moves"),
+                                        n => format!(
+                                            "PP ups raised to 3 on {raised} moves; \
+                                             {n} refused by the game (under 5 max PP)"
+                                        ),
+                                    });
                                 }
                                 rec.commit();
                                 self.apply_rec(&rec);
@@ -2315,6 +2329,122 @@ mod tests {
             !ts.iter().any(|t| t.contains("Add a copy to:")),
             "a 20-byte spawn entry must not offer targets it cannot fill"
         );
+    }
+
+    /// End-to-end for the reported bug: a Xerneas sitting in the party, the real
+    /// "recalculate stats" button, and the stat block the user was trying to get.
+    /// Xerneas (716) had no entry in the generated base-stat table, so the button
+    /// answered "no base stats in table" and the stats never moved.
+    #[test]
+    fn clicking_recalculate_stats_on_a_xerneas_in_the_party_computes_them() {
+        let Some(mut app) = editor_with_save() else {
+            return;
+        };
+        {
+            let sf = app.file.as_mut().unwrap();
+            let mut m = sf.party()[0].clone();
+            m.set_species(716);
+            // `set_species` edits the decrypted substruct view; `set_party_mon`
+            // copies `raw`, so the change has to be sealed into raw first (the
+            // editor's own path does this via `MonRec::commit`).
+            m.seal();
+            sf.set_party_mon(0, &m);
+        }
+        app.sel = Some(Sel::Party(0));
+
+        let ts = galleys(&paint_in(&egui::Context::default(), &mut app, vec![]));
+        let Some((_, at)) = ts.iter().find(|(t, _)| t.contains("recalculate stats")) else {
+            panic!(
+                "no recalculate-stats button painted for a party record; got {:?}",
+                ts.iter().map(|(t, _)| t.clone()).collect::<Vec<_>>()
+            );
+        };
+        click_at(&mut app, egui::pos2(at.x + 40.0, at.y + 8.0));
+
+        let note = app.mon_note.clone().unwrap_or_default();
+        assert!(
+            note.contains("stats recalculated"),
+            "the click must compute the stats; note reads {note}"
+        );
+        let sf = app.file.as_ref().unwrap();
+        let m = sf.party()[0].clone();
+        let (_cur, max, st) = m.cached_stats().expect("a party record has a stat block");
+        let lvl = m.level().unwrap() as u32;
+        let bs = crate::basestats::base_stats(716).expect("Xerneas base stats");
+        let ivs = m.ivs();
+        let evs = m.evs();
+        let ni = m.nature().raw() as usize;
+        assert_eq!(
+            max as u32,
+            crate::mon::calc_stat(bs[0] as u32, ivs[0] as u32, evs[0] as u32, lvl, ni, 0),
+            "HP must be the game formula on Xerneas base 126; note {note}"
+        );
+        assert!(st.iter().all(|v| *v > 0), "stats must be non-zero: {st:?}");
+    }
+
+    /// The reported bug, through the real button: a mon with 0 PP Ups got plain
+    /// base PP back from a control labelled "max PP". Clicking it must take the
+    /// slot to the most PP Ups it can hold and fill PP to that cap.
+    #[test]
+    fn clicking_max_pp_takes_the_slot_to_the_three_up_cap() {
+        let Some(mut app) = editor_with_save() else {
+            return;
+        };
+        if app.file.as_ref().unwrap().box_mon(0, 0).species() == 0 {
+            return;
+        }
+        app.sel = Some(Sel::Box(0, 0));
+        let before = app.file.as_ref().unwrap().box_mon(0, 0);
+        let id = before.moves()[0];
+        if id == 0 {
+            return;
+        }
+        let before_ups = before.pp_bonus(0);
+        let before_pp = before.pps()[0];
+
+        // The leftmost "max PP" button is slot 0's.
+        let ts = galleys(&paint_in(&egui::Context::default(), &mut app, vec![]));
+        let mut btn: Vec<(f32, egui::Pos2)> = ts
+            .iter()
+            .filter(|(t, _)| t.trim() == "max PP")
+            .map(|(_, at)| (at.x, *at))
+            .collect();
+        if btn.is_empty() {
+            panic!("no max PP button painted");
+        }
+        btn.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+        let at = btn[0].1;
+        click_at(&mut app, egui::pos2(at.x + 20.0, at.y + 8.0));
+
+        let after = app.file.as_ref().unwrap().box_mon(0, 0);
+        let wants_ups = crate::move_pp::vitamins_apply(id);
+        let want_ups = if wants_ups {
+            crate::move_pp::MAX_PP_UPS
+        } else {
+            before_ups
+        };
+        assert_eq!(
+            after.pp_bonus(0),
+            want_ups,
+            "ups for move {id} (was {before_ups}) must follow the game's rule; note {:?}",
+            app.mon_note
+        );
+        assert_eq!(
+            after.pps()[0],
+            crate::move_pp::max_pp(id, want_ups),
+            "PP must land on the cap for {want_ups} ups; note {:?}",
+            app.mon_note
+        );
+        assert!(
+            app.mon_note.is_some(),
+            "the change must be reported next to the button"
+        );
+        if wants_ups {
+            assert!(
+                after.pps()[0] >= before_pp,
+                "raising the cap never lowers current PP"
+            );
+        }
     }
 
     /// How many slots a target currently holds, for the click tests.

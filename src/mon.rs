@@ -494,9 +494,23 @@ pub(crate) fn recalculate_cached_stats(m: &mut Mon) -> Result<u32, String> {
         return Err(format!("nature value {} is outside 0..=24", nat.raw()));
     }
     let Some(bs) = crate::basestats::base_stats(m.species()) else {
+        // Two very different reasons for a miss, and the user cannot tell them
+        // apart from the outside: the game itself has no species_info entry for
+        // this id (a placeholder / unimplemented form id - the constant exists in
+        // species.h, the data does not), versus a gap in the editor's generated
+        // table, which is a bug and should read like one.
+        let sp = m.species();
+        if crate::basestats::SPECIES_WITHOUT_GAME_DATA.contains(&sp) {
+            return Err(format!(
+                "species {sp} ({}) has no entry in the game's own species_info table, so its \
+                 base stats are not defined by the game either",
+                crate::game_data::species_name(sp)
+            ));
+        }
         return Err(format!(
-            "no base stats in table for species {}",
-            m.species()
+            "no base stats in table for species {sp} ({}); the game DOES define this species, \
+             so the editor's generated table is missing it",
+            crate::game_data::species_name(sp)
         ));
     };
     let (evs, ivs) = (m.evs(), m.ivs());
@@ -608,6 +622,52 @@ mod tests {
             0,
         );
         assert_eq!(max as u32, expect_hp, "HP must match the game formula");
+    }
+
+    /// The user's report: "I could not recompute xerneas' stat changes upon
+    /// editing the save." Xerneas (716) was one of 201 species missing from the
+    /// generated table, so the button refused with "no base stats in table".
+    #[test]
+    fn a_xerneas_can_be_stat_recomputed() {
+        let mut m = Mon::blank(0x1234_5678, "Garrett", 716, 50);
+        assert_eq!(m.species(), 716);
+        let lvl = recalculate_cached_stats(&mut m).expect("Xerneas must be computable");
+        assert_eq!(lvl, 50);
+        let (cur, max, st) = m.cached_stats().expect("stat block present");
+        assert_eq!(cur, max);
+        // Xerneas base HP 126 (XERNEAS_MISC_INFO, gen_6.h:4586), level 50.
+        let bs = crate::basestats::base_stats(716).expect("table entry");
+        assert_eq!(bs[0], 126, "base HP comes from the tree");
+        let ivs = m.ivs();
+        let evs = m.evs();
+        let ni = m.nature().raw() as usize;
+        assert_eq!(
+            max as u32,
+            calc_stat(bs[0] as u32, ivs[0] as u32, evs[0] as u32, 50, ni, 0),
+            "HP must match the game formula"
+        );
+        assert!(st.iter().all(|v| *v > 0), "all stats non-zero: {st:?}");
+    }
+
+    /// The other half of the same report: an id the game declares but never
+    /// defines must say so, rather than implying the editor's table is broken.
+    #[test]
+    fn an_id_the_game_declares_without_data_says_so_rather_than_blaming_the_table() {
+        let sp = 1481; // "Mimikyu Totem" in the editor's name table
+        assert!(
+            crate::basestats::SPECIES_WITHOUT_GAME_DATA.contains(&sp),
+            "expected {sp} to be declared-without-data"
+        );
+        let mut m = Mon::blank(0x1234_5678, "Garrett", sp, 30);
+        let err = recalculate_cached_stats(&mut m).expect_err("no game data to compute from");
+        assert!(
+            err.contains("species_info table"),
+            "message must blame the missing game entry, not the editor: {err}"
+        );
+        assert!(
+            !err.contains("editor's generated table is missing"),
+            "{err}"
+        );
     }
 
     #[test]

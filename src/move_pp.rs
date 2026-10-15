@@ -56,6 +56,37 @@ pub fn bump_current_pp(cur: u8, move_id: u16, from_ups: u8, to_ups: u8) -> u8 {
     }
 }
 
+/// Max out one move slot: raise its PP-Up count to the most it can hold and fill
+/// current PP to that cap. Both "max PP" affordances call this, because the
+/// per-slot button used to leave the ups alone (so a mon with 0 ups got plain
+/// base PP from a button labelled "max PP") while the bulk button raised ups to 3 -
+/// the same label promising two different things.
+///
+/// The ups change is gated the way the game gates the items: PP Up and PP Max
+/// refuse a move whose max PP is under 5 (`src/pokemon.c:3638`, `:3914`), so on
+/// such a move the field is left alone and only current PP is refilled to its own
+/// cap - writing `3` there would be a value no item could ever have produced.
+/// Returns the line the editor shows, so the change is visible next to the button.
+pub fn apply_max_pp(m: &mut crate::mon::Mon, slot: usize) -> String {
+    let id = m.moves()[slot];
+    let ups = m.pp_bonus(slot);
+    let name = crate::game_data::title_lookup(crate::tables::MOVES, id);
+    if !vitamins_apply(id) {
+        let cap = max_pp(id, ups);
+        m.set_pp(slot, cap);
+        return format!(
+            "{name}: PP ups left at {ups} (the game refuses PP Ups under 5 max PP); \
+             PP filled to {cap}/{cap}"
+        );
+    }
+    let cap = max_pp(id, MAX_PP_UPS);
+    if ups < MAX_PP_UPS {
+        m.set_pp_bonus(slot, MAX_PP_UPS);
+    }
+    m.set_pp(slot, cap);
+    format!("{name}: PP ups {ups} -> {MAX_PP_UPS}, PP filled to {cap}/{cap}")
+}
+
 /// The PP ladder for one move slot: (ups, max PP) for 0..=MAX_PP_UPS.
 pub fn pp_ladder(move_id: u16) -> [(u8, u8); 4] {
     [
@@ -69,6 +100,77 @@ pub fn pp_ladder(move_id: u16) -> [(u8, u8); 4] {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The user report: "The pp max button does not set the pp to what it would
+    /// be after 3 pp ups - it just makes it the normal amount." The per-slot
+    /// button was refilling PP to the cap for the UPS THE SLOT ALREADY HAD (0 ups
+    /// -> base PP), while the bulk "31 IVs / max PP" button raised the field to 3.
+    /// Same label, two promises. Both now call `apply_max_pp`.
+    #[test]
+    fn max_pp_raises_the_ups_field_and_fills_to_the_three_up_cap() {
+        let mut m = crate::mon::Mon::blank(0x1234_5678, "Garrett", 59, 50);
+        m.set_move(0, 7); // Fire Punch, base PP 15 in the game's own table
+        m.set_pp_bonus(0, 0);
+        m.set_pp(0, 5);
+
+        let note = apply_max_pp(&mut m, 0);
+        assert_eq!(
+            m.pp_bonus(0),
+            MAX_PP_UPS,
+            "the PP-Up field must reach what PP Max would set: {note}"
+        );
+        assert_eq!(
+            m.pps()[0],
+            max_pp(7, MAX_PP_UPS),
+            "current PP must be the 3-up cap: {note}"
+        );
+        assert_eq!(
+            max_pp(7, MAX_PP_UPS),
+            24,
+            "base 15 + 60% (the tree's ladder)"
+        );
+        assert!(
+            note.contains("Fire Punch") && note.contains("24/24"),
+            "the note must name the move and the result: {note}"
+        );
+        // The field is 2 bits per slot: the other slots keep their own ups.
+        m.set_pp_bonus(1, 2);
+        apply_max_pp(&mut m, 0);
+        assert_eq!(m.pp_bonus(1), 2, "another slot's ups must survive");
+    }
+
+    /// The ups half of the change is gated the way the game gates the items: PP Up
+    /// and PP Max refuse a move whose max PP is under 5 (`src/pokemon.c:3638`,
+    /// `:3914`), so on such a move the field must stay exactly where it was and
+    /// only current PP gets refilled - writing 3 there would be a value no item
+    /// could ever have produced.
+    #[test]
+    fn a_move_the_game_refuses_pp_ups_on_keeps_its_ups_field() {
+        let mut m = crate::mon::Mon::blank(0x1234_5678, "Garrett", 59, 50);
+        m.set_move(0, 166); // Sketch: base PP 1
+        m.set_pp_bonus(0, 1);
+        m.set_pp(0, 0);
+        assert!(
+            !vitamins_apply(166),
+            "the game refuses PP Ups on a 1 PP move"
+        );
+
+        let note = apply_max_pp(&mut m, 0);
+        assert_eq!(
+            m.pp_bonus(0),
+            1,
+            "the field must not be pushed past what the items can set: {note}"
+        );
+        assert_eq!(
+            m.pps()[0],
+            max_pp(166, 1),
+            "PP still refills to its own cap"
+        );
+        assert!(
+            note.contains("refuses"),
+            "the note must explain why: {note}"
+        );
+    }
 
     /// `CalculatePPWithBonus` (`src/pokemon.c:3412`) is `base + (base*20*ups)/100`.
     /// Hand-computed against the tree's own bases: POUND (id 1, base 35) gives

@@ -15,8 +15,16 @@ This version:
         #define SPECIES_VENUSAUR_MEGA  FORMS_START + 1
     so the full id space (megas / gigantamax / Rogue fake forms) is covered;
   * parses blocks with balanced braces instead of a fragile end pattern;
-  * follows `*_MISC_INFO` / `*_FAMILY_MISC_INFO` macro indirection, where the
-    base stat fields actually live for most species.
+  * expands FUNCTION-LIKE macro entries as well as bare ones. An entry may read
+        [SPECIES_XERNEAS_NEUTRAL] = XERNEAS_MISC_INFO(Neutral),
+        [SPECIES_ALCREMIE_RUBY]   = ALCREMIE_REGULAR_SPECIES_INFO(Berry, RubyCream, ...),
+    and the base stats live inside the macro body, which may itself call further
+    macros. Only `NAME` (object-like) indirection used to be followed, so every
+    species written with `NAME(args)` was silently missing from the table:
+    Xerneas (716), Zygarde (718), Alcremie (869), the 17 Arceus and 17 Silvally
+    forms, Genesect's drives, Minior's cores, Ogerpon's masks -- 201 species,
+    each reported by the editor as "no base stats in table", so stat
+    recalculation refused on a mon that very much has base stats.
 
 Set ROGUE_SRC to an expansion-branch checkout (must contain include/ and
 src/data/pokemon/species_info/). Defaults to ../../rogue-src relative to the repo.
@@ -95,6 +103,105 @@ def macro_bodies(text):
         body = " ".join(a.rstrip()[:-1] if a.rstrip().endswith("\\") else a for a in acc)
         out[m.group(1)] = out.get(m.group(1), "") + " " + body
     return out
+
+
+def function_macros(text):
+    """`#define NAME(p1, p2, ...) <body>` -> (params, body), continuations joined.
+
+    Species entries are frequently written as `= NAME(args),` with the designated
+    initializers living in the macro body, and the body may call other macros, so
+    these have to be expanded rather than skipped.
+    """
+    out = {}
+    for m in re.finditer(r"^[ \t]*#[ \t]*define[ \t]+([A-Z_][A-Z0-9_]*)\(([^)]*)\)", text, re.M):
+        rest = text[m.end():]
+        first, _, tail = rest.partition("\n")
+        acc = [first]
+        while acc[-1].rstrip().endswith("\\"):
+            nxt, _, tail = tail.partition("\n")
+            acc.append(nxt)
+        body = " ".join(a.rstrip()[:-1] if a.rstrip().endswith("\\") else a for a in acc)
+        params = [p.strip() for p in m.group(2).split(",") if p.strip()]
+        out[m.group(1)] = (params, body)
+    return out
+
+
+def split_args(arglist):
+    """Split a macro argument list on top-level commas only."""
+    out, depth, cur = [], 0, []
+    for ch in arglist:
+        if ch in "({[":
+            depth += 1
+        elif ch in ")}]":
+            depth -= 1
+        if ch == "," and depth == 0:
+            out.append("".join(cur).strip())
+            cur = []
+            continue
+        cur.append(ch)
+    if cur:
+        out.append("".join(cur).strip())
+    return out
+
+
+def expand(name, args, fmap, omac, depth=0):
+    """Textually expand a macro call, recursively, until no known macro remains.
+
+    Returns None when the expansion cannot be completed, so an unknown value
+    stays unknown instead of being guessed at.
+    """
+    if depth > 12:
+        return None
+    if name in fmap:
+        params, body = fmap[name]
+        if len(params) != len(args):
+            return None
+        # Longest param first: `Form` must not be eaten inside `Forme` or a
+        # longer parameter name.
+        for p in sorted(params, key=len, reverse=True):
+            body = re.sub(r"\b%s\b" % re.escape(p), lambda _m, p=p: args[params.index(p)], body)
+        return expand_calls(body, fmap, omac, depth + 1)
+    if name in omac:
+        return expand_calls(omac[name], fmap, omac, depth + 1)
+    return None
+
+
+def expand_calls(text, fmap, omac, depth=0):
+    """Expand any remaining `NAME(...)` calls / bare `NAME` object macros in text."""
+    for depth_i in range(6):
+        changed = False
+        for m in re.finditer(r"\b([A-Z_][A-Z0-9_]*)\s*(\(([^()]*)\))?", text):
+            name = m.group(1)
+            if name not in fmap and name not in omac:
+                continue
+            if name in fmap and m.group(3) is None:
+                continue  # function-like macro without args: nothing to expand
+            args = split_args(m.group(3) or "")
+            sub = expand(name, args, fmap, omac, depth)
+            if sub is None:
+                continue
+            text = text[:m.start()] + " " + sub + " " + text[m.end():]
+            changed = True
+            break
+        if not changed:
+            break
+    return text
+
+
+def macro_entries(text):
+    """Yield (SPECIES_X, macro_name, arglist) for `[SPECIES_X] = NAME(args),`."""
+    for m in re.finditer(r"\[\s*(SPECIES_\w+)\s*\]\s*=\s*([A-Z_][A-Z0-9_]*)\s*\(", text):
+        # balanced parens for the argument list
+        i, depth = m.end() - 1, 0
+        while i < len(text):
+            if text[i] == "(":
+                depth += 1
+            elif text[i] == ")":
+                depth -= 1
+                if depth == 0:
+                    break
+            i += 1
+        yield m.group(1), m.group(2), text[m.end():i]
 
 
 def blocks(text):
@@ -376,6 +483,7 @@ def main():
     print(f"build config: GEN_LATEST -> GEN_{gen_latest}; "
           f"P_UPDATED_STATS -> {raw.get('P_UPDATED_STATS', '?')}")
     stats, conflicts, unresolved = {}, [], []
+    total_macro_entries = 0
     for fn in sorted(os.listdir(INFO_DIR)):
         if not fn.endswith(".h"):
             continue
@@ -383,9 +491,33 @@ def main():
         # #define bodies come from the raw file (they are the source of values);
         # blocks are scanned from the pre-filtered file so #if/#else arms that the
         # build does not take can never contribute a field.
+        fmap = function_macros(rawtext)
         macros = macro_bodies(rawtext)
         text = apply_conditionals(rawtext, raw)
-        for name, body in blocks(text):
+        # Brace-form entries, then `= MACRO(args)` entries expanded to their body.
+        entries = list(blocks(text))
+        n_macro_before = len(entries)
+        for name, macro, arglist in macro_entries(text):
+            body = expand(macro, split_args(arglist), fmap, macros)
+            if body is None:
+                unresolved.append(f"{name} = {macro}(...) [expansion failed]")
+                continue
+            mm = re.search(r"\{", body)
+            if mm is None:
+                unresolved.append(f"{name} = {macro}(...) [no initializer block]")
+                continue
+            i, depth, j = mm.end(), 1, mm.end()
+            while j < len(body) and depth:
+                if body[j] == "{":
+                    depth += 1
+                elif body[j] == "}":
+                    depth -= 1
+                    if depth == 0:
+                        break
+                j += 1
+            entries.append((name, body[mm.end():j]))
+        total_macro_entries += len(entries) - n_macro_before
+        for name, body in entries:
             sp = ids.get(name)
             if sp is None or sp > max_id:
                 continue
@@ -399,7 +531,8 @@ def main():
 
     print(f"source      : {SRC}")
     print(f"species ids : {len(ids)} resolved, max id {max_id}")
-    print(f"base stats  : {len(stats)} parsed (max species id {max(stats)})")
+    print(f"base stats  : {len(stats)} parsed (max species id {max(stats)}); "
+          f"entries reached through function-like macros: {total_macro_entries}")
     if conflicts:
         print(f"CONFLICTS   : {len(conflicts)} -> {conflicts[:4]}")
     if unresolved:
@@ -417,6 +550,10 @@ def main():
     # Anchors copied from the source itself (not from memory) -- and one of them
     # already caught a wrong expectation here, which is exactly the point.
     # Table order is [HP, Atk, Def, Spe, SpA, SpD].
+    # 716 Xerneas, 869 Alcremie and 493 Arceus were all missing from the table
+    # (function-like macro entries skipped). Values below are read from the tree,
+    # not remembered: gen_6.h XERNEAS_MISC_INFO, gen_7.h ALCREMIE_*, gen_4.h
+    # ARCEUS_SPECIES_INFO. Table order is [HP, Atk, Def, Spe, SpA, SpD].
     anchors = {
         12: [60, 45, 50, 70, 90, 80],     # Butterfree (SpA 90 = P_UPDATED_STATS variant)
         19: [30, 56, 35, 72, 25, 35],     # Rattata
@@ -424,15 +561,32 @@ def main():
         59: [90, 110, 80, 95, 100, 80],   # Arcanine -- live save's cached SpDef 97
                                         # is only reproducible with base 80, not 70
         376: [80, 135, 130, 70, 95, 90],  # Metagross (live save: 193/155/98/107/120)
+        716: [126, 131, 95, 99, 131, 98],   # Xerneas
+        869: [65, 60, 75, 64, 110, 121],   # Alcremie, from ALCREMIE_MISC_INFO (gen_8.h:3266).
+                                          # NOT the national-dex numbers (80/85/95/110/110/80):
+                                          # Emerald Rogue rebalances base stats, so an anchor
+                                          # must be read from the tree, never remembered. The
+                                          # first version of this anchor WAS remembered, and the
+                                          # anchor check is what caught it.
+        493: [120, 120, 120, 120, 120, 120],  # Arceus (ARCEUS_SPECIES_INFO, gen_4.h)
     }
     for sp, want in anchors.items():
         if stats.get(sp) != want:
             sys.exit(f"anchor mismatch species {sp}: got {stats.get(sp)} want {want}")
     print("anchors     : OK (Raticate, Arcanine)")
 
+    # Constants the tree DECLARES but gives no species_info entry for: placeholder
+    # and unimplemented form ids (Scatterbug/Spewpa cloaks, Totem forms, Pikachu
+    # Partner, Rogue's custom megas in this checkout). The editor can name them, so
+    # "no base stats" is a real answer the user sees - it must say that the GAME has
+    # no data for the id, not that the editor failed to look it up.
+    no_entry = sorted(set(ids.values()) - set(stats))
+    no_entry = [i for i in no_entry if i <= max_id]
+
     lines = [
         "// Auto-generated by tools/gen_basestats_v2.py from the pokeemerald-rogue",
-        "// expansion branch species_info (incl. *_MISC_INFO indirection). Do not edit.",
+        "// expansion branch species_info (brace entries AND `= MACRO(args)` entries,",
+        "// incl. *_MISC_INFO indirection). Do not edit.",
         "pub fn base_stats(sp: u16) -> Option<[u16; 6]> {",
         "    match sp {",
     ]
@@ -440,9 +594,22 @@ def main():
         v = stats[sp]
         lines.append(f"        {sp} => Some([{v[0]}, {v[1]}, {v[2]}, {v[3]}, {v[4]}, {v[5]}]),")
     lines += ["        _ => None,", "    }", "}", ""]
+    lines += [
+        "/// Species ids the game's own `gSpeciesInfo` has no entry for: the constants",
+        "/// exist in `include/constants/species.h`, but no initializer block in",
+        "/// `src/data/pokemon/species_info/` defines stats for them (placeholder or",
+        "/// unimplemented form ids). Used to phrase a refusal accurately instead of",
+        "/// making it look like the editor's table is incomplete.",
+        "pub const SPECIES_WITHOUT_GAME_DATA: &[u16] = &[",
+    ]
+    for chunk in [no_entry[i:i + 8] for i in range(0, len(no_entry), 8)]:
+        lines.append("    " + " ".join(f"{i}," for i in chunk))
+    lines += ["];", ""]
+    n_no_entry = len(no_entry)
     with open(OUT, "w", encoding="utf-8") as fh:
         fh.write("\n".join(lines))
-    print(f"wrote       : {OUT} ({len(stats)} species)")
+    print(f"wrote       : {OUT} ({len(stats)} species with data, "
+          f"{n_no_entry} declared-without-data ids)")
 
 
 if __name__ == "__main__":
