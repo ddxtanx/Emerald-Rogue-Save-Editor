@@ -196,15 +196,22 @@ def pairs_table(text, name):
 
 
 def parse_editor_tables():
-    tables = _read("tables.rs")
-    textra = _read("tables_extra.rs")
+    # id/label tables are CSV in data/ now; tools/editor_tables.py is the one way to
+    # read them, because regexing them out of Rust broke exactly this script when the
+    # literals moved (RuntimeError: table SPECIES not found).
+    import editor_tables as et
+
     meta_txt = _read("species_meta.rs")
     pockets_txt = _read("item_pockets.rs")
 
-    species = pairs_table(tables, "SPECIES")
-    items = pairs_table(tables, "ITEMS")
-    sp_extra = pairs_table(textra, "SPECIES_EXTRA")
-    it_extra = pairs_table(textra, "ITEMS_EXTRA")
+    _sp_ids, sp_map = et.species()
+    _it_ids, it_map = et.items()
+    _sx_ids, sx_map = et.species_extra()
+    _ix_ids, ix_map = et.items_extra()
+    species = sorted(sp_map.items())
+    items = sorted(it_map.items())
+    sp_extra = sorted(sx_map.items())
+    it_extra = sorted(ix_map.items())
     meta_ids = [int(a) for a in
                 re.findall(r"\((\d+),\s*\d+,\s*\[\d+,\s*\d+,\s*\d+\]\)", meta_txt)]
     pocket_ids = [int(a) for a in re.findall(r"\((\d+),\s*\d+\),", pockets_txt)]
