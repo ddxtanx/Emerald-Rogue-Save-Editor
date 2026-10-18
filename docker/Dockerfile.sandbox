@@ -51,6 +51,33 @@ RUN pacman -Syu --noconfirm --needed \
     && pacman -Sc --noconfirm \
     && rm -rf /var/cache/pacman/pkg
 
+# X11 runtime libraries that winit (eframe's x11 backend) dlopens at start-up. These
+# are NOT build deps - the crate links nothing - so "no X11 dev packages needed" was
+# correct and still left the binary unrunnable:
+
+    # Library libxkbcommon-x11.so could not be loaded
+    #   panicked at xkbcommon-dl-0.4.2/src/x11.rs:59
+
+# which is how the live GUI pass failed the first time the new image was used. Arch
+# splits this deliberately: `libxkbcommon` ships libxkbcommon.so and libxkbregistry.so
+# only (confirmed with `pacman -Ql libxkbcommon`), and the X11 variant is its own
+# package, `libxkbcommon-x11` (confirmed against the live DB with `pacman -Ss
+# xkbcommon`). All names below verified the same way.
+RUN pacman -Syu --noconfirm --needed \
+        libxkbcommon \
+        libxkbcommon-x11 \
+        libx11 \
+        libx11-xcb \
+        libxcb \
+        libxcursor \
+        libxi \
+        libxrandr \
+        libxext \
+        libxrender \
+        xkeyboard-config \
+    && pacman -Sc --noconfirm \
+    && rm -rf /var/cache/pacman/pkg
+
 # Document work happens in this same workspace - worksheet PDFs and their .tex sources
 # (Exam-1-2-patched.tex, the 1271wkst previews) - so the image carries the LaTeX suite
 # and the PDF inspection/extraction tools too.
