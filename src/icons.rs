@@ -12,6 +12,7 @@
 use egui::{Color32, ColorImage, Context, Rect, TextureHandle, TextureOptions, Ui, Vec2};
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 /// Which icon namespace an id belongs to.
@@ -67,6 +68,30 @@ pub struct IconStore {
     /// yes. Probed once so the hint does not re-read a 900-entry directory every
     /// frame.
     items_probe: Cell<i8>,
+    /// Cached gap report (which ids of the game's own id space have no PNG on disk),
+    /// computed on first ask. `/assets/` is gitignored on purpose, so a fresh clone
+    /// has no art at all; the old behaviour was a silent letter badge with no way to
+    /// find out which id was missing art or what to do about it.
+    gaps: RefCell<Option<Gaps>>,
+}
+
+/// Which ids of one namespace have no art on disk, and what to do about it.
+#[derive(Clone, Debug)]
+pub struct ArtGap {
+    /// ids the editor can select in this namespace
+    pub total: usize,
+    /// how many of them have a PNG
+    pub with_art: usize,
+    /// a few missing ids with their names, so the message is actionable rather than
+    /// "some art is missing"
+    pub sample: Vec<(u16, &'static str)>,
+}
+
+/// Gap reports for both namespaces, computed once.
+#[derive(Clone, Debug, Default)]
+pub struct Gaps {
+    pub pokemon: Option<ArtGap>,
+    pub item: Option<ArtGap>,
 }
 
 impl Default for IconStore {
@@ -82,6 +107,7 @@ impl IconStore {
             cache: RefCell::new(HashMap::new()),
             tallies: RefCell::new([IconTally::default(); IconKind::COUNT]),
             items_probe: Cell::new(-1),
+            gaps: RefCell::new(None),
         }
     }
 
@@ -108,7 +134,8 @@ impl IconStore {
             Some(r) => {
                 let p = self.tally(IconKind::Pokemon);
                 let i = self.tally(IconKind::Item);
-                format!(
+                let gaps = self.art_gaps();
+                let mut out = format!(
                     "icons: pokemon {} shown / {} missing, items {} shown / {} missing \
                      (root {})",
                     p.resolved,
@@ -116,8 +143,115 @@ impl IconStore {
                     i.resolved,
                     i.missing,
                     r.display()
-                )
+                );
+                if let Some(g) = gaps.pokemon.filter(|g| g.with_art < g.total) {
+                    let sample = g
+                        .sample
+                        .iter()
+                        .map(|(id, n)| format!("{id} {n}"))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    out.push_str(&format!(
+                        " | pokemon: {} of {} ids have no art (e.g. {sample}); \
+                         fetch with `python3 tools/get_icons.py`",
+                        g.total - g.with_art,
+                        g.total
+                    ));
+                }
+                if let Some(g) = gaps.item.filter(|g| g.with_art < g.total) {
+                    out.push_str(&format!(
+                        " | items: {} of {} ids have no art; fetch with `python3 \
+                         tools/get_icons_from_source.py`",
+                        g.total - g.with_art,
+                        g.total
+                    ));
+                }
+                out
             }
+        }
+    }
+
+    /// Which ids the editor offers but has no PNG for, per namespace.
+    ///
+    /// Compared against the game's own id space (the species / item tables), not
+    /// against the ids some picker happened to request, so "you are missing the art
+    /// for Xerneas" is true on the first frame instead of only after you look for
+    /// Xerneas. One directory read per namespace, then cached.
+    pub fn art_gaps(&self) -> Gaps {
+        if let Some(g) = self.gaps.borrow().as_ref() {
+            return g.clone();
+        }
+        let gaps = Gaps {
+            pokemon: self.gap_for(IconKind::Pokemon, crate::game_data::all_species()),
+            item: self.gap_for(IconKind::Item, crate::game_data::all_items()),
+        };
+        *self.gaps.borrow_mut() = Some(gaps.clone());
+        gaps
+    }
+
+    fn gap_for(&self, kind: IconKind, ids: &[(u16, &'static str)]) -> Option<ArtGap> {
+        let root = self.root()?;
+        let dir = match kind.dir() {
+            Some(d) => root.join(d),
+            None => return None,
+        };
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            return Some(ArtGap {
+                total: ids.len(),
+                with_art: 0,
+                sample: ids.iter().take(4).copied().collect(),
+            });
+        };
+        let mut on_disk: HashSet<u32> = HashSet::new();
+        for e in entries.flatten() {
+            let name = e.file_name().to_string_lossy().into_owned();
+            if let Some(stem) = name.strip_suffix(".png") {
+                if let Ok(id) = stem.parse::<u32>() {
+                    on_disk.insert(id);
+                }
+            }
+        }
+        let with_art = ids
+            .iter()
+            .filter(|(id, _)| on_disk.contains(&(*id as u32)))
+            .count();
+        let sample = ids
+            .iter()
+            .filter(|(id, _)| !on_disk.contains(&(*id as u32)))
+            .take(4)
+            .copied()
+            .collect();
+        Some(ArtGap {
+            total: ids.len(),
+            with_art,
+            sample,
+        })
+    }
+
+    /// A note for one species id when its sprite is not on disk: the label, the id,
+    /// and the command that fetches it. This is what makes a letter badge explain
+    /// itself in the place the user noticed it.
+    pub fn species_art_note(&self, species: u16) -> Option<String> {
+        // No assets root at all: the status line already says to run the script, and
+        // repeating it under every species field would be noise.
+        if self.root().is_none() {
+            return None;
+        }
+        if self.dir_has_pokemon(species) {
+            return None;
+        }
+        let label = crate::game_data::species_name(species);
+        Some(format!(
+            "no sprite on disk for {species} ({label}); fetch art with \
+             `python3 tools/get_icons.py`"
+        ))
+    }
+
+    /// Direct on-disk check for one pokemon id (cheap: one `Path::exists`).
+    fn dir_has_pokemon(&self, id: u16) -> bool {
+        match self.root() {
+            Some(r) => r.join("pokemon").join(format!("{id}.png")).is_file(),
+            None => false,
         }
     }
 
@@ -541,5 +675,62 @@ mod tests {
             bad.len(),
             &bad[..bad.len().min(10)]
         );
+    }
+    /// The status line is the only place a fresh clone is told why every row is a
+    /// letter badge, so it has to name the gap and the command that fixes it.
+    #[test]
+    fn the_status_line_names_the_gap_and_the_command_that_fixes_it() {
+        let store = IconStore::new();
+        let line = store.status();
+        let gaps = store.art_gaps();
+        let missing = gaps
+            .pokemon
+            .map(|g| g.total - g.with_art)
+            .expect("assets dir in a repo checkout");
+        if missing > 0 {
+            assert!(line.contains("no art"), "{line}");
+            assert!(line.contains("tools/get_icons.py"), "{line}");
+            assert!(line.contains("tools/get_icons_from_source.py"), "{line}");
+        }
+        // A checkout with no assets at all says the same thing more bluntly.
+        let bare = IconStore::at_root(None);
+        assert!(
+            bare.status().contains("tools/get_icons.py"),
+            "{}",
+            bare.status()
+        );
+    }
+
+    /// The gap report answers "which ids have no art" from the game's id space, not
+    /// from whatever a picker happened to request, so a fresh clone is told to fetch
+    /// art instead of quietly showing letter badges.
+    #[test]
+    fn the_gap_report_counts_the_games_id_space_against_the_files() {
+        let store = IconStore::new();
+        let gaps = store.art_gaps();
+        let g = gaps.pokemon.expect("the repo checkout has assets/pokemon");
+        assert!(g.total >= 1500, "species id space: {}", g.total);
+        assert!(g.with_art > 1400, "resolved art: {}", g.with_art);
+        let absent = g.total - g.with_art;
+        // The ids the game declares but has no species_info entry for (Scatterbug
+        // cloaks, Mothim cloaks, Totem forms...) have no public art either.
+        assert!((50..=90).contains(&absent), "ids without art: {absent}");
+        assert!(!g.sample.is_empty(), "a gap this size must be sampled");
+        for (id, name) in &g.sample {
+            assert!(!store.dir_has_pokemon(*id), "{id} is in the missing sample");
+            assert!(
+                !name.is_empty(),
+                "a sampled gap needs its label to be useful"
+            );
+        }
+        // And the note the mon panel shows: silent for stocked art, explicit for a
+        // gap, and it names the command either way.
+        assert!(store.species_art_note(25).is_none(), "Pikachu has art");
+        let gap_id = g.sample[0].0;
+        let note = store
+            .species_art_note(gap_id)
+            .expect("a gap id must explain itself");
+        assert!(note.contains("tools/get_icons.py"), "{note}");
+        assert!(note.contains(&gap_id.to_string()), "{note}");
     }
 }

@@ -405,6 +405,13 @@ impl Editor {
             }
             ui.end_row();
 
+            // A letter badge in this very row is what made the missing art look like
+            // a bug in the editor. Say which id has no sprite and how to fetch it.
+            if let Some(note) = self.icons.species_art_note(rec.species()) {
+                ui.colored_label(egui::Color32::from_rgb(220, 150, 60), note);
+                ui.end_row();
+            }
+
             ui.label("Nickname");
             let mut nick = rec.nickname();
             if ui.add(egui::TextEdit::singleline(&mut nick)).changed() {
