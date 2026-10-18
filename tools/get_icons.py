@@ -73,7 +73,59 @@ ITEMS_DIR = ASSETS / "icons" / "items"
 CACHE = ASSETS / ".cache"
 MANIFEST = ASSETS / "manifest.json"
 
-GAME_SPECIES_H = ROOT.parent / "rogue-src" / "include" / "constants" / "species.h"
+def _species_header_candidates():
+    """Places the Emerald Rogue source tree might live, most specific first.
+
+    ROOT.parent / "rogue-src" was the only one tried, which silently degraded the run
+    on a machine where the game tree sits elsewhere: without the header the id -> name
+    mapping falls back to the editor's own labels, and those name forms ("Xerneas
+    Neutral", "Arceus Normal") are not PokeAPI resources, so a couple hundred ids came
+    out unmapped. The workspace copy is included because that is where the agent's
+    checkout lives.
+    """
+    out = []
+    env = os.environ.get("ER_ROGUE_SRC")
+    if env:
+        out.append(Path(env))
+    home = Path.home()
+    for cand in [
+        ROOT.parent / "rogue-src",
+        ROOT.parent / "Emerald-Rogue",
+        home / ".hermes" / "workspace" / "rogue-src",
+        Path("/workspace/hermes/rogue-src"),
+        home / "src" / "rogue-src",
+        home / ".local" / "opt" / "rogue-src",
+    ]:
+        out.append(cand)
+    # anything that looks like a Rogue checkout one level under a couple of parents
+    for base in (ROOT.parent, home / ".local" / "opt", home / "src"):
+        try:
+            for entry in sorted(base.iterdir()):
+                if entry.is_dir() and "rogue" in entry.name.lower():
+                    out.append(entry)
+        except OSError:
+            continue
+    seen, uniq = set(), []
+    for c in out:
+        if c not in seen:
+            seen.add(c)
+            uniq.append(c)
+    return uniq
+
+
+def find_species_header(explicit=None):
+    """(path or None, candidates tried). `explicit` wins and is not searched past."""
+    cands = ([Path(explicit)] if explicit else _species_header_candidates())
+    tried = []
+    for c in cands:
+        h = c / "include" / "constants" / "species.h" if c.is_dir() or explicit else c
+        tried.append(str(h))
+        if h.is_file():
+            return h, tried
+    return None, tried
+
+
+GAME_SPECIES_H = None  # resolved in main(); kept as a module name for the manifest
 
 # ---------------------------------------------------------------------------
 # sources / style
@@ -532,6 +584,9 @@ def download(out_path, url, force, statuses, stats):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--only", choices=["species", "items"])
+    ap.add_argument("--rogue-src", default=None,
+                    help="path to the Emerald Rogue source tree (the directory "
+                         "holding include/constants/species.h); or set ER_ROGUE_SRC")
     ap.add_argument("--with-items", action="store_true",
                     help="also fetch item sprites from PokeAPI; by default item icons are left to "
                          "get_icons_from_source.py, which builds them from the game's own art")
@@ -556,13 +611,16 @@ def main():
         f"{len(extras['meta_only_ids'])} meta-only unnamed ids")
 
     game_names = None
-    if GAME_SPECIES_H.exists():
+    GAME_SPECIES_H, tried = find_species_header(args.rogue_src)
+    if GAME_SPECIES_H is not None:
+        log(f"game header: {GAME_SPECIES_H}")
         game_names = parse_game_species(GAME_SPECIES_H)
         log(f"game species.h: {len(game_names)} constants resolved "
             f"(authoritative id -> name)")
     else:
-        log(f"WARNING: {GAME_SPECIES_H} not found; falling back to editor table "
+        log("WARNING: no game species.h found; falling back to editor table "
             f"names (form-heavy ids will be under-mapped)")
+        log("         pass --rogue-src PATH (or set ER_ROGUE_SRC); looked in: " + ", ".join(tried[:6]))
 
     # listings (cached)
     refresh = args.refresh_lists
