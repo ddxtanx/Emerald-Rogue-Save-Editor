@@ -33,6 +33,8 @@ ARG SANDBOX_GID=1000
 #   procps-ng   pkill/pgrep/ps (the pkill self-match trap is documented in the skill)
 #   git         it vanished once and blocked every commit for hours
 RUN pacman -Syu --noconfirm --needed \
+        uv \
+        python-uv \
         base-devel \
         git \
         rust \
@@ -67,7 +69,6 @@ RUN pacman -Syu --noconfirm --needed \
         libxkbcommon \
         libxkbcommon-x11 \
         libx11 \
-        libx11-xcb \
         libxcb \
         libxcursor \
         libxi \

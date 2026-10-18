@@ -679,20 +679,21 @@ mod tests {
     /// The status line is the only place a fresh clone is told why every row is a
     /// letter badge, so it has to name the gap and the command that fixes it.
     #[test]
+    /// The status line is the only place a fresh clone learns why every row is a letter
+    /// badge, so it has to name the gap and the command that fixes it - on a fixture, so
+    /// it also runs where no art was ever fetched.
+    #[test]
     fn the_status_line_names_the_gap_and_the_command_that_fixes_it() {
-        let store = IconStore::new();
-        let line = store.status();
-        let gaps = store.art_gaps();
-        let missing = gaps
-            .pokemon
-            .map(|g| g.total - g.with_art)
-            .expect("assets dir in a repo checkout");
-        if missing > 0 {
-            assert!(line.contains("no art"), "{line}");
-            assert!(line.contains("tools/get_icons.py"), "{line}");
-            assert!(line.contains("tools/get_icons_from_source.py"), "{line}");
-        }
-        // A checkout with no assets at all says the same thing more bluntly.
+        let root = temp_root("status-gaps");
+        std::fs::create_dir_all(root.join("pokemon")).unwrap();
+        std::fs::create_dir_all(root.join("items")).unwrap();
+        std::fs::write(root.join("items/68.png"), b"stub").unwrap();
+        let line = IconStore::at_root(Some(root.clone())).status();
+        assert!(line.contains("no art"), "{line}");
+        assert!(line.contains("tools/get_icons.py"), "{line}");
+        assert!(line.contains("tools/get_icons_from_source.py"), "{line}");
+        std::fs::remove_dir_all(&root).unwrap();
+
         let bare = IconStore::at_root(None);
         assert!(
             bare.status().contains("tools/get_icons.py"),
@@ -701,21 +702,52 @@ mod tests {
         );
     }
 
+    /// Locally, when the fetched art tree is present, pin how complete it is: the only
+    /// species ids without art should be the ones the game itself declares with no
+    /// `species_info` entry. Self-skipping, because CI has no art tree.
+    #[test]
+    fn the_real_asset_tree_is_nearly_complete() {
+        let store = IconStore::new();
+        let Some(_) = store.root() else {
+            eprintln!("no assets/icons tree present (run `python3 tools/get_icons.py`); skipping");
+            return;
+        };
+        let g = store.art_gaps().pokemon.expect("root present");
+        assert!(g.with_art > 1400, "resolved art: {}", g.with_art);
+        let absent = g.total - g.with_art;
+        // Scatterbug cloaks, Mothim cloaks, Totem forms, Shadow Lugia and friends.
+        assert!((50..=90).contains(&absent), "ids without art: {absent}");
+    }
+
     /// The gap report answers "which ids have no art" from the game's id space, not
     /// from whatever a picker happened to request, so a fresh clone is told to fetch
     /// art instead of quietly showing letter badges.
     #[test]
+    /// Which ids lack art is measured against a two-file fixture, not against the
+    /// gitignored asset tree: CI never has that tree, and a test asserting it exists
+    /// fails there while passing locally (which is exactly how this test broke the
+    /// build). The real tree is pinned by `the_real_asset_tree_is_nearly_complete`.
+    #[test]
     fn the_gap_report_counts_the_games_id_space_against_the_files() {
-        let store = IconStore::new();
+        let root = temp_root("gaps");
+        std::fs::create_dir_all(root.join("pokemon")).unwrap();
+        std::fs::create_dir_all(root.join("items")).unwrap();
+        std::fs::write(root.join("pokemon/25.png"), b"stub").unwrap();
+        let store = IconStore::at_root(Some(root.clone()));
+
         let gaps = store.art_gaps();
-        let g = gaps.pokemon.expect("the repo checkout has assets/pokemon");
-        assert!(g.total >= 1500, "species id space: {}", g.total);
-        assert!(g.with_art > 1400, "resolved art: {}", g.with_art);
-        let absent = g.total - g.with_art;
-        // The ids the game declares but has no species_info entry for (Scatterbug
-        // cloaks, Mothim cloaks, Totem forms...) have no public art either.
-        assert!((50..=90).contains(&absent), "ids without art: {absent}");
-        assert!(!g.sample.is_empty(), "a gap this size must be sampled");
+        let g = gaps.pokemon.expect("a root means a gap report");
+        assert_eq!(
+            g.total,
+            crate::game_data::all_species().len(),
+            "the gap is measured against the game's id space, not the file count"
+        );
+        assert_eq!(g.with_art, 1, "the fixture holds one sprite");
+        assert_eq!(
+            g.sample.len(),
+            4,
+            "a few named examples is what makes it actionable"
+        );
         for (id, name) in &g.sample {
             assert!(!store.dir_has_pokemon(*id), "{id} is in the missing sample");
             assert!(
@@ -723,14 +755,19 @@ mod tests {
                 "a sampled gap needs its label to be useful"
             );
         }
-        // And the note the mon panel shows: silent for stocked art, explicit for a
-        // gap, and it names the command either way.
-        assert!(store.species_art_note(25).is_none(), "Pikachu has art");
+
+        // The per-row note: silent where art exists, explicit where it does not, and it
+        // names the command either way.
+        assert!(
+            store.species_art_note(25).is_none(),
+            "25 has art in the fixture"
+        );
         let gap_id = g.sample[0].0;
         let note = store
             .species_art_note(gap_id)
             .expect("a gap id must explain itself");
         assert!(note.contains("tools/get_icons.py"), "{note}");
         assert!(note.contains(&gap_id.to_string()), "{note}");
+        std::fs::remove_dir_all(&root).unwrap();
     }
 }
