@@ -1,0 +1,137 @@
+# syntax=docker/dockerfile:1
+# Sandbox image for Hermes' docker terminal backend, sized around the Emerald Rogue
+# save-editor loop: `cargo build && cargo test`, plus a real (headless) GUI pass with
+# Xvfb + screenshots, plus the python generators that read the game tree.
+#
+# Why an image at all: Hermes runs this container with no-new-privileges and as a bare
+# uid, so `sudo` refuses ("no new privileges flag is set") and `pacman -S` at runtime is
+# impossible. Anything the agent needs has to be baked in at build time.
+#
+# Build (from the repo root, see docker/build-sandbox.sh):
+#   docker build -f docker/Dockerfile.sandbox -t er-sandbox:latest .
+# Then point Hermes at it: terminal.docker_image: "er-sandbox:latest" (docker/README.md).
+
+FROM archlinux:latest
+
+# Hermes' docker_run_as_host_user setting execs as the host uid/gid. That is how the
+# sandbox ends up with uid 1000 and no passwd entry at all: `whoami` fails, $HOME is
+# garbage, and everything that caches under ~ breaks - cargo's registry, git's identity,
+# pip's caches. Two defences, because the uid belongs to the host and can change:
+#   1. pre-create a user at the uid you actually run as (ARG; rebuild to change it), and
+#   2. never depend on $HOME: every cache below is a baked, world-writable absolute path.
+ARG SANDBOX_UID=1000
+ARG SANDBOX_GID=1000
+
+# One layer, then the package cache is dropped: an Arch image with a warm pacman cache
+# is hundreds of MB of things we will never reinstall.
+#   base-devel  gcc/make/pkgconf for anything with a build script (ring, lzma)
+#   rust        cargo + rustc on PATH - deliberately NOT rustup, which is how a
+#               recreated container lost the toolchain shims this session
+#   mesa        libGL/libEGL + llvmpipe, what lets eframe/glow render under Xvfb
+#   xorg-server-xvfb, xdotool, xorg-xwininfo, imagemagick  the live-GUI loop: run the
+#               window, drive it, screenshot it, crop it, diff it
+#   procps-ng   pkill/pgrep/ps (the pkill self-match trap is documented in the skill)
+#   git         it vanished once and blocked every commit for hours
+RUN pacman -Syu --noconfirm --needed \
+        base-devel \
+        git \
+        rust \
+        python \
+        mesa \
+        xorg-server-xvfb \
+        xdotool \
+        xorg-xwininfo \
+        imagemagick \
+        procps-ng \
+        which \
+        file \
+        curl \
+        ca-certificates \
+        ripgrep \
+    && pacman -Sc --noconfirm \
+    && rm -rf /var/cache/pacman/pkg
+
+# Document work happens in this same workspace - worksheet PDFs and their .tex sources
+# (Exam-1-2-patched.tex, the 1271wkst previews) - so the image carries the LaTeX suite
+# and the PDF inspection/extraction tools too.
+#
+# texlive is split on Arch: basic + latexrecommended (amsmath, graphicx, xcolor,
+# latexmk) + latexextra (standalone.cls, preview, tikz etc.) + the two font sets. That
+# combination is roughly 1.5-2 GB unpacked; drop fontsextra/latexextra if you want a
+# lean image and accept that some worksheets will stop compiling.
+# texlive-binextra is not optional for this workspace: it is the package that provides
+# `latexmk` (confirmed on the live image with `pacman -Ss latexmk` ->
+# extra/texlive-binextra), which is how the worksheet .tex sources get built in one
+# pass without hand-managing biber/makeglossaries ordering.
+RUN pacman -Syu --noconfirm --needed \
+        texlive-basic \
+        texlive-binextra \
+        texlive-latex \
+        texlive-latexrecommended \
+        texlive-latexextra \
+        texlive-fontsrecommended \
+        texlive-fontsextra \
+        texlive-pictures \
+        texlive-xetex \
+        texlive-luatex \
+        poppler \
+        poppler-data \
+        ghostscript \
+        qpdf \
+        mupdf \
+        tesseract \
+        tesseract-data-eng \
+    && pacman -Sc --noconfirm \
+    && rm -rf /var/cache/pacman/pkg
+
+# Second tier: names I have not confirmed against archlinux.org, so each one is
+# independent and a wrong guess shows up in the build log as MISSING rather than
+# failing the whole image. Prune this list once it has stopped printing anything.
+RUN for p in perl-image-exiftool python-pypdf python-pillow ocrmypdf unpaper \
+             img2pdf netpbm gifsicle optipng; do \
+        pacman -S --noconfirm --needed "$p" >/dev/null 2>&1 || echo "  optional package MISSING: $p"; \
+    done; pacman -Sc --noconfirm; rm -rf /var/cache/pacman/pkg
+
+# Python-side PDF work (extract text, page through forms, tables) is what the pdf /
+# latex-worksheet skills actually drive, and those are not all packaged on Arch.
+RUN python -m venv /opt/pdfenv \
+    && /opt/pdfenv/bin/pip install --no-cache-dir pypdf pymupdf pdfplumber \
+    && chmod -R 0777 /opt/pdfenv
+ENV PATH=/opt/pdfenv/bin:$PATH
+
+RUN groupadd -g ${SANDBOX_GID} hermes 2>/dev/null || true \
+    && useradd -u ${SANDBOX_UID} -g ${SANDBOX_GID} -d /opt/home -s /bin/bash hermes 2>/dev/null || true
+
+# World-writable on purpose. With docker_run_as_host_user the runtime uid is whatever the
+# host user is, and a build arg that drifts from it should degrade to "caches are shared"
+# rather than "cargo cannot create a home directory" - which is the exact failure mode
+# this session hit when `.cargo` disappeared under a running build.
+RUN mkdir -p /opt/cargo /opt/home /opt/tmp /opt/gitconfig.d \
+    && printf '[user]\n\tname = er-save-editor\n\temail = hermes@localhost\n[init]\n\tdefaultBranch = main\n' \
+         > /opt/gitconfig.d/config \
+    && chmod -R 0777 /opt/cargo /opt/home /opt/tmp /opt/gitconfig.d
+
+ENV HOME=/opt/home
+ENV CARGO_HOME=/opt/cargo
+ENV XDG_CACHE_HOME=/opt/home/.cache
+ENV XDG_CONFIG_HOME=/opt/home/.config
+ENV TMPDIR=/opt/tmp
+# Git in user mode has no writable ~, so `git commit` fails with "identity not set" and
+# cannot even write ~/.gitconfig. Point it at a baked config on a writable path; override
+# per-repo with `git config -f /opt/gitconfig.d/config user.name ...` if you want a real
+# identity, which is what the er-save-editor commits use (ddxtanx).
+ENV GIT_CONFIG_GLOBAL=/opt/gitconfig.d/config
+# Software GL: there is no GPU in the sandbox, and llvmpipe is what made the editor
+# renderable for screenshots under Xvfb.
+ENV LIBGL_ALWAYS_SOFTWARE=1
+ENV GALLIUM_DRIVER=llvmpipe
+ENV MESA_GL_VERSION_OVERRIDE=3.3
+
+# Warm the crates.io registry. `cargo fetch` only needs Cargo.toml + Cargo.lock, so the
+# build context can supply them without the repo's source (the repo is bind-mounted at
+# runtime, not copied in). Without this, a recreated container spends its first build
+# re-downloading the egui/eframe/glow tree, which is what cost a few minutes today.
+COPY Cargo.toml Cargo.lock /warm/
+RUN cd /warm && cargo fetch --locked; rm -rf /warm
+
+WORKDIR /workspace/hermes
