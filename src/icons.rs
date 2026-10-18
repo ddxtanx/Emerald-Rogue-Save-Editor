@@ -115,7 +115,7 @@ impl IconStore {
     /// the counters and the status line be pinned without the real, gitignored
     /// `assets/` tree being present.
     #[cfg(test)]
-    fn at_root(root: Option<PathBuf>) -> Self {
+    pub(crate) fn at_root(root: Option<PathBuf>) -> Self {
         IconStore {
             root,
             ..IconStore::new()
@@ -252,6 +252,21 @@ impl IconStore {
         match self.root() {
             Some(r) => r.join("pokemon").join(format!("{id}.png")).is_file(),
             None => false,
+        }
+    }
+
+    /// A fixed-length summary for the top bar: two counters, never a sentence. The
+    /// long form - which ids are missing, and the command that fetches them - lives in
+    /// the Diagnostics pane, because a strip of that length pushed the file name off
+    /// the bar.
+    pub fn art_summary(&self) -> String {
+        let gaps = self.art_gaps();
+        match (gaps.pokemon, gaps.item) {
+            (Some(p), Some(i)) => format!(
+                "icons {}/{} | items {}/{}",
+                p.with_art, p.total, i.with_art, i.total
+            ),
+            _ => "icons: none on disk".to_string(),
         }
     }
 

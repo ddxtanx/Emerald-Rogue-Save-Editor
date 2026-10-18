@@ -135,6 +135,11 @@ pub(crate) struct Editor {
     // one-line feedback from mon-editor actions that cannot self-correct (e.g. "no
     // base stats in table for this species")
     mon_note: Option<String>,
+    /// The asset/icon diagnostics live in their own pane. They were inline in the top
+    /// bar, where the honest wording ("pokemon: 70 of 1573 ids have no art (e.g. 1435
+    /// Lugia Shadow, …); fetch with `python3 tools/get_icons.py` | items: 35 of 914 …")
+    /// is far too long for one row: it pushed the file name off the bar.
+    diagnostics_open: bool,
 }
 
 impl Default for Editor {
@@ -155,6 +160,7 @@ impl Default for Editor {
             mon_popup: false,
             icons: IconStore::new(),
             mon_note: None,
+            diagnostics_open: true,
             dirty: false,
         }
     }
@@ -805,6 +811,71 @@ impl Editor {
     }
 
     // ---- roster panel ------------------------------------------------------
+    /// The asset diagnostics: tallies, the ids that have no art, and the exact
+    /// commands - as selectable text, so the fix is a copy-paste rather than a
+    /// transcription off a cramped status strip.
+
+    /// The asset diagnostics: tallies, the ids that have no art, and the exact
+    /// commands - as selectable text, so the fix is a copy-paste rather than a
+    /// transcription off a cramped status strip.
+    fn diagnostics_ui(&mut self, ui: &mut egui::Ui) {
+        ui.label(egui::RichText::new("Diagnostics").strong());
+        ui.separator();
+        ui.label(egui::RichText::new("icon art").strong());
+        // The one-line report: in a wrapping pane it is informative rather than
+        // intrusive, and it is what the top bar's two counters point at.
+        ui.label(self.icons.status());
+        let gaps = self.icons.art_gaps();
+        for (what, kind) in [("Pokémon sprites", true), ("item icons", false)] {
+            let g = if kind {
+                gaps.pokemon.clone()
+            } else {
+                gaps.item.clone()
+            };
+            let Some(g) = g else {
+                ui.weak(format!("{what}: no assets/icons directory on disk"));
+                continue;
+            };
+            let total = g.total;
+            let absent = total - g.with_art;
+            if absent == 0 {
+                ui.label(format!("{what}: all {total} ids have art"));
+                ui.separator();
+                continue;
+            }
+            ui.label(format!(
+                "{what}: {absent} of {total} ids have no art on disk"
+            ));
+            for (id, name) in &g.sample {
+                ui.label(format!("  {id} - {name}"));
+            }
+            if absent > g.sample.len() {
+                ui.weak(format!("... and {} more", absent - g.sample.len()));
+            }
+            let cmd = if kind {
+                "python3 tools/get_icons.py"
+            } else {
+                "python3 tools/get_icons_from_source.py"
+            };
+            ui.label(egui::RichText::new("fetch it with, from the repository root:").italics());
+            if ui
+                .add(egui::Label::new(egui::RichText::new(cmd).monospace()).selectable(true))
+                .clicked()
+            {
+                ui.output_mut(|o| o.copied_text = cmd.to_string());
+                self.status = format!("copied: {cmd}");
+            }
+            ui.label(
+                egui::RichText::new(
+                    "the art is fetched, never committed: a fresh clone starts with none, \
+                     and rows fall back to a generated letter badge",
+                )
+                .weak(),
+            );
+            ui.separator();
+        }
+    }
+
     fn roster_ui(&mut self, ui: &mut egui::Ui) {
         // Snapshot everything the panel draws. The save must not stay borrowed across
         // the row helpers (edit / move / delete), which need `&mut self`: with the old
@@ -1142,8 +1213,21 @@ impl eframe::App for Editor {
                 } else {
                     ui.label("no file open");
                 }
+                // Short by construction: two counters and a toggle. The sentences that
+                // explain WHICH ids are missing and HOW to fetch them are in the
+                // Diagnostics pane, where they have room to wrap.
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.weak(self.icons.status());
+                    if ui
+                        .selectable_label(self.diagnostics_open, "Diagnostics")
+                        .on_hover_text(
+                            "sprite and icon art: what is missing, and the \
+                                        command that fetches it",
+                        )
+                        .clicked()
+                    {
+                        self.diagnostics_open = !self.diagnostics_open;
+                    }
+                    ui.weak(self.icons.art_summary());
                 });
             });
             if self.file.is_some() {
@@ -1167,8 +1251,24 @@ impl eframe::App for Editor {
         });
         egui::TopBottomPanel::bottom("bottom").show(ctx, |ui| {
             ui.label(&self.status);
-            ui.label(self.icons.status());
         });
+
+        // A bottom pane, not a side one: at the window widths this app is used at the
+        // roster plus the width-pinned editor leave no room beside the centre, and a
+        // measured run put the side panel's divider 98 px from the edge - the report
+        // was unreadable there. Bottom gets the full width, and its own scrollbar.
+        if self.file.is_some() && self.diagnostics_open {
+            egui::TopBottomPanel::bottom("diagnostics")
+                .default_height(190.0)
+                .resizable(true)
+                .show(ctx, |ui| {
+                    egui::ScrollArea::vertical()
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| {
+                            self.diagnostics_ui(ui);
+                        });
+                });
+        }
 
         if self.file.is_some() {
             egui::SidePanel::left("mons")
@@ -1192,7 +1292,11 @@ impl eframe::App for Editor {
                     "Works with mGBA saves (~/.config/mGBA/saves or the emulator Saves folder).",
                 );
                 ui.add_space(8.0);
-                ui.weak(self.icons.status());
+                ui.weak(self.icons.art_summary());
+                ui.weak(
+                    "art is fetched, not shipped: run `python3 tools/get_icons.py` \
+                         (sprites) and `python3 tools/get_icons_from_source.py` (items)",
+                );
                 return;
             }
             // Everything in the centre is scrollable, including the Rogue tab with a dozen
@@ -1224,7 +1328,6 @@ impl eframe::App for Editor {
 
 // The stat formula lives in crate::mon (mirroring CalStat); mon_ui sees it
 // through `use super::*` -> the glob re-export of crate::mon::* below.
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2106,6 +2209,84 @@ mod tests {
             without.2,
             labels
         );
+    }
+
+    /// The top bar carries a two-counter summary; the sentences about which ids are
+    /// missing and how to fetch them live in the Diagnostics pane, where they can wrap.
+    /// Asserted against a fixture store, so it runs the same with or without fetched
+    /// art (the art is gitignored, and CI has never fetched it).
+    #[test]
+    fn the_diagnostics_pane_names_the_missing_art_and_the_command() {
+        let Some(mut app) = editor_with_save() else {
+            return;
+        };
+        let root = std::env::temp_dir().join(format!("er-diagnostics-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("pokemon")).unwrap();
+        std::fs::create_dir_all(root.join("items")).unwrap();
+        std::fs::write(root.join("pokemon/25.png"), b"stub").unwrap();
+        app.icons = crate::icons::IconStore::at_root(Some(root.clone()));
+
+        // Compact means: two counters, and no sentences - specifically no command text,
+        // which is what made the top bar wrap past the window edge.
+        let summary = app.icons.art_summary();
+        assert!(summary.starts_with("icons 1/"), "{summary}");
+        assert!(summary.contains(" | items 0/"), "{summary}");
+        assert!(
+            !summary.contains("python3"),
+            "top bar stays short: {summary}"
+        );
+        assert!(
+            !summary.contains("no art"),
+            "no sentences up top: {summary}"
+        );
+
+        // The pane itself: gap counts per namespace and the copy-pasteable commands.
+        let ctx = egui::Context::default();
+        let mut labels = Vec::new();
+        for _ in 0..3 {
+            let out = ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(320.0, 900.0),
+                    )),
+                    focused: true,
+                    ..Default::default()
+                },
+                |ctx| {
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        app.diagnostics_ui(ui);
+                    });
+                },
+            );
+            labels = galleys(&out).into_iter().map(|(t, _)| t).collect();
+        }
+        let joined = labels.join("\n");
+        assert!(joined.contains("Diagnostics"), "{joined}");
+        assert!(
+            joined.contains("ids have no art on disk"),
+            "the pane must state the gap: {joined}"
+        );
+        assert!(
+            joined.contains("python3 tools/get_icons.py"),
+            "and the command that fixes it: {joined}"
+        );
+        assert!(
+            joined.contains("python3 tools/get_icons_from_source.py"),
+            "for both namespaces: {joined}"
+        );
+        assert!(
+            labels
+                .iter()
+                .any(|t| t.starts_with("Pok") && t.contains("no art on disk")),
+            "named per namespace rather than one merged line: {labels:?}"
+        );
+        assert!(
+            joined.contains("the art is fetched, never committed"),
+            "a fresh clone needs to be told the art is fetched, not missing by bug"
+        );
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     fn paint_in(
