@@ -2036,6 +2036,78 @@ mod tests {
 
     /// Shared harness for the tests below. Note `t.pos`, not `galley.rect`: the
     /// galley rect is local, so only `pos` is a screen position.
+    /// The Form control is painted only for a mon whose family actually has forms.
+    /// Which mons qualify is read from the save rather than hard-coded, because the
+    /// family tables are the thing under test; the label is matched as its own
+    /// galley so a word like "information" cannot satisfy it.
+    #[test]
+    fn the_form_control_is_painted_only_for_a_mon_whose_family_has_forms() {
+        let Some(mut app) = editor_with_save() else {
+            return;
+        };
+        let (with, without) = {
+            let sf = app.file.as_ref().unwrap();
+            let mut with = None;
+            let mut without = None;
+            'scan: for b in 0..ACTIVE_BOXES {
+                for slot in 0..BOX_SLOTS {
+                    let m = sf.box_mon(b, slot);
+                    if m.species() == 0 {
+                        continue;
+                    }
+                    if crate::game_data::species_has_forms(m.species()) {
+                        with.get_or_insert((b, slot, m.species()));
+                    } else {
+                        without.get_or_insert((b, slot, m.species()));
+                    }
+                    if with.is_some() && without.is_some() {
+                        break 'scan;
+                    }
+                }
+            }
+            (with, without)
+        };
+        let (with, without) = match (with, without) {
+            (Some(a), Some(b)) => (a, b),
+            _ => panic!("this save should contain both kinds of mon"),
+        };
+
+        let paint = |app: &mut Editor| -> Vec<String> {
+            let ctx = egui::Context::default();
+            let mut labels = Vec::new();
+            for _ in 0..3 {
+                let out = paint_in(&ctx, app, Vec::new());
+                labels = galleys(&out).into_iter().map(|(t, _)| t).collect();
+            }
+            labels
+        };
+
+        app.sel = Some(Sel::Box(with.0, with.1));
+        app.tab = Tab::Mon;
+        let labels = paint(&mut app);
+        assert!(
+            labels.iter().any(|t| t == "Form"),
+            "box {}/{} is species {}, whose family has forms, so the editor must \
+             paint a Form control:\n{:?}",
+            with.0,
+            with.1,
+            with.2,
+            labels
+        );
+
+        app.sel = Some(Sel::Box(without.0, without.1));
+        let labels = paint(&mut app);
+        assert!(
+            !labels.iter().any(|t| t == "Form"),
+            "box {}/{} is species {}, which has no forms: a one-entry form picker is \
+             noise, so no Form control may be painted:\n{:?}",
+            without.0,
+            without.1,
+            without.2,
+            labels
+        );
+    }
+
     fn paint_in(
         ctx: &egui::Context,
         app: &mut Editor,

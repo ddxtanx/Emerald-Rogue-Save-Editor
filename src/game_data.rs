@@ -306,6 +306,100 @@ pub(crate) fn species_picker_table() -> &'static [(u16, &'static str)] {
     })
 }
 
+/// Species picker for the mon editor: base species only.
+///
+/// `species_picker_table` lists every id the game defines, which puts "Xerneas
+/// (Neutral)" and "Xerneas (Active)" - seventeen Arceus types, every mega and
+/// Gigantamax - side by side as if they were different monsters. They are the same
+/// monster in a different form, and the save stores the form id in the same field
+/// either way, so the editor offers the species here and the form separately
+/// ([`family_forms`]).
+///
+/// An id is a form when it appears as a key in `FORM_BASES` (the game's own family
+/// tables); those are excluded, and each survivor is labelled with its base name.
+pub(crate) fn base_species_picker_table() -> &'static [(u16, &'static str)] {
+    use std::sync::OnceLock;
+    static T: OnceLock<Vec<(u16, &'static str)>> = OnceLock::new();
+    T.get_or_init(|| {
+        all_species()
+            .iter()
+            .filter(|(id, _)| form_base_id(*id) == *id)
+            .map(|(id, _)| {
+                let name = species_base_name(*id).to_string();
+                (*id, Box::leak(name.into_boxed_str()) as &'static str)
+            })
+            .collect()
+    })
+}
+
+/// Label for one form inside its family.
+///
+/// `FORM_LABELS` covers the families the game annotates ("Neutral"/"Active",
+/// "10 Aura Break"), but 246 of the 442 form ids have no entry there. For those the
+/// species name minus the family name is the form: "Sandshrew (Alolan)" under
+/// Sandshrew is the Alolan form. Falling back to the whole name is the last resort,
+/// not the first choice - a Form row reading "Sandshrew (Alolan)" next to a Species
+/// row reading "Sandshrew" repeats itself.
+fn form_display_label(form: u16, base: u16) -> String {
+    if let Some(label) = form_label(form) {
+        return label.to_string();
+    }
+    let full = species_name(form).trim();
+    let base_name = species_base_name(base).trim();
+    let mut rest = full.strip_prefix(base_name).unwrap_or("").trim();
+    rest = rest.trim_matches(|c| c == '(' || c == ')' || c == '-' || c == '/');
+    if rest.is_empty() {
+        full.to_string()
+    } else {
+        rest.to_string()
+    }
+}
+
+/// The forms of one species, base entry first: id, label.
+///
+/// Labels come from `FORM_LABELS`, which is the game's own wording for the form
+/// ("Neutral"/"Active" for Xerneas, "10 Aura Break" for Zygarde). A family with only
+/// its base entry has no meaningful choice, and callers should hide the control then
+/// rather than offer one option.
+pub(crate) fn family_forms(base: u16) -> &'static [(u16, &'static str)] {
+    use std::sync::OnceLock;
+    static MAP: OnceLock<std::collections::HashMap<u16, Vec<(u16, &'static str)>>> =
+        OnceLock::new();
+    let map = MAP.get_or_init(|| {
+        let mut map: std::collections::HashMap<u16, Vec<(u16, &'static str)>> =
+            std::collections::HashMap::new();
+        // Base entries first, so the first row of the picker is what the species
+        // becomes when no form is chosen.
+        for (id, _) in all_species() {
+            if form_base_id(*id) == *id {
+                let label = form_label(*id).unwrap_or("default").to_string();
+                map.entry(*id)
+                    .or_default()
+                    .push((*id, Box::leak(label.into_boxed_str()) as &'static str));
+            }
+        }
+        for (form, base) in crate::form_tables::FORM_BASES {
+            let label = form_display_label(*form, *base);
+            map.entry(*base)
+                .or_default()
+                .push((*form, Box::leak(label.into_boxed_str()) as &'static str));
+        }
+        for v in map.values_mut() {
+            v.sort_by_key(|(id, _)| *id);
+            // keep the base entry first even though its id is the smallest: sort is
+            // stable and the base was pushed before the forms
+        }
+        map
+    });
+    map.get(&base).map(|v| v.as_slice()).unwrap_or(&[])
+}
+
+/// True when the species has more than one form, i.e. when a form control is worth
+/// showing at all.
+pub(crate) fn species_has_forms(sp: u16) -> bool {
+    family_forms(form_base_id(sp)).len() > 1
+}
+
 /// item lookup that also covers Rogue custom items (827+)
 pub(crate) fn item_name(id: u16) -> &'static str {
     match title_lookup(tables::items(), id) {
@@ -661,6 +755,109 @@ mod tests {
             "unknown season: no weather mapping",
             "a season outside the enum must not guess"
         );
+    }
+    /// The mon editor's species list names species, not forms: an id that the game's
+    /// own family tables treat as a form must not appear as if it were a species.
+    #[test]
+    fn the_species_picker_offers_base_species_not_their_forms() {
+        let t = base_species_picker_table();
+        for (id, _) in t {
+            assert_eq!(form_base_id(*id), *id, "{id} is a form id in the base list");
+        }
+        assert!(t.iter().any(|(id, _)| *id == 716), "Xerneas is offered");
+        assert!(
+            !t.iter().any(|(id, _)| *id == 1163),
+            "Xerneas Active is a form, not a species row"
+        );
+        assert_eq!(
+            t.iter().find(|(id, _)| *id == 716).map(|(_, n)| *n),
+            Some("Xerneas"),
+            "the row says the species, and the form label lives in the Form control"
+        );
+        assert!(
+            t.len() < species_picker_table().len(),
+            "forms are filtered out"
+        );
+        assert!(
+            species_picker_table().iter().any(|(id, _)| *id == 1163),
+            "the flat table still covers the raw id space for other callers"
+        );
+    }
+
+    /// A family lists its base entry first, then its forms, with the game's wording.
+    #[test]
+    fn a_family_lists_its_base_then_its_forms_with_the_games_labels() {
+        assert_eq!(
+            family_forms(716),
+            [(716, "Neutral"), (1163, "Active")],
+            "species.h:748-749 makes 716 the base and :1306 puts Active at +258"
+        );
+        assert_eq!(family_forms(716)[0].0, 716, "the base entry leads");
+        assert!(family_forms(201).len() >= 20, "Unown has a form per letter");
+        assert!(!species_has_forms(1), "Bulbasaur has no forms to choose");
+        assert!(
+            species_has_forms(1163),
+            "a form id still knows its family has forms"
+        );
+        assert!(
+            family_forms(9999).is_empty(),
+            "an unknown id offers nothing"
+        );
+    }
+
+    /// The species control and the form control are separate things: 442 ids are the
+    /// game's own form entries (`FORM_BASES` keys), and they must not sit in the
+    /// species list next to the species they belong to.
+    #[test]
+    fn the_species_list_drops_every_form_id_the_game_declares() {
+        let t = base_species_picker_table();
+        let form_ids = crate::form_tables::FORM_BASES.len();
+        assert_eq!(form_ids, 442, "the game declares 442 form ids");
+        assert_eq!(
+            t.len(),
+            all_species().len() - form_ids,
+            "the species list is the id space minus the form entries"
+        );
+        assert!(
+            !t.iter().any(|(id, _)| crate::form_tables::FORM_BASES
+                .iter()
+                .any(|(f, _)| *f == *id)),
+            "no form id in the species list"
+        );
+    }
+
+    /// Forms the game never annotates are still named, by removing the family name
+    /// from the species name ("Sandshrew (Alolan)" -> "Alolan").
+    #[test]
+    fn forms_without_a_game_label_are_named_by_their_difference_from_the_family() {
+        // 27 is Sandshrew's dex id and the family anchor the game's table uses;
+        // 959's entry in FORM_BASES points at it (read from the table, not memory).
+        let sandshrew = family_forms(27);
+        let alolan = sandshrew
+            .iter()
+            .find(|(id, _)| *id == 959)
+            .expect("Sandshrew 959 is a form in the game's own family table");
+        assert_eq!(alolan.1, "Alolan", "{:?}", sandshrew);
+        // Xerneas is annotated by the game, so its wording wins over the derivation.
+        assert_eq!(family_forms(716)[1].1, "Active");
+        // And a family whose base has its own form label shows that label first.
+        assert_eq!(family_forms(716)[0].1, "Neutral");
+    }
+
+    /// Which species get a Form control, from the table rather than from memory:
+    /// Bulbasaur has no family, Eevee has exactly one form (1499), Pikachu has six.
+    #[test]
+    fn the_form_control_appears_only_for_species_that_have_forms() {
+        assert!(!species_has_forms(1), "Bulbasaur has no forms in this ROM");
+        assert!(species_has_forms(133), "Eevee has one form (1499)");
+        assert!(
+            family_forms(133).len() == 2,
+            "base + one form: {:?}",
+            family_forms(133)
+        );
+        assert!(family_forms(25).len() >= 7, "Pikachu has regional forms");
+        // A one-entry family is not a choice, so the control stays hidden.
+        assert_eq!(family_forms(1).len(), 1, "{:?}", family_forms(1));
     }
 }
 

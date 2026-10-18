@@ -16,7 +16,16 @@ use crate::tables;
 /// One part of the mon editor, so a record shape can name (or refuse) it.
 /// Hiding a section is a correctness statement, not cosmetics: an editor widget
 /// for a field the record does not store has nowhere to put its value.
+/// Switching species or form changes which base stats the stored numbers were
+/// computed from. Deliberately not recomputed on the user's behalf - the choice is
+/// theirs, and the existing "recalculate stats" button is one implementation of the
+/// game's formula - but leaving it silent would let a level-100 record keep
+/// pre-Mega stats with nothing saying so.
+const STALE_STATS_AFTER_SPECIES_CHANGE: &str = "species changed: the stored stats belong to the previous species - press \
+     \"recalculate stats\" to recompute them";
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+
 pub(crate) enum MonSection {
     // Stored by BOTH record shapes (the shared field UI).
     Species,
@@ -392,18 +401,48 @@ impl Editor {
         // is what made the Ability picker look missing.
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing = egui::vec2(12.0, 6.0);
+            // The Species control names the *species*, not the form. Forms are
+            // separate save ids, so the currently stored form id is resolved back to
+            // its family anchor for display, and the form itself is a second control
+            // below; picking a species from a flat 1573-row list made Xerneas Neutral
+            // and Xerneas Active look like two monsters.
+            let anchor = crate::game_data::form_base_id(rec.species());
             ui.label("Species");
             if let Some(id) = self.combo(
                 ui,
                 "species",
-                species_picker_table(),
-                rec.species(),
+                crate::game_data::base_species_picker_table(),
+                anchor,
                 &Opts::pokemon(),
             ) {
-                rec.set_species(id);
-                changed = true;
+                if id != anchor {
+                    rec.set_species(id);
+                    changed = true;
+                    self.mon_note = Some(STALE_STATS_AFTER_SPECIES_CHANGE.into());
+                }
             }
             ui.end_row();
+
+            // Only families with more than one form get the control; a one-entry
+            // dropdown would be noise.
+            if crate::game_data::species_has_forms(anchor) {
+                let forms = crate::game_data::family_forms(anchor);
+                ui.label("Form");
+                if let Some(id) = self.combo(
+                    ui,
+                    "form",
+                    forms,
+                    rec.species(),
+                    &Opts::named().no_id().with_hint("filter forms"),
+                ) {
+                    if id != rec.species() {
+                        rec.set_species(id);
+                        changed = true;
+                        self.mon_note = Some(STALE_STATS_AFTER_SPECIES_CHANGE.into());
+                    }
+                }
+                ui.end_row();
+            }
 
             // A letter badge in this very row is what made the missing art look like
             // a bug in the editor. Say which id has no sprite and how to fetch it.
