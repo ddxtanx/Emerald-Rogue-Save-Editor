@@ -1,6 +1,11 @@
 //! Rogue-tab UI: adventure state, hub map, quests, difficulty, daycare, safari
 //! roster, unique mons.
 
+// Same reason as hub_visual.rs: the loop variable is the quest slot / safari row /
+// flag bit that the Rogue block is addressed by, used for `1 << k` and `snap[i]` in
+// the same body.
+#![allow(clippy::needless_range_loop)]
+
 use super::*;
 use crate::domain::DecorVariant;
 use crate::searchable_combo::Opts;

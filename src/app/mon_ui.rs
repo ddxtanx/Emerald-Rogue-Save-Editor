@@ -915,7 +915,7 @@ impl Editor {
                     );
                     if let Some(Some((ups, pp))) = picked {
                         if let Some(u) = ups {
-                            m.set_pp_bonus(s, u as u8);
+                            m.set_pp_bonus(s, u);
                         }
                         m.set_pp(s, pp);
                         changed = true;
@@ -1068,8 +1068,10 @@ mod tests {
     use super::*;
 
     fn safari_entry(species: u16) -> SafariMon {
-        let mut s = SafariMon::default();
-        s.nick = vec![0u8; 10];
+        let mut s = SafariMon {
+            nick: vec![0u8; 10],
+            ..Default::default()
+        };
         s.set_species(species);
         s
     }

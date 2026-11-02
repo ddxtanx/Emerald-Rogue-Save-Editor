@@ -152,10 +152,10 @@ pub(crate) fn put32(b: &mut [u8], i: usize, v: u32) {
 
 pub(crate) fn sector_crc(data: &[u8]) -> u16 {
     let mut s: u32 = 0;
-    for w in data.chunks_exact(4) {
+    for w in data.as_chunks::<4>().0 {
         s = s.wrapping_add(le32(w, 0));
     }
-    (((s >> 16) as u32 + s) & 0xFFFF) as u16
+    (((s >> 16) + s) & 0xFFFF) as u16
 }
 
 // ---------------------------------------------------------------- gen3 strings

@@ -296,6 +296,26 @@ Two rules earned the hard way, both pinned by tests:
   after it; the synthetic "none" row gets no sprite and no fallback badge.
 
 
+
+Doc comments follow rustdoc's list rules: a bullet's continuation sits two spaces
+past the marker, and a new paragraph after a list gets a blank `///` line. Breaking
+either rule is a rustdoc rendering bug, so CI fails it: the `Clippy (zero warnings)`
+step runs `cargo clippy --all-targets -- -D warnings`. `tools/reflow_comments.py`
+wraps comments to the 80-column margin and emits the 2-space continuation;
+`tools/fix_doc_lists.py` re-indents existing ones and *flags* (never rewrites) the
+flush-after-bullet cases, because it cannot tell a new paragraph from a sentence that
+merely wrapped - an earlier version of it split sentences mid-line.
+
+Two `#[allow]`s are deliberate, each carrying its reason in place:
+
+* `clippy::needless_range_loop` at the top of `app/hub_visual.rs` and
+  `app/rogue_ui.rs`, where the loop variable *is* the domain: a hub area index feeding
+  `i / 8` and `i % 8` bit math, a quest slot, a flag bit. `enumerate()` would hide the
+  arithmetic the save layout depends on.
+* `clippy::too_many_arguments` on `icons::paint_icon` and `searchable_combo::body`,
+  where the parameter list is the operation (store, context, namespace, id, rect, size)
+  and a params struct would be a second vocabulary with the same fields.
+
 ## Roadmap
 
 - [x] Decode and edit the Rogue save block (quests, campaigns, daycare, hub map, difficulty config)

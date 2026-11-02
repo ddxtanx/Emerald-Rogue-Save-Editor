@@ -10,11 +10,13 @@
 //! once and were only noticed by a user:
 //!
 //! * a table can silently lose families (201 species disappeared when the
+//!
 //! generator only understood brace-form `species_info` entries and not
 //! `[SPECIES_X] = MACRO(args),`), so `game_data::tests` asserts that every id
 //! the editor can name either has stats or is on the declared-without-data
 //! list;
 //! * a failure to parse must stay visible: `parse_problems` is reported in the
+//!
 //! wording of a failed stat recalculation, so a truncated table cannot be
 //! mistaken for "the game has no stats for this species".
 

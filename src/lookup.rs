@@ -4,10 +4,12 @@
 //! mon alone:
 //!
 //! * `genderFlag` is 3 bits, but for fixed-gender species the game IGNORES it
+//!
 //! entirely and returns the species' fixed value. Showing the raw bit made
 //! Beldum/Metagross read as "Female" (`0xE0` = flag bits set, but `genderRatio
 //! == MON_GENDERLESS` decides the answer).
 //! * `abilityNum` is only a SLOT INDEX into `gBaseStats[species].abilities[]`,
+//!
 //! so the same number means a different ability per species.
 //!
 //! Both helpers below mirror the game's functions rather than inventing a

@@ -13,10 +13,12 @@
 //! * blank lines and lines starting with `#` are comments;
 //! * comma-separated fields, trimmed;
 //! * a field may be wrapped in double quotes when it contains a comma, and `""`
+//!
 //! inside quotes is one literal quote. Exactly one row in the corpus needs it
 //! (quest slot 27, `Poké Ball, Go!`): the game's own string says so, and
 //! dropping that row would mis-number every quest after it;
 //! * a row whose field count differs from the header is reported as a problem
+//!
 //! rather than guessed at.
 //!
 //! Callers get the rows plus the problems found; a table that failed to parse

@@ -1,6 +1,6 @@
 use crate::basestats::base_stats;
 use crate::deco_variants;
-use crate::domain::{DecorVariant, ExteriorStyle, HubArea, InteriorStyle, PathStyle, Pocket};
+use crate::domain::{DecorVariant, HubArea, Pocket};
 use crate::format::*;
 use crate::game_data::*;
 use crate::item_pockets;
@@ -248,7 +248,7 @@ mod tests {
                 id: (p % SLOT_SECTORS) as u16,
                 csum: 0,
                 security: if p < 28 { SECURITY } else { 0 },
-                counter: if p >= 14 && p < 28 { 5 } else { 4 },
+                counter: if (14..28).contains(&p) { 5 } else { 4 },
             })
             .collect();
         let mut sf = SaveFile {

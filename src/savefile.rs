@@ -241,8 +241,8 @@ impl SaveFile {
     fn rebuild_merged(&mut self) {
         let rot = self.rotation(self.active_slot);
         self.merged = Vec::with_capacity(SLOT_SECTORS * DATASZ);
-        for k in 0..SLOT_SECTORS {
-            self.merged.extend_from_slice(&self.sectors[rot[k]].data);
+        for &phys in &rot[..SLOT_SECTORS] {
+            self.merged.extend_from_slice(&self.sectors[phys].data);
         }
     }
 
@@ -846,7 +846,7 @@ impl SaveFile {
             return 0;
         }
         (0..rb.decor_f.n)
-            .filter(|&k| self.hub_decoration(rb, k).map_or(false, |(_, _, _, on)| on))
+            .filter(|&k| self.hub_decoration(rb, k).is_some_and(|(_, _, _, on)| on))
             .count()
     }
     /// `homeStyles[0]` house exterior, `[1]` house interior, `[2]` path
@@ -1557,8 +1557,8 @@ impl SaveFile {
 
     pub fn save(&mut self, path: &str) -> Result<(), String> {
         let rot = self.rotation(self.active_slot);
-        for k in 0..SLOT_SECTORS {
-            let p = rot[k];
+        // `k` indexes the merged stream, `p` the physical sector: both are needed.
+        for (k, &p) in rot.iter().enumerate().take(SLOT_SECTORS) {
             let mut data = Vec::with_capacity(DATASZ);
             data.extend_from_slice(&self.merged[k * DATASZ..(k + 1) * DATASZ]);
             let csum = sector_crc(&data);

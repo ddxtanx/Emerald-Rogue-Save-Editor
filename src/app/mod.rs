@@ -2,13 +2,14 @@
 //! management (add / delete / move mons), and file open/save plumbing. Per-tab
 //! UIs live in the sibling modules as `impl Editor` blocks.
 //!
-//! Layout notes, both from explicit requests: * There is no "Party"/"Boxes"
-//! tab. The roster is always in the left panel,
-//!     so a tab that showed the same thing did nothing; selecting a mon instead
-//!     opens a PKHeX-style popup editor window.
+//! Layout notes, both from explicit requests:
+//!
+//! * There is no "Party"/"Boxes" tab. The roster is always in the left panel, so
+//!   a tab that showed the same thing did nothing; selecting a mon instead opens
+//!   a PKHeX-style popup editor window.
 //! * Every id picklist (species, item, ball, move, quest, decoration variant)
-//!     goes through `crate::searchable_combo`, which is the only place that
-//!     knows how to keep a popup open while you type in its search field.
+//!   goes through `crate::searchable_combo`, which is the only place that knows
+//!   how to keep a popup open while you type in its search field.
 
 use crate::deco_variants;
 use crate::format::*;
@@ -165,6 +166,10 @@ impl Default for Editor {
         }
     }
 }
+
+/// One storage box as the roster panel wants it: box index, display label, and the
+/// occupied (slot, mon) pairs inside it.
+type BoxRoster = (usize, String, Vec<(usize, Mon)>);
 
 impl Editor {
     pub(crate) fn open_path(&mut self, ps: String) {
@@ -670,7 +675,7 @@ impl Editor {
                 self.status = format!("Cleared box {} slot {}", bx + 1, s + 1);
             }
             Sel::Fusion(f) => {
-                sf.set_fusion_mon(f, &Mon::from_bytes(&vec![0u8; MONSZ]));
+                sf.set_fusion_mon(f, &Mon::from_bytes(&[0u8; MONSZ]));
                 self.dirty = true;
                 self.status = format!("Cleared fusion slot {}", f + 1);
             }
@@ -810,11 +815,6 @@ impl Editor {
         self.mon_popup = false;
     }
 
-    // ---- roster panel ------------------------------------------------------
-    /// The asset diagnostics: tallies, the ids that have no art, and the exact
-    /// commands - as selectable text, so the fix is a copy-paste rather than a
-    /// transcription off a cramped status strip.
-
     /// The asset diagnostics: tallies, the ids that have no art, and the exact
     /// commands - as selectable text, so the fix is a copy-paste rather than a
     /// transcription off a cramped status strip.
@@ -876,6 +876,7 @@ impl Editor {
         }
     }
 
+    // ---- roster panel ------------------------------------------------------
     fn roster_ui(&mut self, ui: &mut egui::Ui) {
         // Snapshot everything the panel draws. The save must not stay borrowed across
         // the row helpers (edit / move / delete), which need `&mut self`: with the old
@@ -888,7 +889,7 @@ impl Editor {
                     .map(|f| (f, sf.fusion_mon(f)))
                     .filter(|(_, m)| m.species() != 0)
                     .collect();
-                let boxes: Vec<(usize, String, Vec<(usize, Mon)>)> = (0..ACTIVE_BOXES)
+                let boxes: Vec<BoxRoster> = (0..ACTIVE_BOXES)
                     .map(|bx| {
                         let mons: Vec<(usize, Mon)> = (0..BOX_SLOTS)
                             .map(|s| (s, sf.box_mon(bx, s)))
@@ -1344,9 +1345,7 @@ mod tests {
         }
         let mut app = Editor::default();
         app.open_path(p);
-        if app.file.is_none() {
-            return None;
-        }
+        app.file.as_ref()?;
         Some(app)
     }
 
@@ -1614,8 +1613,10 @@ mod tests {
     #[test]
     fn escape_closes_the_mon_popup_when_no_picker_is_open() {
         let ctx = egui::Context::default();
-        let mut app = Editor::default();
-        app.mon_popup = true;
+        let mut app = Editor {
+            mon_popup: true,
+            ..Default::default()
+        };
         run_frame(&ctx, &mut app, vec![], &mut |app, ui| {
             app.handle_mon_escape(ui.ctx())
         });
@@ -1633,8 +1634,10 @@ mod tests {
     #[test]
     fn escape_closes_the_picker_but_never_the_mon_window_too() {
         let ctx = egui::Context::default();
-        let mut app = Editor::default();
-        app.mon_popup = true;
+        let mut app = Editor {
+            mon_popup: true,
+            ..Default::default()
+        };
         let table: Vec<(u16, &str)> = vec![(1, "applum"), (2, "oran berry")];
         let opts = crate::searchable_combo::Opts::named();
         let store = crate::icons::IconStore::default();
@@ -1670,8 +1673,10 @@ mod tests {
     #[test]
     fn escape_closes_an_open_pp_picker_before_it_would_close_the_window() {
         let ctx = egui::Context::default();
-        let mut app = Editor::default();
-        app.mon_popup = true;
+        let mut app = Editor {
+            mon_popup: true,
+            ..Default::default()
+        };
         // The PP trigger's rect is layout-dependent, so record it from the first frame
         // and drive the click from the recorded rect (never a guess).
         let btn_rect: std::cell::Cell<Option<egui::Rect>> = std::cell::Cell::new(None);
@@ -1874,8 +1879,10 @@ mod tests {
     fn a_single_click_on_a_safari_row_selects_it_and_opens_the_mon_tab() {
         let ctx = egui::Context::default();
         let mut app = Editor::default();
-        let mut s = SafariMon::default();
-        s.nick = vec![0u8; 10];
+        let mut s = SafariMon {
+            nick: vec![0u8; 10],
+            ..Default::default()
+        };
         s.set_species(252);
         assert_eq!(app.tab, Tab::Items);
         // The row's own rect is recorded, never guessed at (same trick as the PP-picker
@@ -1966,7 +1973,8 @@ mod tests {
             "the compact roster row must paint {name}:\n{roster}"
         );
         // Priority is safari-zone data, so it now lives ON the row...
-        for kept in [" pri"] {
+        {
+            let kept = " pri";
             assert!(
                 roster.contains(kept),
                 "the safari roster should expose spawn priority ({kept:?})"

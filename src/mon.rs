@@ -66,7 +66,7 @@ impl Mon {
     /// The struct is party-sized (104 B). `set_box_mon` truncates to the leading 80
     /// B, which is exactly `struct BoxPokemon`.
     pub fn blank(otid: u32, ot_name: &str, species: u16, level: u8) -> Mon {
-        let mut m = Mon::from_bytes(&vec![0u8; 104]);
+        let mut m = Mon::from_bytes(&[0u8; 104]);
         m.set_pid(random_pid());
         m.set_otid(otid);
         m.set_species(species);
@@ -167,7 +167,7 @@ impl Mon {
         (self.t[0][8] >> (slot * 2)) & 3
     }
     pub fn set_pp_bonus(&mut self, slot: usize, ups: u8) {
-        let ups = ups.min(3) as u8;
+        let ups = ups.min(3);
         let b = self.t[0][8];
         self.t[0][8] = (b & !(3 << (slot * 2))) | (ups << (slot * 2));
     }
@@ -214,7 +214,7 @@ impl Mon {
         ]
     }
     pub fn set_ev(&mut self, i: usize, v: u8) {
-        self.t[2][i] = v.min(255);
+        self.t[2][i] = v;
     }
 
     pub fn ivs(&self) -> [u8; 6] {
@@ -412,7 +412,7 @@ impl Mon {
     pub fn checksum_calc(slots: &[[u8; 12]; 4]) -> u16 {
         let mut s: u32 = 0;
         for slot in slots {
-            for w in slot.chunks_exact(2) {
+            for w in slot.as_chunks::<2>().0 {
                 s = s.wrapping_add(le16(w, 0) as u32);
             }
         }
@@ -426,8 +426,8 @@ impl Mon {
     /// write logical t[] -> physical slots, recompute checksum, re-encrypt
     pub fn seal(&mut self) {
         let perm = SUBSTRUCT_ORDER[(self.pid() % 24) as usize];
-        for j in 0..4 {
-            self.slots[perm[j]] = self.t[j];
+        for (j, &slot) in perm.iter().enumerate() {
+            self.slots[slot] = self.t[j];
         }
         let chk = Mon::checksum_calc(&self.slots);
         put16(&mut self.raw, 28, chk);
@@ -543,7 +543,7 @@ fn random_pid() -> u32 {
     use std::time::{SystemTime, UNIX_EPOCH};
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|d| d.subsec_nanos() as u64 + d.as_secs() << 12)
+        .map(|d| (d.subsec_nanos() as u64 + d.as_secs()) << 12)
         .unwrap_or(0x1234_abcd);
     let salt = &nanos as *const u64 as usize as u64;
     let mixed = nanos.wrapping_mul(0x9E37_79B9_7F4A_7C15).wrapping_add(salt) >> 11;
@@ -560,7 +560,7 @@ mod tests {
     use super::*;
 
     fn mon_of_species(sp: u16) -> Mon {
-        let mut m = Mon::from_bytes(&vec![0u8; 80]);
+        let mut m = Mon::from_bytes(&[0u8; 80]);
         m.set_species(sp);
         m
     }
@@ -676,7 +676,7 @@ mod tests {
     fn the_all_iv_write_matches_six_single_iv_writes() {
         let seed: [u8; 6] = [23, 10, 21, 31, 21, 8];
         let make = || {
-            let mut m = Mon::from_bytes(&vec![0u8; 80]);
+            let mut m = Mon::from_bytes(&[0u8; 80]);
             m.set_species(59);
             for (i, v) in seed.iter().enumerate() {
                 m.set_iv_at(i, *v);

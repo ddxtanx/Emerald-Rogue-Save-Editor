@@ -150,7 +150,11 @@ def process(lines):
                 if len(body) > budget:
                     words = wrap(body, budget)
                     emitted.append(f"{' ' * indent}{sig} {words[0]}")
-                    cont = " " * (len(sig) + 1)
+                    # rustdoc's own rule: a bullet's continuation aligns with the
+                    # bullet's text, i.e. two spaces past the sigil - not the four
+                    # this used to emit, which is what tripped
+                    # clippy::doc_overindented_list_items across the crate.
+                    cont = "  "
                     for w in words[1:]:
                         emitted.append(f"{' ' * indent}{sig}{cont}{w}")
                 else:

@@ -8,19 +8,23 @@
 //! game uses and let the user click/drag on it.
 //!
 //! Everything here stays inside the semantics already documented for the save:
-//! * `areaBuiltFlags` and `areaCoords` are INDEPENDENT bytes on disk. The
-//!    game's
-//! `RogueHub_BuildArea()` writes both, but live saves contain built areas and
-//! stored coordinates that do not imply each other, so this editor never
-//! couples them silently: building, unbuilding, and moving are separate
-//! actions, each labelled as what it does.
+//!
+//! * `areaBuiltFlags` and `areaCoords` are INDEPENDENT bytes on disk. The game's
+//!   `RogueHub_BuildArea()` writes both, but live saves contain built areas and
+//!   stored coordinates that do not imply each other, so this editor never
+//!   couples them silently: building, unbuilding, and moving are separate
+//!   actions, each labelled as what it does.
 //! * `areaCoords` is `s8 x, s8 y` plus two pad bytes (stride 4 on disk).
 //! * `homeDecorations` is 192 slots: 0..160 outdoor, 160..192 indoor, each
-//! `u8 x, u8 y, u8 decorVariant, u8 active:1`.
+//!   `u8 x, u8 y, u8 decorVariant, u8 active:1`.
 //! * Reachability rules (collision, no built neighbour, orphaning a neighbour)
-//!    are
-//! reported by `SaveFile::hub_coord_warnings` and shown before/while the move
-//! is made, not after the fact.
+//!   are reported by `SaveFile::hub_coord_warnings` and shown before/while the
+//!   move is made, not after the fact.
+
+// The loop variable is the hub area index: it selects a bit in `areaBuiltFlags`
+// (`i / 8`, `i % 8`), a row in `HUB_AREAS`, and a colour. `enumerate()` would hide
+// the very arithmetic the game's layout depends on.
+#![allow(clippy::needless_range_loop)]
 
 use crate::domain::{DecorVariant, HubArea};
 use crate::format::HOME_DECOR_OUTSIDE;
@@ -605,7 +609,7 @@ impl super::Editor {
                         egui::Stroke::new(1.6_f32, Color32::from_rgb(255, 210, 90)),
                     );
                 }
-                if resp.hover_pos().map_or(false, |p| r.contains(p)) {
+                if resp.hover_pos().is_some_and(|p| r.contains(p)) {
                     hover = Some(format!(
                         "slot {i}: {} at ({x},{y})",
                         variant_table

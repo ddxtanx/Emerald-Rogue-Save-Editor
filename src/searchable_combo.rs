@@ -202,7 +202,7 @@ pub fn show(
                     &ctx,
                     opts.icons,
                     current,
-                    &cur_name,
+                    cur_name,
                     ICON_SIZE,
                     icon_rect,
                 );
@@ -302,10 +302,10 @@ pub fn show(
             }
         });
         let escape = ctx.input(|i| i.key_pressed(Key::Escape));
-        let outside = press.map_or(false, |p| !frame_rect.contains(p));
+        let outside = press.is_some_and(|p| !frame_rect.contains(p));
         // A press that landed on a widget belonging to another layer (i.e. not our
         // popup) also closes us, even if it overlaps our rect.
-        let foreign = press.map_or(false, |p| match ui.memory(|m| m.layer_id_at(p)) {
+        let foreign = press.is_some_and(|p| match ui.memory(|m| m.layer_id_at(p)) {
             Some(layer) => layer != LayerId::new(Order::Foreground, popup_id),
             None => false,
         });
@@ -381,6 +381,10 @@ impl AreaPopup {
 }
 
 /// Search field + virtualized filtered list + keyboard navigation.
+// Everything here is state the popup has to thread through one frame: identity,
+// the table, the current value, the display options and the icon store. A params
+// struct would be a second vocabulary with the same fields.
+#[allow(clippy::too_many_arguments)]
 fn body(
     ui: &mut Ui,
     ctx: &Context,

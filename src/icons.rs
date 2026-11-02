@@ -191,9 +191,9 @@ impl IconStore {
 
     fn gap_for(&self, kind: IconKind, ids: &[(u16, &'static str)]) -> Option<ArtGap> {
         let root = self.root()?;
-        let dir = match kind.dir() {
-            Some(d) => root.join(d),
-            None => return None,
+        let dir = {
+            let d = kind.dir()?;
+            root.join(d)
         };
         let Ok(entries) = std::fs::read_dir(&dir) else {
             return Some(ArtGap {
@@ -234,9 +234,7 @@ impl IconStore {
     pub fn species_art_note(&self, species: u16) -> Option<String> {
         // No assets root at all: the status line already says to run the script, and
         // repeating it under every species field would be noise.
-        if self.root().is_none() {
-            return None;
-        }
+        self.root()?;
         if self.dir_has_pokemon(species) {
             return None;
         }
@@ -490,6 +488,10 @@ pub fn draw_icon(
 
 /// Paint an icon into an explicit rect (used where the caller already allocated
 /// the row, e.g. inside virtualized combo rows and roster lists).
+// The parameter list is the operation: store, context, namespace, id, where to
+// draw and how big. Bundling them into a struct would move the meaning away from
+// the call site without shortening anything a reader has to hold.
+#[allow(clippy::too_many_arguments)]
 pub fn paint_icon(
     ui: &mut Ui,
     icons: &IconStore,
@@ -693,7 +695,6 @@ mod tests {
     }
     /// The status line is the only place a fresh clone is told why every row is a
     /// letter badge, so it has to name the gap and the command that fixes it.
-    #[test]
     /// The status line is the only place a fresh clone learns why every row is a letter
     /// badge, so it has to name the gap and the command that fixes it - on a fixture, so
     /// it also runs where no art was ever fetched.
@@ -736,12 +737,11 @@ mod tests {
 
     /// The gap report answers "which ids have no art" from the game's id space, not
     /// from whatever a picker happened to request, so a fresh clone is told to fetch
-    /// art instead of quietly showing letter badges.
-    #[test]
-    /// Which ids lack art is measured against a two-file fixture, not against the
-    /// gitignored asset tree: CI never has that tree, and a test asserting it exists
-    /// fails there while passing locally (which is exactly how this test broke the
-    /// build). The real tree is pinned by `the_real_asset_tree_is_nearly_complete`.
+    /// art instead of quietly showing letter badges. Measured against a two-file
+    /// fixture here because the real tree is gitignored: CI has never fetched it, and a
+    /// test that assumes it exists passes locally while breaking the build - which is
+    /// exactly how the first version of this test failed. The real tree is pinned
+    /// separately by `the_real_asset_tree_is_nearly_complete`.
     #[test]
     fn the_gap_report_counts_the_games_id_space_against_the_files() {
         let root = temp_root("gaps");

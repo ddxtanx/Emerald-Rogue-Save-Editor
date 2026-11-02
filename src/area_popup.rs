@@ -9,17 +9,17 @@
 //! The fix is the one applied to [`crate::searchable_combo`]: own the popup
 //! with an `Area` in the foreground order and decide dismissal yourself. This
 //! is the small, reusable form of that for popups which are not a filtered list
-//! - the PP ladder picker, for instance - where the content is arbitrary
-//! widgets and may include an editable field.
+//! (the PP ladder picker, for instance), where the content is arbitrary widgets
+//! and may include an editable field.
 //!
 //! Contract:
+//!
 //! * opens on the caller's request (normally `button.clicked()`);
 //! * stays open while clicks land inside its own rect or on the anchor;
 //! * closes on a press that starts outside both, on Escape, or on a second
-//!    anchor press;
+//!   anchor press;
 //! * as an `Area` in `Order::Foreground` it is not clipped by the `ScrollArea`
-//!    the
-//! trigger sits in (a `ComboBox` inside a scrolled page is).
+//!   the trigger sits in (a `ComboBox` inside a scrolled page is).
 
 use egui::{Area, Context, Frame, Id, Key, Order, PointerButton, Rect, Response, Ui};
 
@@ -121,7 +121,7 @@ pub fn anchored<T>(
 /// `any_popup_open()`.
 pub fn is_open(ctx: &Context, id: &str) -> bool {
     ctx.data(|d| d.get_temp::<State>(Id::new(id)))
-        .map_or(false, |st| st.open)
+        .is_some_and(|st| st.open)
 }
 
 #[cfg(test)]

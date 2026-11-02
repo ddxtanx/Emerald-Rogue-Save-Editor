@@ -57,7 +57,7 @@ pub(crate) fn all_species() -> &'static [(u16, &'static str)] {
     use std::sync::OnceLock;
     static T: OnceLock<Vec<(u16, &'static str)>> = OnceLock::new();
     T.get_or_init(|| {
-        let mut v: Vec<(u16, &'static str)> = tables::species().iter().copied().collect::<Vec<_>>();
+        let mut v: Vec<(u16, &'static str)> = tables::species().to_vec();
         v.extend(tables_extra::species_extra().iter().copied());
         v.sort_by_key(|(id, _)| *id);
         v
@@ -69,7 +69,7 @@ pub(crate) fn all_items() -> &'static [(u16, &'static str)] {
     use std::sync::OnceLock;
     static T: OnceLock<Vec<(u16, &'static str)>> = OnceLock::new();
     T.get_or_init(|| {
-        let mut v: Vec<(u16, &'static str)> = tables::items().iter().copied().collect::<Vec<_>>();
+        let mut v: Vec<(u16, &'static str)> = tables::items().to_vec();
         v.extend(tables_extra::items_extra().iter().copied());
         v.sort_by_key(|(id, _)| *id);
         v
@@ -448,6 +448,55 @@ pub(crate) fn pocket_name(p: crate::domain::Pocket) -> String {
     } else {
         format!("unpocketed (POCKET_NONE = {})", p.raw())
     }
+}
+
+/// `homeDecorations[].decorVariant` is an index into a game-generated enum, so
+/// the id is meaningless without this table. The enum is emitted by the game's
+/// own DecorationExporter; `tools/gen_deco_variants.py` reproduces its ordering
+/// and is anchored on a real save (id 119 = the wardrobe
+/// `RogueHub_ClearProgress` seeds).
+pub(crate) fn decor_name(id: u8) -> &'static str {
+    crate::deco_variants::DECOR_VARIANTS
+        .get(id as usize)
+        .copied()
+        .unwrap_or("out-of-range decoration id")
+}
+
+/// The hub's `weatherState` is a u16 seed, **not** a weather id.
+/// `Rogue_ModifyOverworldMapWeather()` (src/rogue_controller.c:1918-2011) folds
+/// it per season into the weather an outdoor map shows: `state % 5` in spring
+/// (:1941-1956) and summer (:1957-1970), `state % 6` in autumn (:1971-1987) and
+/// winter (:1988-2005). Indoor/underground maps keep their own weather, a run
+/// in progress uses `VAR_ROGUE_DESIRED_WEATHER` instead (:1929-1933), and
+/// before the tutorial finishes the game forces no weather (:1934-1936).
+pub(crate) fn hub_weather_for(season: crate::domain::Season, state: u16) -> &'static str {
+    use crate::domain::Season;
+    use crate::weather_names as w;
+    let id = match season {
+        Season::Spring => match state % 5 {
+            0 => w::WEATHER_RAIN,
+            1 => w::WEATHER_RAIN_THUNDERSTORM,
+            2 => w::WEATHER_MISTY_FOG,
+            _ => w::WEATHER_NONE,
+        },
+        Season::Summer => match state % 5 {
+            0 => w::WEATHER_RAIN_THUNDERSTORM,
+            _ => w::WEATHER_NONE,
+        },
+        Season::Autumn => match state % 6 {
+            0 => w::WEATHER_RAIN,
+            1 => w::WEATHER_RAIN_THUNDERSTORM,
+            2 | 3 => w::WEATHER_LEAVES,
+            _ => w::WEATHER_NONE,
+        },
+        Season::Winter => match state % 6 {
+            0..=2 => w::WEATHER_SNOW,
+            3 => w::WEATHER_SHADE,
+            _ => w::WEATHER_NONE,
+        },
+        Season::Unexpected(_) => return "unknown season: no weather mapping",
+    };
+    w::weather_name(id)
 }
 
 #[cfg(test)]
@@ -859,55 +908,6 @@ mod tests {
         // A one-entry family is not a choice, so the control stays hidden.
         assert_eq!(family_forms(1).len(), 1, "{:?}", family_forms(1));
     }
-}
-
-/// `homeDecorations[].decorVariant` is an index into a game-generated enum, so
-/// the id is meaningless without this table. The enum is emitted by the game's
-/// own DecorationExporter; `tools/gen_deco_variants.py` reproduces its ordering
-/// and is anchored on a real save (id 119 = the wardrobe
-/// `RogueHub_ClearProgress` seeds).
-pub(crate) fn decor_name(id: u8) -> &'static str {
-    crate::deco_variants::DECOR_VARIANTS
-        .get(id as usize)
-        .copied()
-        .unwrap_or("out-of-range decoration id")
-}
-
-/// The hub's `weatherState` is a u16 seed, **not** a weather id.
-/// `Rogue_ModifyOverworldMapWeather()` (src/rogue_controller.c:1918-2011) folds
-/// it per season into the weather an outdoor map shows: `state % 5` in spring
-/// (:1941-1956) and summer (:1957-1970), `state % 6` in autumn (:1971-1987) and
-/// winter (:1988-2005). Indoor/underground maps keep their own weather, a run
-/// in progress uses `VAR_ROGUE_DESIRED_WEATHER` instead (:1929-1933), and
-/// before the tutorial finishes the game forces no weather (:1934-1936).
-pub(crate) fn hub_weather_for(season: crate::domain::Season, state: u16) -> &'static str {
-    use crate::domain::Season;
-    use crate::weather_names as w;
-    let id = match season {
-        Season::Spring => match state % 5 {
-            0 => w::WEATHER_RAIN,
-            1 => w::WEATHER_RAIN_THUNDERSTORM,
-            2 => w::WEATHER_MISTY_FOG,
-            _ => w::WEATHER_NONE,
-        },
-        Season::Summer => match state % 5 {
-            0 => w::WEATHER_RAIN_THUNDERSTORM,
-            _ => w::WEATHER_NONE,
-        },
-        Season::Autumn => match state % 6 {
-            0 => w::WEATHER_RAIN,
-            1 => w::WEATHER_RAIN_THUNDERSTORM,
-            2 | 3 => w::WEATHER_LEAVES,
-            _ => w::WEATHER_NONE,
-        },
-        Season::Winter => match state % 6 {
-            0 | 1 | 2 => w::WEATHER_SNOW,
-            3 => w::WEATHER_SHADE,
-            _ => w::WEATHER_NONE,
-        },
-        Season::Unexpected(_) => return "unknown season: no weather mapping",
-    };
-    w::weather_name(id)
 }
 
 // ---------------------------------------------------------------- mon model

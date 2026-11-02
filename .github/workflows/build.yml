@@ -21,6 +21,12 @@ jobs:
             libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev
       - name: Format check
         run: cargo fmt --check
+      # Zero-warning bar, enforced in CI: the crate reached 140 clippy warnings
+      # (rustdoc list lints, index loops, dead casts) before a cleanup pass, and a
+      # local-only bar is how they accumulated. Runs before the release build so a
+      # lint failure reports in seconds, not after a full optimised build.
+      - name: Clippy (zero warnings)
+        run: cargo clippy --all-targets -- -D warnings
       - name: Build
         run: cargo build --release
       - name: Test
