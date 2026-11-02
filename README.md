@@ -316,6 +316,15 @@ Two `#[allow]`s are deliberate, each carrying its reason in place:
   where the parameter list is the operation (store, context, namespace, id, rect, size)
   and a params struct would be a second vocabulary with the same fields.
 
+
+`tools/check_ra.sh` runs rust-analyzer's own diagnostics (editor parity, a different
+engine from clippy) and fails on anything except its one CLI artifact: the CLI analyses
+the non-test cfg, so every `mod tests` reports `inactive_code`, which no editor user
+ever sees. Note that the syntax check attached to agent file writes is *not*
+rust-analyzer - a hard type error written through it reports `lint: ok` - so this script
+is the gate that catches that class locally. It is deliberately not in CI: CI already
+compiles, and rustc reports the same hard errors there for free.
+
 ## Roadmap
 
 - [x] Decode and edit the Rogue save block (quests, campaigns, daycare, hub map, difficulty config)
