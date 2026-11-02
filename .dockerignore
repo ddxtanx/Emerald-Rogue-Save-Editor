@@ -1,9 +1,0 @@
-# The warm layer only reads Cargo.toml / Cargo.lock; nothing else in the repo belongs
-# in the build context (target/ alone is gigabytes).
-target/
-assets/
-.git/
-*.sav
-docs/
-tools/
-src/
